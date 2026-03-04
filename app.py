@@ -43,6 +43,10 @@ PALETA_CORES = [
 
 import threading
 
+# Cache GPS server-side — evita trafegar dados pesados para o browser
+_gps_lock  = threading.Lock()
+_gps_cache = pd.DataFrame()   # último fetch processado
+
 rio_polygon      = None
 garagens_polygon = None
 gtfs             = {}
@@ -403,7 +407,7 @@ app.layout = html.Div(
         dcc.Interval(id="intervalo", interval=30_000, n_intervals=0),
         dcc.Store(id="store-hist-sppo", data=[]),
         dcc.Store(id="store-hist-brt",  data=[]),
-        dcc.Store(id="store-gps",       data=None),
+        dcc.Store(id="store-gps-ts",    data=0),
         dcc.Store(id="store-localizacao", data=None),
 
         # Cabeçalho
@@ -565,7 +569,7 @@ def atualizar_opcoes_dropdown(_):
 
 
 @app.callback(
-    Output("store-gps",       "data"),
+    Output("store-gps-ts",    "data"),
     Output("store-hist-sppo", "data"),
     Output("store-hist-brt",  "data"),
     Input("intervalo",        "n_intervals"),
@@ -575,10 +579,12 @@ def atualizar_opcoes_dropdown(_):
     prevent_initial_call=False,
 )
 def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
-    """Busca GPS, calcula bearings e atualiza os stores."""
+    """Busca GPS, armazena no cache server-side e retorna só timestamp."""
+    global _gps_cache
+
     dados = fetch_gps_data()
     if len(dados) == 0:
-        return None, hist_sppo or [], hist_brt or []
+        return dash.no_update, hist_sppo or [], hist_brt or []
 
     sppo_df = dados[dados["tipo"] == "SPPO"].copy()
     brt_df  = dados[dados["tipo"] == "BRT"].copy()
@@ -593,7 +599,13 @@ def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
 
     dados_final             = pd.concat([sppo_df, brt_df], ignore_index=True)
     dados_final["datahora"] = dados_final["datahora"].astype(str)
-    return dados_final.to_dict("records"), hist_sppo, hist_brt
+
+    # Salva server-side — nenhum dado pesado vai para o browser
+    with _gps_lock:
+        _gps_cache = dados_final
+
+    import time
+    return int(time.time()), hist_sppo, hist_brt
 
 
 @app.callback(
@@ -602,12 +614,12 @@ def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
     Output("layer-onibus",      "children"),
     Output("layer-brt",         "children"),
     Output("legenda",           "children"),
-    Input("store-gps",          "data"),
+    Input("store-gps-ts",       "data"),
     Input("dropdown-linhas",    "value"),
     prevent_initial_call=False,
 )
-def atualizar_mapa(gps_data, linhas_sel):
-    """Reconstrói as camadas do mapa e a legenda."""
+def atualizar_mapa(_ts, linhas_sel):
+    """Reconstrói as camadas do mapa lendo do cache server-side."""
     linhas_sel = linhas_sel or []
     cores      = get_linha_cores(linhas_sel)
 
@@ -704,15 +716,18 @@ def atualizar_mapa(gps_data, linhas_sel):
                    "maxHeight": "40vh", "overflowY": "auto"},
         )
 
-    if not gps_data:
+    # Lê do cache server-side (sem tráfego de dados para o browser)
+    with _gps_lock:
+        dados = _gps_cache.copy()
+
+    if dados.empty:
         return [], [], [], [], legenda
 
-    dados   = pd.DataFrame(gps_data)
-    if linhas_sel:
-        dados = dados[dados["linha"].isin(linhas_sel)]
-    else:
-        # Nenhuma linha selecionada — não renderiza veículos para não sobrecarregar o mapa
+    if not linhas_sel:
+        # Nenhuma linha selecionada — não renderiza veículos
         return [], [], [], [], legenda
+
+    dados = dados[dados["linha"].isin(linhas_sel)]
 
     sppo_df = dados[dados["tipo"] == "SPPO"].copy() if len(dados) > 0 else pd.DataFrame()
     brt_df  = dados[dados["tipo"] == "BRT"].copy()  if len(dados) > 0 else pd.DataFrame()
