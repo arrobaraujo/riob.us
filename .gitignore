@@ -6,5 +6,3 @@ __pycache__/
 *.dbf
 *.shx
 *.prj
-gtfs/
-garagens/
