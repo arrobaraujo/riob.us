@@ -379,6 +379,10 @@ def fetch_gps_data():
     dados["lat"] = dados["latitude"].astype(float)
     dados["lng"] = dados["longitude"].astype(float)
     dados = dados.reset_index(drop=True)
+    # Manter apenas colunas necessárias para reduzir tamanho do store
+    colunas_uteis = ["ordem", "lat", "lng", "linha", "velocidade", "tipo", "sentido", "datahora"]
+    colunas_uteis = [c for c in colunas_uteis if c in dados.columns]
+    dados = dados[colunas_uteis]
     print(f"Total após filtros: {len(dados)} registros")
     return dados
 
@@ -423,7 +427,7 @@ app.layout = html.Div(
                         html.Div(
                             dcc.Dropdown(
                                 id="dropdown-linhas",
-                                options=[{"label": ln, "value": ln} for ln in linhas_short],
+                                options=[],
                                 multi=True,
                                 placeholder="Selecione uma ou mais linhas...",
                                 style={"width": "min(420px, 90vw)"},
@@ -550,6 +554,15 @@ app.layout = html.Div(
 # ==============================================================================
 # Callbacks
 # ==============================================================================
+
+@app.callback(
+    Output("dropdown-linhas", "options"),
+    Input("intervalo",        "n_intervals"),
+)
+def atualizar_opcoes_dropdown(_):
+    """Atualiza as opções do dropdown assim que o GTFS terminar de carregar."""
+    return [{"label": ln, "value": ln} for ln in linhas_short]
+
 
 @app.callback(
     Output("store-gps",       "data"),
