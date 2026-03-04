@@ -254,20 +254,23 @@ def fetch_gps_data():
         f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
     )
     try:
-    resp = requests.get(url_sppo, timeout=30)
-    print(f"SPPO status: {resp.status_code}")
-    print(f"SPPO headers: {dict(resp.headers)}")
-    print(f"SPPO body (primeiros 500 chars): {resp.text[:500]}")
-    if resp.status_code == 200:
-        data = resp.json()
-        if isinstance(data, list) and data:
-            sppo_df = pd.DataFrame(data)
-except Exception as e:
-    print(f"ERRO API SPPO: {e}")
+        resp = requests.get(url_sppo, timeout=30)
+        print(f"SPPO status: {resp.status_code}")
+        print(f"SPPO headers: {dict(resp.headers)}")
+        print(f"SPPO body (primeiros 500 chars): {resp.text[:500]}")
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, list) and data:
+                sppo_df = pd.DataFrame(data)
+    except Exception as e:
+        print(f"ERRO API SPPO: {e}")
 
     # BRT
     try:
         resp = requests.get("https://dados.mobilidade.rio/gps/brt", timeout=30)
+        print(f"BRT status: {resp.status_code}")
+        print(f"BRT headers: {dict(resp.headers)}")
+        print(f"BRT body (primeiros 500 chars): {resp.text[:500]}")
         if resp.status_code == 200:
             veiculos = resp.json().get("veiculos") or []
             if veiculos:
