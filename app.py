@@ -38,101 +38,125 @@ PALETA_CORES = [
 ]
 
 # ==============================================================================
-# Carregar dados estáticos (executado uma vez na inicialização)
+# Dados estáticos — inicializados vazios, carregados em thread paralela
 # ==============================================================================
 
-# --- Limite do Rio de Janeiro (via API IBGE — sem dependência extra) ----------
-print("Carregando limites do Rio...")
-rio_polygon = None
-try:
-    import json
-    from shapely.geometry import shape as shapely_shape, MultiPolygon
-    _resp = requests.get(
-        "https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3304557"
-        "?formato=application/vnd.geo%2Bjson",
-        timeout=30,
-    )
-    _resp.raise_for_status()
-    _geojson = _resp.json()
-    _geometrias = [
-        shapely_shape(feat["geometry"])
-        for feat in _geojson.get("features", [])
-        if feat.get("geometry")
-    ]
-    if _geometrias:
-        rio_polygon = _geometrias[0] if len(_geometrias) == 1 else MultiPolygon(_geometrias)
-        print("Limites do Rio carregados via IBGE.")
-    else:
-        print("AVISO: GeoJSON do IBGE sem geometrias.")
-except Exception as e:
-    print(f"ERRO ao carregar limites do Rio: {e}")
+import threading
 
-# --- Garagens ----------------------------------------------------------------
-print("Carregando garagens...")
+rio_polygon      = None
 garagens_polygon = None
-try:
-    garagens_gdf     = gpd.read_file("garagens/Garagens_de_operadores_SPPO.shp")
-    garagens_gdf     = garagens_gdf.to_crs("EPSG:4326")
-    garagens_polygon = garagens_gdf.geometry.union_all()
-    print("Garagens carregadas.")
-except Exception as e:
-    print(f"ERRO ao carregar garagens: {e}")
+gtfs             = {}
+shapes_gtfs      = None
+stops_gtfs       = None
+linhas_dict      = {}
+linhas_short     = []
+_dados_prontos   = False   # flag: carregamento concluído
 
-# --- GTFS --------------------------------------------------------------------
-print("Carregando GTFS...")
-gtfs         = {}
-shapes_gtfs  = None
-stops_gtfs   = None
-linhas_dict  = {}
-linhas_short = []
 
-try:
-    with zipfile.ZipFile("gtfs/gtfs.zip") as z:
-        for name in z.namelist():
-            if not name.endswith(".txt"):
-                continue
-            key = name.replace(".txt", "").split("/")[-1]
-            with z.open(name) as f:
-                gtfs[key] = pd.read_csv(f, dtype=str)
+def _carregar_dados_estaticos():
+    global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
+    global stops_gtfs, linhas_dict, linhas_short, _dados_prontos
 
-    # Shapes → GeoDataFrame de LineStrings
-    if "shapes" in gtfs:
-        df = gtfs["shapes"].copy()
-        df["shape_pt_lat"]      = df["shape_pt_lat"].astype(float)
-        df["shape_pt_lon"]      = df["shape_pt_lon"].astype(float)
-        df["shape_pt_sequence"] = df["shape_pt_sequence"].astype(int)
-        lines = (
-            df.sort_values("shape_pt_sequence")
-            .groupby("shape_id")
-            .apply(lambda x: LineString(zip(x["shape_pt_lon"], x["shape_pt_lat"])),
-                   include_groups=False)
-            .reset_index()
+    # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
+    print("Carregando limites do Rio...")
+    try:
+        import json
+        from shapely.geometry import shape as shapely_shape, MultiPolygon
+        _resp = requests.get(
+            "https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3304557"
+            "?formato=application/vnd.geo%2Bjson",
+            timeout=30,
         )
-        lines.columns = ["shape_id", "geometry"]
-        shapes_gtfs   = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+        _resp.raise_for_status()
+        _geojson = _resp.json()
+        _geometrias = [
+            shapely_shape(feat["geometry"])
+            for feat in _geojson.get("features", [])
+            if feat.get("geometry")
+        ]
+        if _geometrias:
+            rio_polygon = _geometrias[0] if len(_geometrias) == 1 else MultiPolygon(_geometrias)
+            print("Limites do Rio carregados via IBGE.")
+        else:
+            print("AVISO: GeoJSON do IBGE sem geometrias.")
+    except Exception as e:
+        print(f"ERRO ao carregar limites do Rio: {e}")
 
-    # Stops → GeoDataFrame de pontos
-    if "stops" in gtfs:
-        df = gtfs["stops"].copy()
-        df["stop_lat"] = df["stop_lat"].astype(float)
-        df["stop_lon"] = df["stop_lon"].astype(float)
-        stops_gtfs = gpd.GeoDataFrame(
-            df,
-            geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
-            crs="EPSG:4326",
-        )
+    # --- Garagens -------------------------------------------------------------
+    print("Carregando garagens...")
+    try:
+        garagens_gdf     = gpd.read_file("garagens/Garagens_de_operadores_SPPO.shp")
+        garagens_gdf     = garagens_gdf.to_crs("EPSG:4326")
+        garagens_polygon = garagens_gdf.geometry.union_all()
+        print("Garagens carregadas.")
+    except Exception as e:
+        print(f"ERRO ao carregar garagens: {e}")
 
-    # Dicionário de linhas
-    if "routes" in gtfs:
-        routes = gtfs["routes"]
-        if {"route_short_name", "route_long_name"}.issubset(routes.columns):
-            linhas_dict  = dict(zip(routes["route_short_name"], routes["route_long_name"]))
-            linhas_short = sorted(routes["route_short_name"].dropna().unique().tolist())
-            print(f"Linhas GTFS carregadas: {len(linhas_short)}")
+    # --- GTFS -----------------------------------------------------------------
+    print("Carregando GTFS...")
+    try:
+        _gtfs = {}
+        with zipfile.ZipFile("gtfs/gtfs.zip") as z:
+            for name in z.namelist():
+                if not name.endswith(".txt"):
+                    continue
+                key = name.replace(".txt", "").split("/")[-1]
+                with z.open(name) as f:
+                    _gtfs[key] = pd.read_csv(f, dtype=str)
 
-    print("GTFS carregado com sucesso.")
-except Exception as e:
-    print(f"ERRO ao carregar GTFS: {e}")
+        _shapes_gtfs = None
+        _stops_gtfs  = None
+
+        if "shapes" in _gtfs:
+            df = _gtfs["shapes"].copy()
+            df["shape_pt_lat"]      = df["shape_pt_lat"].astype(float)
+            df["shape_pt_lon"]      = df["shape_pt_lon"].astype(float)
+            df["shape_pt_sequence"] = df["shape_pt_sequence"].astype(int)
+            lines = (
+                df.sort_values("shape_pt_sequence")
+                .groupby("shape_id")
+                .apply(lambda x: LineString(zip(x["shape_pt_lon"], x["shape_pt_lat"])),
+                       include_groups=False)
+                .reset_index()
+            )
+            lines.columns = ["shape_id", "geometry"]
+            _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+
+        if "stops" in _gtfs:
+            df = _gtfs["stops"].copy()
+            df["stop_lat"] = df["stop_lat"].astype(float)
+            df["stop_lon"] = df["stop_lon"].astype(float)
+            _stops_gtfs = gpd.GeoDataFrame(
+                df,
+                geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
+                crs="EPSG:4326",
+            )
+
+        _linhas_dict  = {}
+        _linhas_short = []
+        if "routes" in _gtfs:
+            routes = _gtfs["routes"]
+            if {"route_short_name", "route_long_name"}.issubset(routes.columns):
+                _linhas_dict  = dict(zip(routes["route_short_name"], routes["route_long_name"]))
+                _linhas_short = sorted(routes["route_short_name"].dropna().unique().tolist())
+                print(f"Linhas GTFS carregadas: {len(_linhas_short)}")
+
+        # Atribui globais de uma vez (thread-safe para leitura)
+        gtfs         = _gtfs
+        shapes_gtfs  = _shapes_gtfs
+        stops_gtfs   = _stops_gtfs
+        linhas_dict  = _linhas_dict
+        linhas_short = _linhas_short
+        print("GTFS carregado com sucesso.")
+    except Exception as e:
+        print(f"ERRO ao carregar GTFS: {e}")
+
+    _dados_prontos = True
+    print("Carregamento inicial concluído.")
+
+
+# Dispara carregamento em background — não bloqueia o servidor
+threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 
 
 # ==============================================================================
