@@ -272,7 +272,7 @@ def fetch_gps_data():
     # Usar UTC-3 (BRT) explicitamente para compatibilidade local e no Render
     from datetime import timezone
     agora  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
-    inicio = agora - timedelta(minutes=5)
+    inicio = agora - timedelta(minutes=3)
     fmt    = "%Y-%m-%d+%H:%M:%S"
 
     sppo_df = pd.DataFrame()
@@ -365,6 +365,12 @@ def fetch_gps_data():
     dados = dados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
     dados = dados[dados["datahora"] >= inicio]
 
+    # Mantém apenas veículos de linhas presentes no GTFS
+    if linhas_short:
+        antes = len(dados)
+        dados = dados[dados["linha"].isin(linhas_short)]
+        print(f"Filtro GTFS: {antes} → {len(dados)} registros")
+
     # Filtro espacial — dentro do município do Rio, fora das garagens
     if (rio_polygon is not None or garagens_polygon is not None) and len(dados) > 0:
         gdf = gpd.GeoDataFrame(
@@ -404,7 +410,8 @@ server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
 app.layout = html.Div(
     [
-        dcc.Interval(id="intervalo", interval=30_000, n_intervals=0),
+        dcc.Interval(id="intervalo",        interval=30_000, n_intervals=0),
+        dcc.Interval(id="intervalo-dropdown", interval=2_000,  n_intervals=0),
         dcc.Store(id="store-hist-sppo", data=[]),
         dcc.Store(id="store-hist-brt",  data=[]),
         dcc.Store(id="store-gps-ts",    data=0),
@@ -560,12 +567,17 @@ app.layout = html.Div(
 # ==============================================================================
 
 @app.callback(
-    Output("dropdown-linhas", "options"),
-    Input("intervalo",        "n_intervals"),
+    Output("dropdown-linhas",        "options"),
+    Output("intervalo-dropdown",     "disabled"),
+    Input("intervalo-dropdown",      "n_intervals"),
 )
 def atualizar_opcoes_dropdown(_):
-    """Atualiza as opções do dropdown assim que o GTFS terminar de carregar."""
-    return [{"label": ln, "value": ln} for ln in linhas_short]
+    """Verifica a cada 2s se o GTFS terminou de carregar e popula o dropdown.
+    Desativa o intervalo rápido assim que as opções estiverem prontas.
+    """
+    opcoes = [{"label": ln, "value": ln} for ln in linhas_short]
+    pronto = len(opcoes) > 0
+    return opcoes, pronto
 
 
 @app.callback(
