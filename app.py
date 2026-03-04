@@ -241,12 +241,23 @@ def atualizar_historico(hist_list, df):
 
 def fetch_gps_data():
     """Busca dados GPS das APIs SPPO e BRT e retorna DataFrame unificado."""
-    agora  = datetime.now()
+    # Usar UTC-3 (BRT) explicitamente para compatibilidade local e no Render
+    from datetime import timezone
+    agora  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
     inicio = agora - timedelta(minutes=5)
     fmt    = "%Y-%m-%d+%H:%M:%S"
 
     sppo_df = pd.DataFrame()
     brt_df  = pd.DataFrame()
+
+    # Sessão compartilhada com headers para simular browser
+    _headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.data.rio/",
+    }
+    session = requests.Session()
+    session.headers.update(_headers)
 
     # SPPO
     url_sppo = (
@@ -254,23 +265,22 @@ def fetch_gps_data():
         f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
     )
     try:
-        resp = requests.get(url_sppo, timeout=30)
-        print(f"SPPO status: {resp.status_code}")
-        print(f"SPPO headers: {dict(resp.headers)}")
-        print(f"SPPO body (primeiros 500 chars): {resp.text[:500]}")
+        resp = session.get(url_sppo, timeout=30)
+        print(f"SPPO status: {resp.status_code} | Content-Type: {resp.headers.get('Content-Type','')}")
         if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, list) and data:
-                sppo_df = pd.DataFrame(data)
+            try:
+                data = resp.json()
+                if isinstance(data, list) and data:
+                    sppo_df = pd.DataFrame(data)
+            except Exception:
+                print(f"SPPO body nao e JSON: {resp.text[:200]}")
+        print(f"SPPO: {len(sppo_df)} registros brutos")
     except Exception as e:
         print(f"ERRO API SPPO: {e}")
 
     # BRT
     try:
-        resp = requests.get("https://dados.mobilidade.rio/gps/brt", timeout=30)
-        print(f"BRT status: {resp.status_code}")
-        print(f"BRT headers: {dict(resp.headers)}")
-        print(f"BRT body (primeiros 500 chars): {resp.text[:500]}")
+        resp = session.get("https://dados.mobilidade.rio/gps/brt", timeout=30)
         if resp.status_code == 200:
             veiculos = resp.json().get("veiculos") or []
             if veiculos:
