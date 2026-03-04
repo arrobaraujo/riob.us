@@ -54,12 +54,29 @@ shapes_gtfs      = None
 stops_gtfs       = None
 linhas_dict      = {}
 linhas_short     = []
-_dados_prontos   = False   # flag: carregamento concluído
+_dados_prontos   = False
+
+
+# --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
+# Isso garante que o dropdown já tem opções quando o app abre.
+print("Carregando routes (síncrono)...")
+try:
+    with zipfile.ZipFile("gtfs/gtfs.zip") as _z:
+        _names = [n for n in _z.namelist() if n.endswith("routes.txt")]
+        if _names:
+            with _z.open(_names[0]) as _f:
+                _routes_df = pd.read_csv(_f, dtype=str)
+            if {"route_short_name", "route_long_name"}.issubset(_routes_df.columns):
+                linhas_dict  = dict(zip(_routes_df["route_short_name"], _routes_df["route_long_name"]))
+                linhas_short = sorted(_routes_df["route_short_name"].dropna().unique().tolist())
+                print(f"Routes carregadas: {len(linhas_short)} linhas disponíveis no dropdown.")
+except Exception as e:
+    print(f"ERRO ao carregar routes (síncrono): {e}")
 
 
 def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
-    global stops_gtfs, linhas_dict, linhas_short, _dados_prontos
+    global stops_gtfs, _dados_prontos
 
     # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
     print("Carregando limites do Rio...")
@@ -96,8 +113,8 @@ def _carregar_dados_estaticos():
     except Exception as e:
         print(f"ERRO ao carregar garagens: {e}")
 
-    # --- GTFS -----------------------------------------------------------------
-    print("Carregando GTFS...")
+    # --- GTFS completo (shapes + stops) ---------------------------------------
+    print("Carregando GTFS (shapes e stops)...")
     try:
         _gtfs = {}
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
@@ -136,22 +153,10 @@ def _carregar_dados_estaticos():
                 crs="EPSG:4326",
             )
 
-        _linhas_dict  = {}
-        _linhas_short = []
-        if "routes" in _gtfs:
-            routes = _gtfs["routes"]
-            if {"route_short_name", "route_long_name"}.issubset(routes.columns):
-                _linhas_dict  = dict(zip(routes["route_short_name"], routes["route_long_name"]))
-                _linhas_short = sorted(routes["route_short_name"].dropna().unique().tolist())
-                print(f"Linhas GTFS carregadas: {len(_linhas_short)}")
-
-        # Atribui globais de uma vez (thread-safe para leitura)
-        gtfs         = _gtfs
-        shapes_gtfs  = _shapes_gtfs
-        stops_gtfs   = _stops_gtfs
-        linhas_dict  = _linhas_dict
-        linhas_short = _linhas_short
-        print("GTFS carregado com sucesso.")
+        gtfs        = _gtfs
+        shapes_gtfs = _shapes_gtfs
+        stops_gtfs  = _stops_gtfs
+        print("GTFS completo carregado com sucesso.")
     except Exception as e:
         print(f"ERRO ao carregar GTFS: {e}")
 
@@ -159,7 +164,7 @@ def _carregar_dados_estaticos():
     print("Carregamento inicial concluído.")
 
 
-# Dispara carregamento em background — não bloqueia o servidor
+# Shapes/stops em background — não bloqueia o servidor nem o dropdown
 threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 
 
@@ -411,7 +416,7 @@ server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 app.layout = html.Div(
     [
         dcc.Interval(id="intervalo",        interval=30_000, n_intervals=0),
-        dcc.Interval(id="intervalo-dropdown", interval=2_000,  n_intervals=0),
+
         dcc.Store(id="store-hist-sppo", data=[]),
         dcc.Store(id="store-hist-brt",  data=[]),
         dcc.Store(id="store-gps-ts",    data=0),
@@ -438,7 +443,7 @@ app.layout = html.Div(
                         html.Div(
                             dcc.Dropdown(
                                 id="dropdown-linhas",
-                                options=[],
+                                options=[{"label": ln, "value": ln} for ln in linhas_short],
                                 multi=True,
                                 placeholder="Selecione uma ou mais linhas...",
                                 style={"width": "min(420px, 90vw)"},
@@ -566,18 +571,7 @@ app.layout = html.Div(
 # Callbacks
 # ==============================================================================
 
-@app.callback(
-    Output("dropdown-linhas",        "options"),
-    Output("intervalo-dropdown",     "disabled"),
-    Input("intervalo-dropdown",      "n_intervals"),
-)
-def atualizar_opcoes_dropdown(_):
-    """Verifica a cada 2s se o GTFS terminou de carregar e popula o dropdown.
-    Desativa o intervalo rápido assim que as opções estiverem prontas.
-    """
-    opcoes = [{"label": ln, "value": ln} for ln in linhas_short]
-    pronto = len(opcoes) > 0
-    return opcoes, pronto
+
 
 
 @app.callback(
