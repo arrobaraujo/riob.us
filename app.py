@@ -17,6 +17,7 @@ import zipfile
 import urllib.parse
 import warnings
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import dash
@@ -24,8 +25,10 @@ import dash_leaflet as dl
 import geopandas as gpd
 import pandas as pd
 import requests
-from dash import Input, Output, State, dcc, html
+from dash import Input, Output, dcc, html
+from requests.adapters import HTTPAdapter
 from shapely.geometry import LineString, shape as shapely_shape, MultiPolygon
+from urllib3.util.retry import Retry
 
 warnings.filterwarnings("ignore")
 
@@ -52,25 +55,29 @@ PALETA_CORES = [
 
 ESTILOS = {
     "header": {
-        "padding": "8px 16px",
-        "backgroundColor": "#343a40",
+        "padding": "10px 18px",
+        "backgroundColor": "#1f2a37",
         "color": "white",
         "display": "flex",
         "alignItems": "center",
+        "borderBottom": "1px solid #16202b",
+        "boxShadow": "0 1px 4px rgba(0,0,0,.12)",
     },
     "header_titulo": {
         "margin": 0,
-        "fontSize": "18px",
+        "fontSize": "19px",
         "fontWeight": "bold",
+        "letterSpacing": "0.2px",
     },
     "controles": {
-        "padding": "10px 16px",
-        "backgroundColor": "#f8f9fa",
+        "padding": "12px 16px",
+        "backgroundColor": "#f6f8fb",
         "borderBottom": "1px solid #dee2e6",
         "display": "flex",
         "flexDirection": "column",
         "alignItems": "center",
         "gap": "10px",
+        "boxShadow": "0 2px 6px rgba(31,42,55,.06)",
     },
     "label": {
         "fontWeight": "bold",
@@ -85,12 +92,14 @@ ESTILOS = {
         "width": "min(420px, 90vw)",
     },
     "botao_atualizar": {
-        "backgroundColor": "#0d6efd",
+        "backgroundColor": "#1366d6",
         "color": "white",
         "border": "none",
-        "padding": "8px 16px",
-        "borderRadius": "4px",
+        "padding": "8px 18px",
+        "borderRadius": "6px",
         "cursor": "pointer",
+        "fontWeight": "600",
+        "boxShadow": "0 1px 4px rgba(19,102,214,.25)",
     },
     "texto_atualizacao": {
         "color": "#6c757d",
@@ -98,22 +107,26 @@ ESTILOS = {
         "margin": "0 0 0 10px",
     },
     "caixa_legenda": {
-        "background": "white",
+        "background": "rgba(255,255,255,.96)",
         "padding": "10px 14px",
-        "borderRadius": "4px",
-        "boxShadow": "0 1px 5px rgba(0,0,0,.4)",
-        "font": "12px/1.5 Arial,sans-serif",
+        "borderRadius": "8px",
+        "boxShadow": "0 6px 16px rgba(31,42,55,.16)",
+        "border": "1px solid #e7ecf3",
+        "font": "12px/1.5 'Segoe UI',sans-serif",
+        "maxHeight": "50vh",
+        "overflowY": "auto",
+        "overflowX": "hidden",
     },
     "botao_localizacao": {
         "width": "34px",
         "height": "34px",
         "backgroundColor": "white",
-        "border": "2px solid rgba(0,0,0,0.3)",
-        "borderRadius": "4px",
+        "border": "1px solid rgba(31,42,55,0.24)",
+        "borderRadius": "6px",
         "cursor": "pointer",
         "fontSize": "16px",
         "lineHeight": "1",
-        "boxShadow": "none",
+        "boxShadow": "0 1px 5px rgba(0,0,0,.15)",
         "padding": "0",
         "display": "flex",
         "alignItems": "center",
@@ -129,8 +142,8 @@ ESTILOS = {
         "position": "absolute",
         "bottom": "30px",
         "left": "10px",
-        "zIndex": 1000,
-        "pointerEvents": "none",
+        "zIndex": 10000,
+        "pointerEvents": "auto",
     },
 }
 
@@ -141,6 +154,9 @@ ESTILOS = {
 # Cache GPS server-side — evita trafegar dados pesados para o browser
 _gps_lock  = threading.Lock()
 _gps_cache = pd.DataFrame()   # último fetch processado
+_last_update_ts = None  # timestamp da última atualização bem-sucedida
+_status_lock = threading.Lock()  # protege _last_update_ts
+_gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 
 # Cache das camadas estáticas (itinerários/paradas) por conjunto de linhas
 _map_static_cache_lock = threading.Lock()
@@ -151,6 +167,15 @@ _MAP_STATIC_CACHE_MAX_ITEMS = 64
 _gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
 _gtfs_load_event.clear()
 
+# ===== OTIMIZAÇÃO: Cache de SVGs pré-gerados (evita recalcular toda renderização) =====
+_svg_cache = {}  # {(color, bearing_nan): svg_data_uri}
+_svg_cache_lock = threading.Lock()
+
+# ===== OTIMIZAÇÃO: Histórico estruturado por tipo + timestamp para limpeza automática =====
+_hist_lock = threading.Lock()
+_hist_sppo_bygps = {}  # {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
+_hist_brt_bygps = {}   # Mesmo para BRT
+_HIST_MAX_AGE_SECONDS = 300  # 5 minutos — remove histórico antigo automaticamente
 rio_polygon      = None
 garagens_polygon = None
 gtfs             = {}
@@ -158,9 +183,34 @@ shapes_gtfs      = None
 stops_gtfs       = None
 line_to_shape_ids = {}
 line_to_stop_ids  = {}
+line_to_shape_coords = {}  # {linha: [coords_list]}
+line_to_stops_points = {}  # {linha: [(lat, lon, stop_name)]}
+line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
 linhas_dict      = {}
 linhas_short     = []
 linha_cor_fixa   = {}
+
+
+def _build_retry_session():
+    """Cria sessão HTTP com retry/backoff e pool de conexões."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=0.4,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET"]),
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+# Sessões persistentes para reduzir overhead de conexão/TLS.
+_http_session_sppo = _build_retry_session()
+_http_session_brt = _build_retry_session()
 
 MARKER_LIMITS_BY_ZOOM = [
     (9, 150),
@@ -170,6 +220,22 @@ MARKER_LIMITS_BY_ZOOM = [
     (13, 900),
     (14, 1300),
 ]
+
+# Modo leve para interacao: reduz custo de renderizacao quando ha muitos pontos.
+LIGHTWEIGHT_MARKER_THRESHOLD = 220
+MAX_STOPS_PER_RENDER = 450
+
+
+def _empty_shapes_gdf():
+    return gpd.GeoDataFrame({"shape_id": [], "geometry": []}, geometry="geometry", crs="EPSG:4326")
+
+
+def _empty_stops_gdf():
+    return gpd.GeoDataFrame(
+        {"stop_id": [], "stop_name": [], "stop_lat": [], "stop_lon": [], "geometry": []},
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
 
 
 # --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
@@ -200,6 +266,7 @@ except Exception as e:
 def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
     global stops_gtfs, line_to_shape_ids, line_to_stop_ids
+    global line_to_shape_coords, line_to_stops_points, line_to_bounds
 
     # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
     print("Carregando limites do Rio...")
@@ -244,6 +311,9 @@ def _carregar_dados_estaticos():
         _gtfs = {}
         _line_to_shape_ids = {}
         _line_to_stop_ids = {}
+        _line_to_shape_coords = {}
+        _line_to_stops_points = {}
+        _line_to_bounds = {}
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
             _target_files = {
                 "routes": {"usecols": ["route_id", "route_short_name"]},
@@ -271,8 +341,8 @@ def _carregar_dados_estaticos():
                 except Exception as e:
                     print(f"  ✗ Erro ao ler {key}: {e}")
 
-        _shapes_gtfs = None
-        _stops_gtfs  = None
+        _shapes_gtfs = _empty_shapes_gdf()
+        _stops_gtfs  = _empty_stops_gdf()
 
         if "shapes" in _gtfs and not _gtfs["shapes"].empty:
             try:
@@ -293,10 +363,6 @@ def _carregar_dados_estaticos():
 
                 if lines:
                     _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
-                else:
-                    _shapes_gtfs = gpd.GeoDataFrame(
-                        {"shape_id": [], "geometry": []}, geometry="geometry", crs="EPSG:4326"
-                    )
                 print(f"  Shapes criadas: {len(_shapes_gtfs)} linhas únicas")
             except Exception as e:
                 print(f"  ERRO ao processar shapes: {type(e).__name__} - {e}")
@@ -316,12 +382,6 @@ def _carregar_dados_estaticos():
                     _stops_gtfs = gpd.GeoDataFrame(
                         df,
                         geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
-                        crs="EPSG:4326",
-                    )
-                else:
-                    _stops_gtfs = gpd.GeoDataFrame(
-                        {"stop_id": [], "stop_name": [], "stop_lat": [], "stop_lon": [], "geometry": []},
-                        geometry="geometry",
                         crs="EPSG:4326",
                     )
                 print(f"  Stops criadas: {len(_stops_gtfs)} paradas")
@@ -362,23 +422,97 @@ def _carregar_dados_estaticos():
                     f"Índices GTFS prontos: {len(_line_to_shape_ids)} linhas com shapes, "
                     f"{len(_line_to_stop_ids)} linhas com paradas"
                 )
+
+                # Pré-computa coordenadas de shapes/paradas por linha (lazy render rápido)
+                if not _shapes_gtfs.empty and _line_to_shape_ids:
+                    shapes_lookup = _shapes_gtfs.set_index("shape_id")
+                    for linha_id, shape_ids in _line_to_shape_ids.items():
+                        coords_linha = []
+                        min_lat = None
+                        min_lon = None
+                        max_lat = None
+                        max_lon = None
+                        for shp_id in shape_ids:
+                            if shp_id not in shapes_lookup.index:
+                                continue
+                            try:
+                                geom = shapes_lookup.loc[shp_id, "geometry"]
+                                if geom is None:
+                                    continue
+                                coords = [[pt[1], pt[0]] for pt in geom.coords]
+                                if len(coords) > 1:
+                                    coords_linha.append(coords)
+                                    lats = [c[0] for c in coords]
+                                    lons = [c[1] for c in coords]
+                                    seg_min_lat, seg_max_lat = min(lats), max(lats)
+                                    seg_min_lon, seg_max_lon = min(lons), max(lons)
+                                    min_lat = seg_min_lat if min_lat is None else min(min_lat, seg_min_lat)
+                                    min_lon = seg_min_lon if min_lon is None else min(min_lon, seg_min_lon)
+                                    max_lat = seg_max_lat if max_lat is None else max(max_lat, seg_max_lat)
+                                    max_lon = seg_max_lon if max_lon is None else max(max_lon, seg_max_lon)
+                            except Exception:
+                                continue
+                        if coords_linha:
+                            _line_to_shape_coords[linha_id] = coords_linha
+                            if None not in (min_lat, min_lon, max_lat, max_lon):
+                                _line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
+
+                if not _stops_gtfs.empty and _line_to_stop_ids:
+                    stops_lookup = _stops_gtfs.set_index("stop_id")
+                    for linha_id, stop_ids in _line_to_stop_ids.items():
+                        pontos_linha = []
+                        for stop_id in stop_ids:
+                            if stop_id not in stops_lookup.index:
+                                continue
+                            try:
+                                stop_row = stops_lookup.loc[stop_id]
+                                stop_name = ""
+                                if "stop_name" in stop_row and pd.notna(stop_row["stop_name"]):
+                                    stop_name = str(stop_row["stop_name"])
+                                pontos_linha.append((
+                                    float(stop_row["stop_lat"]),
+                                    float(stop_row["stop_lon"]),
+                                    stop_name,
+                                ))
+                            except Exception:
+                                continue
+                        if pontos_linha:
+                            _line_to_stops_points[linha_id] = pontos_linha
+
+                print(
+                    f"Pré-cálculo estático pronto: {len(_line_to_shape_coords)} linhas com coords, "
+                    f"{len(_line_to_stops_points)} linhas com pontos"
+                )
             except Exception as e:
                 print(f"ERRO ao montar índices GTFS por linha: {type(e).__name__} - {e}")
 
-        gtfs        = _gtfs
-        shapes_gtfs = _shapes_gtfs
-        stops_gtfs  = _stops_gtfs
-        line_to_shape_ids = _line_to_shape_ids
-        line_to_stop_ids  = _line_to_stop_ids
+        with _gtfs_data_lock:
+            gtfs        = _gtfs
+            shapes_gtfs = _shapes_gtfs if _shapes_gtfs is not None else _empty_shapes_gdf()
+            stops_gtfs  = _stops_gtfs if _stops_gtfs is not None else _empty_stops_gdf()
+            line_to_shape_ids = _line_to_shape_ids
+            line_to_stop_ids  = _line_to_stop_ids
+            line_to_shape_coords = _line_to_shape_coords
+            line_to_stops_points = _line_to_stops_points
+            line_to_bounds = _line_to_bounds
         with _map_static_cache_lock:
             _map_static_cache.clear()
         print(f"GTFS carregado com arquivos: {list(_gtfs.keys())}")
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
+        with _gtfs_data_lock:
+            shapes_gtfs = _empty_shapes_gdf()
+            stops_gtfs = _empty_stops_gdf()
     except KeyError as e:
         print(f"ERRO ao carregar GTFS (coluna faltante): {e}")
+        with _gtfs_data_lock:
+            shapes_gtfs = _empty_shapes_gdf()
+            stops_gtfs = _empty_stops_gdf()
     except Exception as e:
         print(f"ERRO ao carregar GTFS: {type(e).__name__} - {e}")
+        with _gtfs_data_lock:
+            shapes_gtfs = _empty_shapes_gdf()
+            stops_gtfs = _empty_stops_gdf()
 
     print("Carregamento inicial concluído.")
     # Sinaliza que o GTFS foi carregado (mesmo que parcialmente)
@@ -427,6 +561,48 @@ def _limit_df_for_render(df, zoom):
     return df.iloc[::step].head(limit)
 
 
+def _limit_list_for_render(values, limit):
+    """Reduz uma lista grande mantendo amostragem uniforme."""
+    if values is None:
+        return []
+    if limit is None or len(values) <= limit:
+        return values
+    step = max(1, math.ceil(len(values) / limit))
+    return values[::step][:limit]
+
+
+def _build_geojson_cluster_layer(df, layer_id):
+    """Cria uma unica camada GeoJSON clusterizada para reduzir custo de renderizacao."""
+    if df is None or df.empty:
+        return []
+
+    features = []
+    for row in df.itertuples(index=False):
+        row_dict = row._asdict()
+        linha = str(row_dict.get("linha", ""))
+        ordem = str(row_dict.get("ordem", ""))
+        tooltip = f"{linha} · {ordem}" if linha or ordem else "Veiculo"
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row_dict["lng"]), float(row_dict["lat"])],
+                },
+                "properties": {"tooltip": tooltip},
+            }
+        )
+
+    return [
+        dl.GeoJSON(
+            id=layer_id,
+            data={"type": "FeatureCollection", "features": features},
+            cluster=True,
+            zoomToBounds=False,
+        )
+    ]
+
+
 def _gerar_svg_seta(color="#888"):
     """Gera SVG de seta e retorna data-URI codificado."""
     svg = (
@@ -458,13 +634,16 @@ def _gerar_svg_usuario():
     )
     return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
 
-
-def make_vehicle_icon(bearing, color="#1a6faf"):
-    """Gera ícone SVG direcional como data-URI.
-    Sem direção: círculo 19x19 (2/3). Com direção: seta 28x28.
-    Retorna (url, [w, h], [ax, ay]).
-    """
+def _cache_or_generate_svg(color, bearing):
+    """Cache de SVG: retorna do cache ou gera e armazena."""
     is_nan = bearing is None or (isinstance(bearing, float) and math.isnan(bearing))
+    cache_key = (color, is_nan)
+
+    with _svg_cache_lock:
+        cached = _svg_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     if is_nan:
         svg = (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 28 28">'
@@ -472,7 +651,7 @@ def make_vehicle_icon(bearing, color="#1a6faf"):
             f'<circle cx="14" cy="14" r="4" fill="white"/>'
             f"</svg>"
         )
-        return ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [19, 19], [9, 9])
+        result = ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [19, 19], [9, 9])
     else:
         svg = (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">'
@@ -480,7 +659,35 @@ def make_vehicle_icon(bearing, color="#1a6faf"):
             f'<polygon points="14,2 24,24 14,18 4,24" fill="{color}" stroke="black" stroke-width="2"/>'
             f"</g></svg>"
         )
-        return ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [28, 28], [14, 14])
+        result = ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [28, 28], [14, 14])
+
+    with _svg_cache_lock:
+        _svg_cache[cache_key] = result
+    return result
+
+
+def _limpar_historico_antigo(hist_dict, tipo="SPPO"):
+    """Remove veículos do histórico que não foram atualizados há mais de MAX_AGE_SECONDS."""
+    agora = time.time()
+    ordens_remover = []
+    for ordem, dados in hist_dict.items():
+        ts_add = dados.get("ts_add", 0)
+        if agora - ts_add > _HIST_MAX_AGE_SECONDS:
+            ordens_remover.append(ordem)
+
+    for ordem in ordens_remover:
+        del hist_dict[ordem]
+
+    if ordens_remover:
+        print(f"[{tipo}] Removidas {len(ordens_remover)} posições antigas do histórico")
+
+
+def make_vehicle_icon(bearing, color="#1a6faf"):
+    """Gera ícone SVG direcional como data-URI.
+    Sem direção: círculo 19x19 (2/3). Com direção: seta 28x28.
+    Retorna (url, [w, h], [ax, ay]).
+    """
+    return _cache_or_generate_svg(color, bearing)
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -570,7 +777,7 @@ def _processar_dados_gps(df, config):
         
         if config["lat_needs_conversion"]:
             df[lat_col] = pd.to_numeric(
-                df[lat_col].astype(str).str.replace(",", "."),
+                df[lat_col].astype(str).str.replace(",", ".", regex=False),
                 errors="coerce"
             )
         else:
@@ -578,7 +785,7 @@ def _processar_dados_gps(df, config):
         
         if config["lon_needs_conversion"]:
             df[lon_col] = pd.to_numeric(
-                df[lon_col].astype(str).str.replace(",", "."),
+                df[lon_col].astype(str).str.replace(",", ".", regex=False),
                 errors="coerce"
             )
         else:
@@ -630,72 +837,90 @@ def calcular_bearing_df(df, hist_list, dist_min=20):
     """
     df = df.copy()
     df["direcao"] = float("nan")
-    
+
     if not hist_list:
         return df
-    
-    hist_map = {r["ordem"]: r for r in hist_list}
-    ordens_presentes = df["ordem"].isin(hist_map.keys())
-    
-    if not ordens_presentes.any():
+
+    # Aceita histórico no formato novo (dict) e no legado (lista de dicts)
+    hist_map = hist_list if isinstance(hist_list, dict) else {r["ordem"]: r for r in hist_list}
+    if not hist_map:
         return df
-    
-    # Processar apenas veículos com histórico
-    for idx in df[ordens_presentes].index:
-        row = df.loc[idx]
-        ant = hist_map.get(row["ordem"])
-        if ant is None:
-            continue
-        
-        t_atual = pd.to_datetime(row["datahora"])
-        t_ant = pd.to_datetime(ant["datahora"])
-        time_diff = abs((t_atual - t_ant).total_seconds() / 60)
-        
-        if time_diff >= 10:
-            continue
-        
-        dist = haversine(ant["lat"], ant["lng"], row["lat"], row["lng"])
+
+    hist_df = pd.DataFrame.from_dict(hist_map, orient="index")
+    if hist_df.empty:
+        return df
+    if "bearing" not in hist_df.columns:
+        hist_df["bearing"] = hist_df.get("ultimo_bearing")
+    hist_df["ordem"] = hist_df.index
+    hist_df = hist_df.rename(columns={"lat": "lat_prev", "lng": "lng_prev", "datahora": "datahora_prev"})
+
+    # Junta apenas veículos presentes no histórico para reduzir custo de iteração.
+    cand = df.reset_index().merge(
+        hist_df[["ordem", "lat_prev", "lng_prev", "datahora_prev", "bearing"]],
+        on="ordem",
+        how="inner",
+    )
+    if cand.empty:
+        return df
+
+    cand["datahora_prev"] = pd.to_datetime(cand["datahora_prev"], errors="coerce")
+    cand["datahora"] = pd.to_datetime(cand["datahora"], errors="coerce")
+    cand = cand.dropna(subset=["datahora", "datahora_prev", "lat_prev", "lng_prev", "lat", "lng"])
+    if cand.empty:
+        return df
+
+    time_diff_min = (cand["datahora"] - cand["datahora_prev"]).abs().dt.total_seconds().div(60)
+    cand = cand[time_diff_min < 10]
+    if cand.empty:
+        return df
+
+    for row in cand.itertuples(index=False):
+        dist = haversine(row.lat_prev, row.lng_prev, row.lat, row.lng)
         if dist >= dist_min:
-            df.at[idx, "direcao"] = round(
-                bearing_between(ant["lat"], ant["lng"], row["lat"], row["lng"]), 0
+            df.at[row.index, "direcao"] = round(
+                bearing_between(row.lat_prev, row.lng_prev, row.lat, row.lng), 0
             )
-        else:
-            ub = ant.get("ultimo_bearing")
-            if ub is not None:
-                df.at[idx, "direcao"] = ub
-    
+        elif row.bearing is not None and not (isinstance(row.bearing, float) and math.isnan(row.bearing)):
+            df.at[row.index, "direcao"] = row.bearing
+
     return df
 
 
-def atualizar_historico(hist_list, df):
-    """Mantém apenas a posição mais recente por veículo no histórico."""
-    hist_map = {r["ordem"]: r for r in (hist_list or [])}
-    
+def atualizar_historico(hist_dict, df):
+    """
+    Mantém apenas a posição mais recente por veículo no histórico.
+    Formato novo: {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
+    """
     # Iterar apenas sobre linhas do dataframe (mais eficiente)
     for _, row in df.iterrows():
-        direcao = row.get("direcao")
-        ub = (
-            direcao
-            if direcao is not None and not (isinstance(direcao, float) and math.isnan(direcao))
-            else hist_map.get(row["ordem"], {}).get("ultimo_bearing")
-        )
-        hist_map[row["ordem"]] = {
-            "ordem":          row["ordem"],
-            "datahora":       str(row["datahora"]),
-            "lat":            row["lat"],
-            "lng":            row["lng"],
-            "ultimo_bearing": ub,
+        bearing = row.get("direcao")
+        # Converte NaN para None
+        if bearing is not None and isinstance(bearing, float) and math.isnan(bearing):
+            bearing = None
+
+        hist_dict[row["ordem"]] = {
+            "lat": float(row["lat"]),
+            "lng": float(row["lng"]),
+            "datahora": str(row["datahora"]),
+            "bearing": bearing,
+            "ts_add": time.time(),  # Timestamp para limpeza automática
         }
-    return list(hist_map.values())
+
+    return hist_dict
 
 
-def fetch_gps_data():
+def fetch_gps_data(linhas_sel=None):
     """Busca dados GPS das APIs SPPO e BRT e retorna DataFrame unificado."""
+    # OTIMIZAÇÃO: Sem linhas selecionadas, não busca dados remotos.
+    if not linhas_sel:
+        return pd.DataFrame()
+
     # Usar UTC-3 (BRT) explicitamente para compatibilidade local e no Render
     agora  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
     inicio = agora - timedelta(minutes=3)
     fmt    = "%Y-%m-%d+%H:%M:%S"
 
+    selected_lines = set(str(ln) for ln in (linhas_sel or []))
     sppo_df = pd.DataFrame()
     brt_df  = pd.DataFrame()
 
@@ -705,46 +930,57 @@ def fetch_gps_data():
         "Accept": "application/json, text/plain, */*",
         "Referer": "https://www.data.rio/",
     }
-    session = requests.Session()
-    session.headers.update(_headers)
 
-    # SPPO
-    url_sppo = (
-        f"https://dados.mobilidade.rio/gps/sppo"
-        f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
-    )
-    try:
-        resp = session.get(url_sppo, timeout=30)
-        print(f"SPPO status: {resp.status_code} | Content-Type: {resp.headers.get('Content-Type','')}")
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                if isinstance(data, list) and data:
-                    sppo_df = pd.DataFrame(data)
-            except ValueError:
-                print(f"SPPO body nao e JSON valido")
-        print(f"SPPO: {len(sppo_df)} registros brutos")
-    except requests.Timeout:
-        print("ERRO API SPPO: Timeout na requisição")
-    except requests.RequestException as e:
-        print(f"ERRO API SPPO: {type(e).__name__} - {e}")
-    except Exception as e:
-        print(f"ERRO inesperado SPPO: {type(e).__name__} - {e}")
+    def _fetch_sppo():
+        url_sppo = (
+            f"https://dados.mobilidade.rio/gps/sppo"
+            f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
+        )
+        try:
+            resp = _http_session_sppo.get(url_sppo, headers=_headers, timeout=20)
+            print(f"SPPO status: {resp.status_code} | Content-Type: {resp.headers.get('Content-Type','')}")
+            if resp.status_code != 200:
+                return pd.DataFrame()
+            data = resp.json()
+            if not isinstance(data, list) or not data:
+                return pd.DataFrame()
+            if selected_lines:
+                data = [r for r in data if str(r.get("linha", "")) in selected_lines]
+            print(f"SPPO: {len(data)} registros brutos")
+            return pd.DataFrame(data) if data else pd.DataFrame()
+        except requests.Timeout:
+            print("ERRO API SPPO: Timeout na requisição")
+        except requests.RequestException as e:
+            print(f"ERRO API SPPO: {type(e).__name__} - {e}")
+        except ValueError:
+            print("SPPO body nao e JSON valido")
+        except Exception as e:
+            print(f"ERRO inesperado SPPO: {type(e).__name__} - {e}")
+        return pd.DataFrame()
 
-    # BRT
-    try:
-        resp = session.get("https://dados.mobilidade.rio/gps/brt", timeout=30)
-        if resp.status_code == 200:
+    def _fetch_brt():
+        try:
+            resp = _http_session_brt.get("https://dados.mobilidade.rio/gps/brt", headers=_headers, timeout=20)
+            if resp.status_code != 200:
+                return pd.DataFrame()
             veiculos = resp.json().get("veiculos") or []
-            if veiculos:
-                brt_df = pd.DataFrame(veiculos)
-        print(f"BRT: {len(brt_df)} registros brutos")
-    except requests.Timeout:
-        print("ERRO API BRT: Timeout na requisição")
-    except requests.RequestException as e:
-        print(f"ERRO API BRT: {type(e).__name__} - {e}")
-    except Exception as e:
-        print(f"ERRO inesperado BRT: {type(e).__name__} - {e}")
+            if selected_lines:
+                veiculos = [r for r in veiculos if str(r.get("linha", "")) in selected_lines]
+            print(f"BRT: {len(veiculos)} registros brutos")
+            return pd.DataFrame(veiculos) if veiculos else pd.DataFrame()
+        except requests.Timeout:
+            print("ERRO API BRT: Timeout na requisição")
+        except requests.RequestException as e:
+            print(f"ERRO API BRT: {type(e).__name__} - {e}")
+        except Exception as e:
+            print(f"ERRO inesperado BRT: {type(e).__name__} - {e}")
+        return pd.DataFrame()
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fut_sppo = ex.submit(_fetch_sppo)
+        fut_brt = ex.submit(_fetch_brt)
+        sppo_df = fut_sppo.result()
+        brt_df = fut_brt.result()
 
     # Processar SPPO
     if len(sppo_df) > 0:
@@ -773,21 +1009,14 @@ def fetch_gps_data():
         dados = dados[dados["linha"].isin(linhas_short)]
         print(f"Filtro GTFS: {antes} → {len(dados)} registros")
 
-    # Filtro espacial — dentro do município do Rio, fora das garagens
-    if (rio_polygon is not None or garagens_polygon is not None) and len(dados) > 0:
-        gdf = gpd.GeoDataFrame(
-            dados,
-            geometry=gpd.points_from_xy(dados["longitude"], dados["latitude"]),
-            crs="EPSG:4326",
-        )
-        # Mantém apenas pontos dentro do Rio (se limite carregado)
-        if rio_polygon is not None:
-            gdf = gdf[gdf.geometry.within(rio_polygon)]
-        # Remove pontos dentro das garagens (se shapefile carregado)
-        if garagens_polygon is not None and len(gdf) > 0:
-            gdf = gdf[~gdf.geometry.within(garagens_polygon)]
-        dados = gdf.drop(columns="geometry").copy()
+    # Filtro final por linhas selecionadas (garantia)
+    if selected_lines:
+        antes = len(dados)
+        dados = dados[dados["linha"].astype(str).isin(selected_lines)]
+        print(f"Filtro seleção: {antes} → {len(dados)} registros")
 
+    # Conversão rápida de coordenadas (sem geometria custosa)
+    dados["linha"] = dados["linha"].astype(str)
     dados["lat"] = dados["latitude"].astype(float)
     dados["lng"] = dados["longitude"].astype(float)
     dados = dados.reset_index(drop=True)
@@ -812,12 +1041,13 @@ server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
 app.layout = html.Div(
     [
-        dcc.Interval(id="intervalo",        interval=30_000, n_intervals=0),
+        dcc.Interval(id="intervalo",        interval=45_000, n_intervals=0),
+        dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
 
-        dcc.Store(id="store-hist-sppo", data=[]),
-        dcc.Store(id="store-hist-brt",  data=[]),
+        dcc.Store(id="store-linhas-debounce", data=[]),
         dcc.Store(id="store-gps-ts",    data=0),
         dcc.Store(id="store-localizacao", data=None),
+        dcc.Store(id="store-update-status", data={"updating": False, "last_ts": None}),
 
         # Cabeçalho
         html.Div(
@@ -855,8 +1085,18 @@ app.layout = html.Div(
                             style=ESTILOS["botao_atualizar"],
                         ),
                         html.P(
-                            "Atualizações a cada 30 segs.",
+                            "Atualizações a cada 45 segs.",
                             style=ESTILOS["texto_atualizacao"],
+                        ),
+                        html.Span(
+                            id="span-update-icon",
+                            style={"marginLeft": "8px", "fontSize": "14px"},
+                            children="",
+                        ),
+                        html.Span(
+                            id="span-update-time",
+                            style={"marginLeft": "12px", "fontSize": "12px", "color": "#6c757d"},
+                            children="",
                         ),
                     ],
                     style={"display": "flex", "alignItems": "center", "justifyContent": "center",
@@ -932,8 +1172,13 @@ app.layout = html.Div(
             style={"position": "relative"},
         ),
     ],
-    style={"fontFamily": "Arial, sans-serif", "boxSizing": "border-box",
-            "overflowX": "hidden", "maxWidth": "100vw"},
+    style={
+        "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
+        "boxSizing": "border-box",
+        "overflowX": "hidden",
+        "maxWidth": "100vw",
+        "background": "#eef2f7",
+    },
 )
 
 
@@ -945,42 +1190,87 @@ app.layout = html.Div(
 
 
 @app.callback(
+    Output("store-linhas-debounce", "data"),
+    Output("intervalo-linhas-debounce", "disabled"),
+    Input("dropdown-linhas", "value"),
+    Input("intervalo-linhas-debounce", "n_intervals"),
+    prevent_initial_call=True,
+)
+def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
+    """Sincroniza seleção de linhas com debounce de 500ms."""
+    trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
+    if trigger == "dropdown-linhas":
+        return dash.no_update, False
+    if trigger == "intervalo-linhas-debounce":
+        return linhas_sel or [], True
+    return dash.no_update, dash.no_update
+
+
+@app.callback(
     Output("store-gps-ts",    "data"),
-    Output("store-hist-sppo", "data"),
-    Output("store-hist-brt",  "data"),
+    Output("store-update-status", "data"),
     Input("intervalo",        "n_intervals"),
     Input("btn-atualizar",    "n_clicks"),
-    State("store-hist-sppo",  "data"),
-    State("store-hist-brt",   "data"),
+    Input("store-linhas-debounce", "data"),
     prevent_initial_call=False,
 )
-def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
+def atualizar_gps(_n_int, _n_btn, linhas_sel):
     """Busca GPS, armazena no cache server-side e retorna só timestamp."""
-    global _gps_cache
+    global _gps_cache, _last_update_ts, _hist_sppo_bygps, _hist_brt_bygps
 
-    dados = fetch_gps_data()
+    with _status_lock:
+        last_ts_snapshot = _last_update_ts
+    status = {"updating": True, "last_ts": last_ts_snapshot}
+
+    # OTIMIZAÇÃO: Passa linhas para fetch — se vazio, não gasta banda da API
+    dados = fetch_gps_data(linhas_sel=linhas_sel or [])
+    
+    # Atualiza timestamp apenas se fetch foi bem-sucedido
+    if len(dados) > 0:
+        new_ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+        with _status_lock:
+            _last_update_ts = new_ts
+        status["last_ts"] = new_ts.isoformat()
+    
     if len(dados) == 0:
-        return dash.no_update, hist_sppo or [], hist_brt or []
+        with _hist_lock:
+            _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
+            _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
+        status["updating"] = False
+        return dash.no_update, status
 
     sppo_df = dados[dados["tipo"] == "SPPO"].copy()
     brt_df  = dados[dados["tipo"] == "BRT"].copy()
 
+    # Calcula bearing apenas se há dados (otimização de CPU)
     if len(sppo_df) > 0:
-        sppo_df   = calcular_bearing_df(sppo_df, hist_sppo)
-        hist_sppo = atualizar_historico(hist_sppo, sppo_df)
+        with _hist_lock:
+            sppo_df = calcular_bearing_df(sppo_df, _hist_sppo_bygps)
+            _hist_sppo_bygps = atualizar_historico(_hist_sppo_bygps, sppo_df)
+            _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
+    else:
+        with _hist_lock:
+            _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
 
     if len(brt_df) > 0:
-        brt_df   = calcular_bearing_df(brt_df, hist_brt)
-        hist_brt = atualizar_historico(hist_brt, brt_df)
+        with _hist_lock:
+            brt_df = calcular_bearing_df(brt_df, _hist_brt_bygps)
+            _hist_brt_bygps = atualizar_historico(_hist_brt_bygps, brt_df)
+            _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
+    else:
+        with _hist_lock:
+            _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
 
     dados_final             = pd.concat([sppo_df, brt_df], ignore_index=True)
-    dados_final["datahora"] = dados_final["datahora"].astype(str)
+    if not dados_final.empty:
+        dados_final["datahora"] = dados_final["datahora"].astype(str)
 
     # Salva server-side — nenhum dado pesado vai para o browser
     with _gps_lock:
-        _gps_cache = dados_final
+        _gps_cache = dados_final if not dados_final.empty else pd.DataFrame()
 
-    return int(time.time()), hist_sppo, hist_brt
+    status["updating"] = False
+    return int(time.time()), status
 
 
 @app.callback(
@@ -990,36 +1280,37 @@ def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
     Output("layer-brt",         "children"),
     Output("legenda",           "children"),
     Input("store-gps-ts",       "data"),
-    Input("dropdown-linhas",    "value"),
+    Input("store-linhas-debounce", "data"),
     prevent_initial_call=False,
 )
 def atualizar_mapa(_ts, linhas_sel):
     """Reconstrói as camadas do mapa lendo do cache server-side."""
     linhas_sel = linhas_sel or []
+    selected_lines = set(str(ln) for ln in linhas_sel)
     cores      = get_linha_cores(linhas_sel)
     
     # Lê do cache server-side PRIMEIRO
     with _gps_lock:
-        dados = _gps_cache.copy()
+        dados = _gps_cache
     
 
     # --- Legenda --------------------------------------------------------------
     # Mini-legenda de ícones (sempre presente)
-    icone_seta_svg = _gerar_svg_seta()
-    icone_circulo_svg = _gerar_svg_circulo()
+    icone_seta = _cache_or_generate_svg("#888", float("nan"))
+    icone_circulo = _cache_or_generate_svg("#888", 0)
     secao_icones = html.Div(
         [
             html.B("Ícones:", style={"display": "block", "marginBottom": "5px", "fontSize": "13px"}),
             html.Div(
                 [
-                    html.Img(src=icone_seta_svg, style={"width": "18px", "height": "18px", "flexShrink": 0}),
+                    html.Img(src=icone_seta[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
                     html.Span("Com direção", style={"fontSize": "11px"}),
                 ],
                 style={"display": "flex", "alignItems": "center", "gap": "7px", "marginBottom": "4px"},
             ),
             html.Div(
                 [
-                    html.Img(src=icone_circulo_svg, style={"width": "18px", "height": "18px", "flexShrink": 0}),
+                    html.Img(src=icone_circulo[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
                     html.Span("Sem direção (parado)", style={"fontSize": "11px"}),
                 ],
                 style={"display": "flex", "alignItems": "center", "gap": "7px"},
@@ -1039,50 +1330,48 @@ def atualizar_mapa(_ts, linhas_sel):
             ],
             style={**ESTILOS["caixa_legenda"], "minWidth": "180px"},
         )
-    else:
-        itens = []
-        for ln in linhas_sel:
-            cor       = cores.get(ln, "#888888")
-            nome_long = linhas_dict.get(ln, "")
-            itens.append(
-                html.Div(
-                    [
-                        html.Span(style={
-                            "flexShrink": 0, "marginTop": "2px",
-                            "width": "14px", "height": "14px",
-                            "borderRadius": "3px", "background": cor,
-                            "display": "inline-block",
-                        }),
-                        html.Span(
-                            [html.B(ln)]
-                            + ([html.Br(), html.Span(nome_long,
-                                style={"color": "#555", "fontSize": "11px"})]
-                               if nome_long else [])
-                        ),
-                    ],
-                    style={"display": "flex", "alignItems": "flex-start",
-                           "gap": "8px", "marginBottom": "5px"},
-                )
+        # OTIMIZAÇÃO: Retorna early — sem processar shapes/paradas se nada foi selecionado
+        return [], [], [], [], legenda
+
+    # Só processa shapes/paradas quando linhas foram selecionadas
+    itens = []
+    for ln in linhas_sel:
+        cor       = cores.get(ln, "#888888")
+        nome_long = linhas_dict.get(ln, "")
+        itens.append(
+            html.Div(
+                [
+                    html.Span(style={
+                        "flexShrink": 0, "marginTop": "2px",
+                        "width": "14px", "height": "14px",
+                        "borderRadius": "3px", "background": cor,
+                        "display": "inline-block",
+                    }),
+                    html.Span(
+                        [html.B(ln)]
+                        + ([html.Br(), html.Span(nome_long,
+                            style={"color": "#555", "fontSize": "11px"})]
+                           if nome_long else [])
+                    ),
+                ],
+                style={"display": "flex", "alignItems": "flex-start",
+                       "gap": "8px", "marginBottom": "5px"},
             )
-        legenda = html.Div(
-            [
-                html.B("Linhas no mapa:",
-                       style={"display": "block", "marginBottom": "6px", "fontSize": "13px"}),
-                *itens,
-                secao_icones,
-            ],
-            style={**ESTILOS["caixa_legenda"], "minWidth": "180px", "maxWidth": "260px",
-                   "maxHeight": "40vh", "overflowY": "auto"},
         )
+    legenda = html.Div(
+        [
+            html.B("Linhas no mapa:",
+                   style={"display": "block", "marginBottom": "6px", "fontSize": "13px"}),
+            *itens,
+            secao_icones,
+        ],
+        style={**ESTILOS["caixa_legenda"], "minWidth": "180px", "maxWidth": "260px"},
+    )
 
     if dados.empty:
         return [], [], [], [], legenda
 
-    if not linhas_sel:
-        # Nenhuma linha selecionada — não renderiza veículos
-        return [], [], [], [], legenda
-
-    dados_filtrados = dados[dados["linha"].isin(linhas_sel)]
+    dados_filtrados = dados[dados["linha"].isin(selected_lines)]
 
     sppo_df = dados_filtrados[dados_filtrados["tipo"] == "SPPO"].copy() if len(dados_filtrados) > 0 else pd.DataFrame()
     brt_df  = dados_filtrados[dados_filtrados["tipo"] == "BRT"].copy()  if len(dados_filtrados) > 0 else pd.DataFrame()
@@ -1094,87 +1383,61 @@ def atualizar_mapa(_ts, linhas_sel):
     brt_df = _limit_df_for_render(brt_df, 11)
 
     # --- Itinerários ----------------------------------------------------------
+    if not _gtfs_load_event.is_set():
+        print("Aguardando carregamento de GTFS para renderizar shapes/paradas...")
+        _gtfs_load_event.wait(timeout=15)
+
+    with _gtfs_data_lock:
+        shape_coords_snapshot = dict(line_to_shape_coords)
+        stops_points_snapshot = dict(line_to_stops_points)
+
     cache_key = tuple(sorted(str(ln) for ln in linhas_sel))
     with _map_static_cache_lock:
         cached_layers = _map_static_cache.get(cache_key)
 
     if cached_layers is not None:
-        shapes_layers, paradas_layers = cached_layers
+        # Evita mutar listas do cache em renderizações subsequentes.
+        shapes_layers = list(cached_layers[0])
+        paradas_layers = list(cached_layers[1])
     else:
         shapes_layers = []
         paradas_layers = []
-    
-    # Aguarda o carregamento do GTFS (máximo 15 segundos)
-    if linhas_sel and not _gtfs_load_event.is_set():
-        print("Aguardando carregamento de GTFS para renderizar shapes/paradas...")
-        _gtfs_load_event.wait(timeout=15)
 
-    if linhas_sel and shapes_gtfs is not None and len(shapes_gtfs) > 0:
-        if line_to_shape_ids:
-            try:
-                for linha_id in linhas_sel:
-                    cor = cores.get(linha_id, "#888888")
-                    shp_ids = line_to_shape_ids.get(linha_id, [])
-                    if not shp_ids:
-                        continue
-                    sh = shapes_gtfs[shapes_gtfs["shape_id"].isin(shp_ids)]
-                    for row in sh.itertuples(index=False):
-                        try:
-                            coords = [[pt[1], pt[0]] for pt in row.geometry.coords]
-                            if len(coords) > 1:
-                                shapes_layers.append(
-                                    dl.Polyline(
-                                        positions=coords,
-                                        color=cor,
-                                        weight=4,
-                                        children=dl.Tooltip(f"Linha {linha_id}"),
-                                    )
-                                )
-                        except Exception as e:
-                            print(f"ERRO ao processar shape {linha_id}: {e}")
-            except Exception as e:
-                print(f"ERRO shapes: {type(e).__name__} - {e}")
-    else:
-        if linhas_sel and shapes_gtfs is None:
-            print("AVISO: shapes_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
-        elif linhas_sel:
-            print("AVISO: shapes_gtfs vazio - nenhuma shape para as linhas selecionadas")
+    if cached_layers is None:
+        try:
+            for linha_id in linhas_sel:
+                cor = cores.get(linha_id, "#888888")
+                for coords in shape_coords_snapshot.get(linha_id, []):
+                    shapes_layers.append(
+                        dl.Polyline(
+                            positions=coords,
+                            color=cor,
+                            weight=4,
+                            children=dl.Tooltip(f"Linha {linha_id}"),
+                        )
+                    )
 
-    if linhas_sel and stops_gtfs is not None and len(stops_gtfs) > 0:
-        if line_to_stop_ids:
-            try:
-                stop_ids = set()
-                for linha_id in linhas_sel:
-                    stop_ids.update(line_to_stop_ids.get(linha_id, []))
+                for stop_lat, stop_lon, stop_name in stops_points_snapshot.get(linha_id, []):
+                    paradas_layers.append(
+                        dl.CircleMarker(
+                            center=[stop_lat, stop_lon],
+                            radius=4,
+                            color="darkred",
+                            fillColor="red",
+                            fillOpacity=0.75,
+                            children=dl.Popup(stop_name),
+                        )
+                    )
 
-                if stop_ids:
-                    stops_f = stops_gtfs[stops_gtfs["stop_id"].isin(stop_ids)]
-                    for row in stops_f.itertuples(index=False):
-                        try:
-                            paradas_layers.append(
-                                dl.CircleMarker(
-                                    center=[float(row.stop_lat), float(row.stop_lon)],
-                                    radius=5,
-                                    color="darkred",
-                                    fillColor="red",
-                                    fillOpacity=0.8,
-                                    children=dl.Popup(str(getattr(row, "stop_name", ""))),
-                                )
-                            )
-                        except Exception as e:
-                            print(f"ERRO ao processar parada: {e}")
-            except Exception as e:
-                print(f"ERRO paradas: {type(e).__name__} - {e}")
-    else:
-        if linhas_sel and stops_gtfs is None:
-            print("AVISO: stops_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
-        elif linhas_sel:
-            print("AVISO: stops_gtfs vazio - nenhuma parada para as linhas selecionadas")
+            # Em selecao ampla, renderiza subconjunto de paradas para manter fluidez.
+            paradas_layers = _limit_list_for_render(paradas_layers, MAX_STOPS_PER_RENDER)
+        except Exception as e:
+            print(f"ERRO ao montar camadas estáticas por linha: {type(e).__name__} - {e}")
 
-    with _map_static_cache_lock:
-        if len(_map_static_cache) >= _MAP_STATIC_CACHE_MAX_ITEMS:
-            _map_static_cache.clear()
-        _map_static_cache[cache_key] = (shapes_layers, paradas_layers)
+        with _map_static_cache_lock:
+            if len(_map_static_cache) >= _MAP_STATIC_CACHE_MAX_ITEMS:
+                _map_static_cache.clear()
+            _map_static_cache[cache_key] = (list(shapes_layers), list(paradas_layers))
 
     # --- Helper popup ---------------------------------------------------------
     def _popup(row, extra=None):
@@ -1196,7 +1459,14 @@ def atualizar_mapa(_ts, linhas_sel):
         items.append(html.P(f"Hora: {hora}", style={"margin": "2px 0"}))
         return dl.Popup(html.Div(items))
 
-    # --- Ônibus SPPO ----------------------------------------------------------
+    # --- Ônibus/BRT -----------------------------------------------------------
+    lightweight_mode = (len(sppo_df) + len(brt_df)) > LIGHTWEIGHT_MARKER_THRESHOLD
+    if lightweight_mode:
+        onibus_children = _build_geojson_cluster_layer(sppo_df, "geojson-sppo")
+        brt_children = _build_geojson_cluster_layer(brt_df, "geojson-brt")
+        return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
+
+    # Modo detalhado: marcadores com icone direcional e popup.
     onibus_layers = []
     for row in sppo_df.itertuples(index=False):
         row_dict = row._asdict()
@@ -1208,12 +1478,11 @@ def atualizar_mapa(_ts, linhas_sel):
         onibus_layers.append(
             dl.Marker(
                 position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl","iconSize","iconAnchor"], make_vehicle_icon(bearing, cor))),
+                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon(bearing, cor))),
                 children=_popup(row_dict),
             )
         )
 
-    # --- BRT ------------------------------------------------------------------
     brt_layers = []
     for row in brt_df.itertuples(index=False):
         row_dict = row._asdict()
@@ -1225,12 +1494,14 @@ def atualizar_mapa(_ts, linhas_sel):
         brt_layers.append(
             dl.Marker(
                 position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl","iconSize","iconAnchor"], make_vehicle_icon(bearing, cor))),
+                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon(bearing, cor))),
                 children=_popup(row_dict, extra=f"Sentido: {row_dict.get('sentido', '')}"),
             )
         )
 
-    return shapes_layers, paradas_layers, onibus_layers, brt_layers, legenda
+    onibus_children = [dl.MarkerClusterGroup(children=onibus_layers)] if onibus_layers else []
+    brt_children = [dl.MarkerClusterGroup(children=brt_layers)] if brt_layers else []
+    return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
 
 
 # ==============================================================================
@@ -1293,6 +1564,88 @@ def centralizar_na_posicao(data):
         children=dl.Tooltip("Você está aqui"),
     )
     return [lat, lon], 15, [marcador]
+
+
+# ==============================================================================
+# Callback: Atualizar UI do botão e timestamp de atualização
+# ==============================================================================
+
+@app.callback(
+    Output("btn-atualizar", "disabled"),
+    Output("span-update-icon", "children"),
+    Output("span-update-time", "children"),
+    Input("store-update-status", "data"),
+)
+def atualizar_ui_atualizacao(status):
+    """Desabilita botão durante atualização e mostra ícone + timestamp."""
+    updating = status.get("updating", False) if status else False
+    last_ts = status.get("last_ts") if status else None
+    
+    # Ícone de atualização (animado quando atualizando)
+    icone = "🔄" if updating else ""
+    
+    # Timestamp da última atualização
+    tempo_texto = ""
+    if last_ts:
+        try:
+            dt = datetime.fromisoformat(last_ts)
+            tempo_texto = dt.strftime("%H:%M:%S")
+        except Exception:
+            tempo_texto = ""
+    
+    return updating, icone, tempo_texto
+
+
+# ==============================================================================
+# Callback: Zoom automático ao selecionar linhas
+# ==============================================================================
+
+@app.callback(
+    Output("mapa", "bounds"),
+    Input("store-linhas-debounce", "data"),
+    prevent_initial_call=True,
+)
+def zoom_para_linhas(linhas_sel):
+    """Calcula bounds das shapes selecionadas e faz zoom automático."""
+    if not linhas_sel:
+        return dash.no_update
+
+    # Aguarda carregamento do GTFS com sincronização baseada em Event.
+    if not _gtfs_load_event.is_set():
+        _gtfs_load_event.wait(timeout=15)
+
+    with _gtfs_data_lock:
+        bounds_snapshot = dict(line_to_bounds)
+
+    if not bounds_snapshot:
+        return dash.no_update
+    
+    try:
+        min_lat = None
+        min_lon = None
+        max_lat = None
+        max_lon = None
+        for linha_id in linhas_sel:
+            b = bounds_snapshot.get(linha_id)
+            if not b:
+                continue
+            sw, ne = b
+            min_lat = sw[0] if min_lat is None else min(min_lat, sw[0])
+            min_lon = sw[1] if min_lon is None else min(min_lon, sw[1])
+            max_lat = ne[0] if max_lat is None else max(max_lat, ne[0])
+            max_lon = ne[1] if max_lon is None else max(max_lon, ne[1])
+
+        if None in (min_lat, min_lon, max_lat, max_lon):
+            return dash.no_update
+
+        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+        
+        print(f"Zoom para linhas {linhas_sel}: bounds={bounds}")
+        return bounds
+        
+    except Exception as e:
+        print(f"ERRO ao calcular zoom: {type(e).__name__} - {e}")
+        return dash.no_update
 
 
 # ==============================================================================
