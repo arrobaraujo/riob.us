@@ -33,21 +33,16 @@ warnings.filterwarnings("ignore")
 # ==============================================================================
 
 PALETA_CORES = [
-    "#E63946",  # Vermelho vibrante
-    "#F77F00",  # Laranja brilhante
-    "#FFBE0B",  # Amarelo ouro
-    "#06D6A0",  # Verde ciano
-    "#118AB2",  # Azul profundo
-    "#8338EC",  # Roxo vibrante
-    "#FF006E",  # Magenta quente
-    "#00B4D8",  # Azul ciano
-    "#FB5607",  # Laranja-vermelho
-    "#3A86FF",  # Azul céu
-    "#2A9D8F",  # Verde azulado
-    "#F94144",  # Vermelho coral
-    "#457B9D",  # Azul aço
-    "#90BE6D",  # Verde suave
-    "#277DA1",  # Azul naval
+    "#E63946",  # Vermelho
+    "#FF00D9",  # Rosa
+    "#FFBE0B",  # Amarelo
+    "#4A47A3",  # Índigo
+    "#3CB44B",  # Verde
+    "#118AB2",  # Azul
+    "#00BCD4",  # Ciano Elétrico
+    "#8338EC",  # Roxo
+    "#455A64",  # Cinza Azulado
+    "#8B5E34",  # Marrom
 ]
 
 # ==============================================================================
@@ -146,6 +141,11 @@ ESTILOS = {
 _gps_lock  = threading.Lock()
 _gps_cache = pd.DataFrame()   # último fetch processado
 
+# Cache das camadas estáticas (itinerários/paradas) por conjunto de linhas
+_map_static_cache_lock = threading.Lock()
+_map_static_cache = {}
+_MAP_STATIC_CACHE_MAX_ITEMS = 64
+
 # Sincronização para carregamento de dados estáticos
 _gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
 _gtfs_load_event.clear()
@@ -155,8 +155,20 @@ garagens_polygon = None
 gtfs             = {}
 shapes_gtfs      = None
 stops_gtfs       = None
+line_to_shape_ids = {}
+line_to_stop_ids  = {}
 linhas_dict      = {}
 linhas_short     = []
+linha_cor_fixa   = {}
+
+MARKER_LIMITS_BY_ZOOM = [
+    (9, 150),
+    (10, 250),
+    (11, 400),
+    (12, 650),
+    (13, 900),
+    (14, 1300),
+]
 
 
 # --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
@@ -171,6 +183,10 @@ try:
             if {"route_short_name", "route_long_name"}.issubset(_routes_df.columns):
                 linhas_dict  = dict(zip(_routes_df["route_short_name"], _routes_df["route_long_name"]))
                 linhas_short = sorted(_routes_df["route_short_name"].dropna().unique().tolist())
+                linha_cor_fixa = {
+                    ln: PALETA_CORES[i % len(PALETA_CORES)]
+                    for i, ln in enumerate(linhas_short)
+                }
                 print(f"Routes carregadas: {len(linhas_short)} linhas disponíveis no dropdown.")
 except FileNotFoundError:
     print("ERRO: Arquivo gtfs/gtfs.zip não encontrado no startup")
@@ -182,7 +198,7 @@ except Exception as e:
 
 def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
-    global stops_gtfs
+    global stops_gtfs, line_to_shape_ids, line_to_stop_ids
 
     # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
     print("Carregando limites do Rio...")
@@ -221,20 +237,34 @@ def _carregar_dados_estaticos():
     except Exception as e:
         print(f"ERRO ao carregar garagens: {type(e).__name__} - {e}")
 
-    # --- GTFS completo (shapes + stops) ---------------------------------------
-    print("Carregando GTFS (shapes e stops)...")
+    # --- GTFS otimizado (somente arquivos necessários) ------------------------
+    print("Carregando GTFS otimizado...")
     try:
         _gtfs = {}
+        _line_to_shape_ids = {}
+        _line_to_stop_ids = {}
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
-            _all_files = z.namelist()
-            print(f"Arquivos no GTFS: {[f for f in _all_files if f.endswith('.txt')]}")
-            for name in _all_files:
-                if not name.endswith(".txt"):
+            _target_files = {
+                "routes": {"usecols": ["route_id", "route_short_name"]},
+                "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
+                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
+                "stops": {"usecols": ["stop_id", "stop_name", "stop_lat", "stop_lon"]},
+                "stop_times": {"usecols": ["trip_id", "stop_id"]},
+            }
+            _zip_names = z.namelist()
+            for key, opts in _target_files.items():
+                names = [n for n in _zip_names if n.endswith(f"{key}.txt")]
+                if not names:
+                    print(f"  AVISO: {key}.txt não encontrado no GTFS")
                     continue
-                key = name.replace(".txt", "").split("/")[-1]
                 try:
-                    with z.open(name) as f:
-                        _gtfs[key] = pd.read_csv(f, dtype=str)
+                    with z.open(names[0]) as f:
+                        _gtfs[key] = pd.read_csv(
+                            f,
+                            dtype=str,
+                            usecols=opts["usecols"],
+                            low_memory=False,
+                        )
                         print(f"  ✓ {key}: {len(_gtfs[key])} registros")
                 except Exception as e:
                     print(f"  ✗ Erro ao ler {key}: {e}")
@@ -245,7 +275,6 @@ def _carregar_dados_estaticos():
         if "shapes" in _gtfs and not _gtfs["shapes"].empty:
             try:
                 df = _gtfs["shapes"].copy()
-                print(f"  Processando {len(df)} pontos de shapes...")
                 df["shape_pt_lat"]      = pd.to_numeric(df["shape_pt_lat"], errors="coerce")
                 df["shape_pt_lon"]      = pd.to_numeric(df["shape_pt_lon"], errors="coerce")
                 df["shape_pt_sequence"] = pd.to_numeric(df["shape_pt_sequence"], errors="coerce")
@@ -268,7 +297,6 @@ def _carregar_dados_estaticos():
         if "stops" in _gtfs and not _gtfs["stops"].empty:
             try:
                 df = _gtfs["stops"].copy()
-                print(f"  Processando {len(df)} paradas...")
                 df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
                 df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
                 df = df.dropna(subset=["stop_lat", "stop_lon"])
@@ -283,10 +311,49 @@ def _carregar_dados_estaticos():
         else:
             print(f"  AVISO: stops.txt não encontrado ou vazio no GTFS")
 
+        # Pré-computa índices por linha para reduzir custo no callback do mapa
+        if all(k in _gtfs for k in ["routes", "trips"]):
+            try:
+                rotas = _gtfs["routes"].dropna(subset=["route_id", "route_short_name"])
+                trips = _gtfs["trips"].dropna(subset=["trip_id", "route_id"]).merge(
+                    rotas, on="route_id", how="inner"
+                )
+
+                if "shape_id" in trips.columns:
+                    _line_to_shape_ids = (
+                        trips.dropna(subset=["shape_id"])
+                        .groupby("route_short_name")["shape_id"]
+                        .unique()
+                        .apply(list)
+                        .to_dict()
+                    )
+
+                if "stop_times" in _gtfs and not _gtfs["stop_times"].empty:
+                    st = _gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
+                        trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
+                    )
+                    _line_to_stop_ids = (
+                        st.groupby("route_short_name")["stop_id"]
+                        .unique()
+                        .apply(list)
+                        .to_dict()
+                    )
+
+                print(
+                    f"Índices GTFS prontos: {len(_line_to_shape_ids)} linhas com shapes, "
+                    f"{len(_line_to_stop_ids)} linhas com paradas"
+                )
+            except Exception as e:
+                print(f"ERRO ao montar índices GTFS por linha: {type(e).__name__} - {e}")
+
         gtfs        = _gtfs
         shapes_gtfs = _shapes_gtfs
         stops_gtfs  = _stops_gtfs
-        print(f"GTFS completo carregado. Colunas GTFS: {list(_gtfs.keys())}")
+        line_to_shape_ids = _line_to_shape_ids
+        line_to_stop_ids  = _line_to_stop_ids
+        with _map_static_cache_lock:
+            _map_static_cache.clear()
+        print(f"GTFS carregado com arquivos: {list(_gtfs.keys())}")
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
     except KeyError as e:
@@ -308,8 +375,37 @@ threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 # ==============================================================================
 
 def get_linha_cores(linhas_sel):
-    """Mapeia cada linha selecionada para uma cor da paleta."""
-    return {ln: PALETA_CORES[i % len(PALETA_CORES)] for i, ln in enumerate(linhas_sel or [])}
+    """Mapeia cada linha selecionada para uma cor fixa (estável)."""
+    cores = {}
+    for ln in (linhas_sel or []):
+        if ln in linha_cor_fixa:
+            cores[ln] = linha_cor_fixa[ln]
+        else:
+            # Fallback estável para linhas fora do routes.txt
+            idx = sum(ord(ch) for ch in str(ln)) % len(PALETA_CORES)
+            cores[ln] = PALETA_CORES[idx]
+    return cores
+
+
+def _max_markers_for_zoom(zoom):
+    """Retorna limite de marcadores por camada com base no zoom."""
+    if zoom is None:
+        return 400
+    for max_zoom, limit in MARKER_LIMITS_BY_ZOOM:
+        if zoom <= max_zoom:
+            return limit
+    return None  # sem limite em zoom alto
+
+
+def _limit_df_for_render(df, zoom):
+    """Reduz volume de pontos em zoom baixo para manter fluidez."""
+    if df.empty:
+        return df
+    limit = _max_markers_for_zoom(zoom)
+    if limit is None or len(df) <= limit:
+        return df
+    step = max(1, math.ceil(len(df) / limit))
+    return df.iloc[::step].head(limit)
 
 
 def _gerar_svg_seta(color="#888"):
@@ -690,7 +786,7 @@ def fetch_gps_data():
 
 app    = dash.Dash(
     __name__,
-    title="GPS BRT-SPPO - SMTR/RJ",
+    title="Consulta de ônibus no mapa - Rio de Janeiro",
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
@@ -706,7 +802,7 @@ app.layout = html.Div(
 
         # Cabeçalho
         html.Div(
-            html.H4("GPS BRT-SPPO - SMTR/RJ", style=ESTILOS["header_titulo"]),
+            html.H4("Consulta de ônibus no mapa - Rio de Janeiro", style=ESTILOS["header_titulo"]),
             style=ESTILOS["header"],
         ),
 
@@ -740,7 +836,7 @@ app.layout = html.Div(
                             style=ESTILOS["botao_atualizar"],
                         ),
                         html.P(
-                            "Atualização a cada 30s",
+                            "Atualizações a cada 30 segs.",
                             style=ESTILOS["texto_atualizacao"],
                         ),
                     ],
@@ -882,6 +978,11 @@ def atualizar_mapa(_ts, linhas_sel):
     """Reconstrói as camadas do mapa lendo do cache server-side."""
     linhas_sel = linhas_sel or []
     cores      = get_linha_cores(linhas_sel)
+    
+    # Lê do cache server-side PRIMEIRO
+    with _gps_lock:
+        dados = _gps_cache.copy()
+    
 
     # --- Legenda --------------------------------------------------------------
     # Mini-legenda de ícones (sempre presente)
@@ -889,7 +990,7 @@ def atualizar_mapa(_ts, linhas_sel):
     icone_circulo_svg = _gerar_svg_circulo()
     secao_icones = html.Div(
         [
-            html.B("Ícones", style={"display": "block", "marginBottom": "5px", "fontSize": "13px"}),
+            html.B("Ícones:", style={"display": "block", "marginBottom": "5px", "fontSize": "13px"}),
             html.Div(
                 [
                     html.Img(src=icone_seta_svg, style={"width": "18px", "height": "18px", "flexShrink": 0}),
@@ -900,7 +1001,7 @@ def atualizar_mapa(_ts, linhas_sel):
             html.Div(
                 [
                     html.Img(src=icone_circulo_svg, style={"width": "18px", "height": "18px", "flexShrink": 0}),
-                    html.Span("Sem direção / parado", style={"fontSize": "11px"}),
+                    html.Span("Sem direção (parado)", style={"fontSize": "11px"}),
                 ],
                 style={"display": "flex", "alignItems": "center", "gap": "7px"},
             ),
@@ -911,7 +1012,7 @@ def atualizar_mapa(_ts, linhas_sel):
     if not linhas_sel:
         legenda = html.Div(
             [
-                html.B("Linhas no mapa",
+                html.B("Linhas no mapa:",
                        style={"display": "block", "marginBottom": "4px", "fontSize": "13px"}),
                 html.Span("Nenhuma linha selecionada",
                           style={"color": "#888", "fontStyle": "italic"}),
@@ -946,7 +1047,7 @@ def atualizar_mapa(_ts, linhas_sel):
             )
         legenda = html.Div(
             [
-                html.B("Linhas no mapa",
+                html.B("Linhas no mapa:",
                        style={"display": "block", "marginBottom": "6px", "fontSize": "13px"}),
                 *itens,
                 secao_icones,
@@ -955,10 +1056,6 @@ def atualizar_mapa(_ts, linhas_sel):
                    "maxHeight": "40vh", "overflowY": "auto"},
         )
 
-    # Lê do cache server-side (sem tráfego de dados para o browser)
-    with _gps_lock:
-        dados = _gps_cache.copy()
-
     if dados.empty:
         return [], [], [], [], legenda
 
@@ -966,106 +1063,99 @@ def atualizar_mapa(_ts, linhas_sel):
         # Nenhuma linha selecionada — não renderiza veículos
         return [], [], [], [], legenda
 
-    dados = dados[dados["linha"].isin(linhas_sel)]
+    dados_filtrados = dados[dados["linha"].isin(linhas_sel)]
 
-    sppo_df = dados[dados["tipo"] == "SPPO"].copy() if len(dados) > 0 else pd.DataFrame()
-    brt_df  = dados[dados["tipo"] == "BRT"].copy()  if len(dados) > 0 else pd.DataFrame()
+    sppo_df = dados_filtrados[dados_filtrados["tipo"] == "SPPO"].copy() if len(dados_filtrados) > 0 else pd.DataFrame()
+    brt_df  = dados_filtrados[dados_filtrados["tipo"] == "BRT"].copy()  if len(dados_filtrados) > 0 else pd.DataFrame()
+
+    # Reduz marcadores em zoom baixo para evitar travamentos na renderização
+    # Sem Input de zoom no callback para evitar incompatibilidade de payload
+    # com alguns clientes Dash/dash-leaflet. Usa zoom padrão do mapa (11).
+    sppo_df = _limit_df_for_render(sppo_df, 11)
+    brt_df = _limit_df_for_render(brt_df, 11)
 
     # --- Itinerários ----------------------------------------------------------
-    shapes_layers = []
+    cache_key = tuple(sorted(str(ln) for ln in linhas_sel))
+    with _map_static_cache_lock:
+        cached_layers = _map_static_cache.get(cache_key)
+
+    if cached_layers is not None:
+        shapes_layers, paradas_layers = cached_layers
+    else:
+        shapes_layers = []
+        paradas_layers = []
     
     # Aguarda o carregamento do GTFS (máximo 15 segundos)
     if linhas_sel and not _gtfs_load_event.is_set():
-        print("Aguardando carregamento de GTFS para renderizar shapes...")
+        print("Aguardando carregamento de GTFS para renderizar shapes/paradas...")
         _gtfs_load_event.wait(timeout=15)
-    
+
     if linhas_sel and shapes_gtfs is not None and len(shapes_gtfs) > 0:
-        if "routes" in gtfs and "trips" in gtfs and not gtfs["routes"].empty and not gtfs["trips"].empty:
+        if line_to_shape_ids:
             try:
-                rotas = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
-                if not rotas.empty:
-                    trips = (
-                        gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
-                        .merge(rotas[["route_id", "route_short_name"]], on="route_id")
-                    )
-                    for linha_id in linhas_sel:
-                        cor     = cores.get(linha_id, "#888888")
-                        shp_ids = trips[trips["route_short_name"] == linha_id]["shape_id"].unique()
-                        if len(shp_ids) > 0:
-                            sh = shapes_gtfs[shapes_gtfs["shape_id"].isin(shp_ids)]
-                            for _, row in sh.iterrows():
-                                try:
-                                    coords = [[pt[1], pt[0]] for pt in row.geometry.coords]
-                                    if len(coords) > 1:
-                                        shapes_layers.append(
-                                            dl.Polyline(positions=coords, color=cor, weight=4,
-                                                        children=dl.Tooltip(f"Linha {linha_id}"))
-                                        )
-                                except Exception as e:
-                                    print(f"ERRO ao processar shape {linha_id}: {e}")
-            except KeyError as e:
-                print(f"ERRO shapes (coluna faltante): {e}")
+                for linha_id in linhas_sel:
+                    cor = cores.get(linha_id, "#888888")
+                    shp_ids = line_to_shape_ids.get(linha_id, [])
+                    if not shp_ids:
+                        continue
+                    sh = shapes_gtfs[shapes_gtfs["shape_id"].isin(shp_ids)]
+                    for row in sh.itertuples(index=False):
+                        try:
+                            coords = [[pt[1], pt[0]] for pt in row.geometry.coords]
+                            if len(coords) > 1:
+                                shapes_layers.append(
+                                    dl.Polyline(
+                                        positions=coords,
+                                        color=cor,
+                                        weight=4,
+                                        children=dl.Tooltip(f"Linha {linha_id}"),
+                                    )
+                                )
+                        except Exception as e:
+                            print(f"ERRO ao processar shape {linha_id}: {e}")
             except Exception as e:
                 print(f"ERRO shapes: {type(e).__name__} - {e}")
-        else:
-            if linhas_sel:
-                print(f"AVISO: routes ou trips vazios/ausentes no GTFS para shapes")
     else:
         if linhas_sel and shapes_gtfs is None:
             print("AVISO: shapes_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
         elif linhas_sel:
-            print(f"AVISO: shapes_gtfs vazio - nenhuma shape para as linhas selecionadas")
+            print("AVISO: shapes_gtfs vazio - nenhuma shape para as linhas selecionadas")
 
-    # --- Paradas --------------------------------------------------------------
-    paradas_layers = []
-    
-    # Aguarda o carregamento do GTFS (máximo 15 segundos)
-    if linhas_sel and not _gtfs_load_event.is_set():
-        print("Aguardando carregamento de GTFS para renderizar paradas...")
-        _gtfs_load_event.wait(timeout=15)
-    
     if linhas_sel and stops_gtfs is not None and len(stops_gtfs) > 0:
-        if all(k in gtfs for k in ["routes", "trips", "stop_times"]):
-            if (not gtfs["routes"].empty and not gtfs["trips"].empty and 
-                not gtfs["stop_times"].empty):
-                try:
-                    rotas    = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
-                    if not rotas.empty:
-                        trips    = gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
-                        if not trips.empty:
-                            stop_ids = (
-                                gtfs["stop_times"][gtfs["stop_times"]["trip_id"].isin(trips["trip_id"])]
-                                ["stop_id"].unique()
+        if line_to_stop_ids:
+            try:
+                stop_ids = set()
+                for linha_id in linhas_sel:
+                    stop_ids.update(line_to_stop_ids.get(linha_id, []))
+
+                if stop_ids:
+                    stops_f = stops_gtfs[stops_gtfs["stop_id"].isin(stop_ids)]
+                    for row in stops_f.itertuples(index=False):
+                        try:
+                            paradas_layers.append(
+                                dl.CircleMarker(
+                                    center=[float(row.stop_lat), float(row.stop_lon)],
+                                    radius=5,
+                                    color="darkred",
+                                    fillColor="red",
+                                    fillOpacity=0.8,
+                                    children=dl.Popup(str(getattr(row, "stop_name", ""))),
+                                )
                             )
-                            if len(stop_ids) > 0:
-                                stops_f = stops_gtfs[stops_gtfs["stop_id"].isin(stop_ids)]
-                                for _, row in stops_f.iterrows():
-                                    try:
-                                        paradas_layers.append(
-                                            dl.CircleMarker(
-                                                center=[float(row["stop_lat"]), float(row["stop_lon"])],
-                                                radius=5, color="darkred",
-                                                fillColor="red", fillOpacity=0.8,
-                                                children=dl.Popup(str(row.get("stop_name", ""))),
-                                            )
-                                        )
-                                    except Exception as e:
-                                        print(f"ERRO ao processar parada: {e}")
-                except KeyError as e:
-                    print(f"ERRO paradas (coluna faltante): {e}")
-                except Exception as e:
-                    print(f"ERRO paradas: {type(e).__name__} - {e}")
-            else:
-                if linhas_sel:
-                    print("AVISO: routes, trips ou stop_times vazios no GTFS")
-        else:
-            if linhas_sel:
-                print("AVISO: routes, trips ou stop_times ausentes no GTFS")
+                        except Exception as e:
+                            print(f"ERRO ao processar parada: {e}")
+            except Exception as e:
+                print(f"ERRO paradas: {type(e).__name__} - {e}")
     else:
         if linhas_sel and stops_gtfs is None:
             print("AVISO: stops_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
         elif linhas_sel:
-            print(f"AVISO: stops_gtfs vazio - nenhuma parada para as linhas selecionadas")
+            print("AVISO: stops_gtfs vazio - nenhuma parada para as linhas selecionadas")
+
+    with _map_static_cache_lock:
+        if len(_map_static_cache) >= _MAP_STATIC_CACHE_MAX_ITEMS:
+            _map_static_cache.clear()
+        _map_static_cache[cache_key] = (shapes_layers, paradas_layers)
 
     # --- Helper popup ---------------------------------------------------------
     def _popup(row, extra=None):
@@ -1089,33 +1179,35 @@ def atualizar_mapa(_ts, linhas_sel):
 
     # --- Ônibus SPPO ----------------------------------------------------------
     onibus_layers = []
-    for _, row in sppo_df.iterrows():
-        cor = cores.get(row.get("linha", ""), "#1a6faf") if linhas_sel else "#1a6faf"
+    for row in sppo_df.itertuples(index=False):
+        row_dict = row._asdict()
+        cor = cores.get(row_dict.get("linha", ""), "#1a6faf") if linhas_sel else "#1a6faf"
         try:
-            bearing = float(row.get("direcao", float("nan")))
+            bearing = float(row_dict.get("direcao", float("nan")))
         except Exception:
             bearing = float("nan")
         onibus_layers.append(
             dl.Marker(
-                position=[float(row["lat"]), float(row["lng"])],
+                position=[float(row_dict["lat"]), float(row_dict["lng"])],
                 icon=dict(zip(["iconUrl","iconSize","iconAnchor"], make_vehicle_icon(bearing, cor))),
-                children=_popup(row),
+                children=_popup(row_dict),
             )
         )
 
     # --- BRT ------------------------------------------------------------------
     brt_layers = []
-    for _, row in brt_df.iterrows():
-        cor = cores.get(row.get("linha", ""), "#e67e00") if linhas_sel else "#e67e00"
+    for row in brt_df.itertuples(index=False):
+        row_dict = row._asdict()
+        cor = cores.get(row_dict.get("linha", ""), "#e67e00") if linhas_sel else "#e67e00"
         try:
-            bearing = float(row.get("direcao", float("nan")))
+            bearing = float(row_dict.get("direcao", float("nan")))
         except Exception:
             bearing = float("nan")
         brt_layers.append(
             dl.Marker(
-                position=[float(row["lat"]), float(row["lng"])],
+                position=[float(row_dict["lat"]), float(row_dict["lng"])],
                 icon=dict(zip(["iconUrl","iconSize","iconAnchor"], make_vehicle_icon(bearing, cor))),
-                children=_popup(row, extra=f"Sentido: {row.get('sentido', '')}"),
+                children=_popup(row_dict, extra=f"Sentido: {row_dict.get('sentido', '')}"),
             )
         )
 
