@@ -11,10 +11,12 @@
 # ==============================================================================
 
 import math
+import time
 import zipfile
 import urllib.parse
 import warnings
-from datetime import datetime, timedelta
+import threading
+from datetime import datetime, timedelta, timezone
 
 import dash
 import dash_leaflet as dl
@@ -22,7 +24,7 @@ import geopandas as gpd
 import pandas as pd
 import requests
 from dash import Input, Output, State, dcc, html
-from shapely.geometry import LineString
+from shapely.geometry import LineString, shape as shapely_shape, MultiPolygon
 
 warnings.filterwarnings("ignore")
 
@@ -38,10 +40,96 @@ PALETA_CORES = [
 ]
 
 # ==============================================================================
-# Dados estáticos — inicializados vazios, carregados em thread paralela
+# Estilos CSS Centralizados
 # ==============================================================================
 
-import threading
+ESTILOS = {
+    "header": {
+        "padding": "8px 16px",
+        "backgroundColor": "#343a40",
+        "color": "white",
+        "display": "flex",
+        "alignItems": "center",
+    },
+    "header_titulo": {
+        "margin": 0,
+        "fontSize": "18px",
+        "fontWeight": "bold",
+    },
+    "controles": {
+        "padding": "10px 16px",
+        "backgroundColor": "#f8f9fa",
+        "borderBottom": "1px solid #dee2e6",
+        "display": "flex",
+        "flexDirection": "column",
+        "alignItems": "center",
+        "gap": "10px",
+    },
+    "label": {
+        "fontWeight": "bold",
+        "marginBottom": "4px",
+        "textAlign": "center",
+    },
+    "dropdown_wrapper": {
+        "position": "relative",
+        "zIndex": 9999,
+    },
+    "dropdown": {
+        "width": "min(420px, 90vw)",
+    },
+    "botao_atualizar": {
+        "backgroundColor": "#0d6efd",
+        "color": "white",
+        "border": "none",
+        "padding": "8px 16px",
+        "borderRadius": "4px",
+        "cursor": "pointer",
+    },
+    "texto_atualizacao": {
+        "color": "#6c757d",
+        "fontSize": "12px",
+        "margin": "0 0 0 10px",
+    },
+    "caixa_legenda": {
+        "background": "white",
+        "padding": "10px 14px",
+        "borderRadius": "4px",
+        "boxShadow": "0 1px 5px rgba(0,0,0,.4)",
+        "font": "12px/1.5 Arial,sans-serif",
+    },
+    "botao_localizacao": {
+        "width": "34px",
+        "height": "34px",
+        "backgroundColor": "white",
+        "border": "2px solid rgba(0,0,0,0.3)",
+        "borderRadius": "4px",
+        "cursor": "pointer",
+        "fontSize": "16px",
+        "lineHeight": "1",
+        "boxShadow": "none",
+        "padding": "0",
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+    },
+    "botao_localizacao_container": {
+        "position": "absolute",
+        "top": "126px",
+        "right": "10px",
+        "zIndex": 1000,
+    },
+    "legenda_container": {
+        "position": "absolute",
+        "bottom": "30px",
+        "left": "10px",
+        "zIndex": 1000,
+        "pointerEvents": "none",
+    },
+}
+
+# ==============================================================================
+# Dados estáticos — inicializados vazios, carregados em thread paralela
+# ==============================================================================
 
 # Cache GPS server-side — evita trafegar dados pesados para o browser
 _gps_lock  = threading.Lock()
@@ -54,7 +142,6 @@ shapes_gtfs      = None
 stops_gtfs       = None
 linhas_dict      = {}
 linhas_short     = []
-_dados_prontos   = False
 
 
 # --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
@@ -70,19 +157,21 @@ try:
                 linhas_dict  = dict(zip(_routes_df["route_short_name"], _routes_df["route_long_name"]))
                 linhas_short = sorted(_routes_df["route_short_name"].dropna().unique().tolist())
                 print(f"Routes carregadas: {len(linhas_short)} linhas disponíveis no dropdown.")
+except FileNotFoundError:
+    print("ERRO: Arquivo gtfs/gtfs.zip não encontrado no startup")
+except KeyError:
+    print("ERRO: Colunas route_short_name ou route_long_name não encontradas")
 except Exception as e:
-    print(f"ERRO ao carregar routes (síncrono): {e}")
+    print(f"ERRO ao carregar routes (síncrono): {type(e).__name__} - {e}")
 
 
 def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
-    global stops_gtfs, _dados_prontos
+    global stops_gtfs
 
     # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
     print("Carregando limites do Rio...")
     try:
-        import json
-        from shapely.geometry import shape as shapely_shape, MultiPolygon
         _resp = requests.get(
             "https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3304557"
             "?formato=application/vnd.geo%2Bjson",
@@ -100,8 +189,10 @@ def _carregar_dados_estaticos():
             print("Limites do Rio carregados via IBGE.")
         else:
             print("AVISO: GeoJSON do IBGE sem geometrias.")
+    except requests.RequestException as e:
+        print(f"ERRO ao carregar limites do Rio (API): {type(e).__name__} - {e}")
     except Exception as e:
-        print(f"ERRO ao carregar limites do Rio: {e}")
+        print(f"ERRO ao carregar limites do Rio: {type(e).__name__} - {e}")
 
     # --- Garagens -------------------------------------------------------------
     print("Carregando garagens...")
@@ -110,8 +201,10 @@ def _carregar_dados_estaticos():
         garagens_gdf     = garagens_gdf.to_crs("EPSG:4326")
         garagens_polygon = garagens_gdf.geometry.union_all()
         print("Garagens carregadas.")
+    except FileNotFoundError:
+        print("ERRO: Arquivo Garagens_de_operadores_SPPO.shp não encontrado")
     except Exception as e:
-        print(f"ERRO ao carregar garagens: {e}")
+        print(f"ERRO ao carregar garagens: {type(e).__name__} - {e}")
 
     # --- GTFS completo (shapes + stops) ---------------------------------------
     print("Carregando GTFS (shapes e stops)...")
@@ -157,10 +250,13 @@ def _carregar_dados_estaticos():
         shapes_gtfs = _shapes_gtfs
         stops_gtfs  = _stops_gtfs
         print("GTFS completo carregado com sucesso.")
+    except FileNotFoundError:
+        print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
+    except KeyError as e:
+        print(f"ERRO ao carregar GTFS (coluna faltante): {e}")
     except Exception as e:
-        print(f"ERRO ao carregar GTFS: {e}")
+        print(f"ERRO ao carregar GTFS: {type(e).__name__} - {e}")
 
-    _dados_prontos = True
     print("Carregamento inicial concluído.")
 
 
@@ -175,6 +271,38 @@ threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 def get_linha_cores(linhas_sel):
     """Mapeia cada linha selecionada para uma cor da paleta."""
     return {ln: PALETA_CORES[i % len(PALETA_CORES)] for i, ln in enumerate(linhas_sel or [])}
+
+
+def _gerar_svg_seta(color="#888"):
+    """Gera SVG de seta e retorna data-URI codificado."""
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
+        f'<polygon points="14,2 24,24 14,18 4,24" fill="{color}" stroke="black" stroke-width="2"/>'
+        f"</svg>"
+    )
+    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
+
+
+def _gerar_svg_circulo(color="#888"):
+    """Gera SVG de círculo e retorna data-URI codificado."""
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
+        f'<circle cx="14" cy="14" r="10" fill="{color}" stroke="black" stroke-width="2.5"/>'
+        f'<circle cx="14" cy="14" r="4" fill="white"/>'
+        f"</svg>"
+    )
+    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
+
+
+def _gerar_svg_usuario():
+    """Gera SVG de marcador de usuário e retorna data-URI codificado."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">'
+        '<circle cx="11" cy="11" r="9" fill="#0d6efd" stroke="white" stroke-width="2.5"/>'
+        '<circle cx="11" cy="11" r="3" fill="white"/>'
+        '</svg>'
+    )
+    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
 
 
 def make_vehicle_icon(bearing, color="#1a6faf"):
@@ -222,24 +350,156 @@ def bearing_between(lat1, lon1, lat2, lon2):
     return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
+# Mapeamento de configurações para processamento de dados GPS
+GPS_CONFIG = {
+    "sppo": {
+        "timestamp_col": "datahora",
+        "timestamp_divisor": 1000,
+        "lat_col": "latitude",
+        "lon_col": "longitude",
+        "ordem_col": "ordem",
+        "linha_col": "linha",
+        "velocidade_col": "velocidade",
+        "sentido_col": None,
+        "tipo": "SPPO",
+        "lat_needs_conversion": True,
+        "lon_needs_conversion": True,
+    },
+    "brt": {
+        "timestamp_col": "dataHora",
+        "timestamp_divisor": 1000,
+        "lat_col": "latitude",
+        "lon_col": "longitude",
+        "ordem_col": "codigo",
+        "linha_col": "linha",
+        "velocidade_col": "velocidade",
+        "sentido_col": "sentido",
+        "tipo": "BRT",
+        "lat_needs_conversion": False,
+        "lon_needs_conversion": False,
+    },
+}
+
+
+def _processar_dados_gps(df, config):
+    """
+    Processa DataFrame GPS de acordo com configuração de mapeamento.
+    
+    Args:
+        df: DataFrame com dados brutos
+        config: Dicionário com mapeamento de colunas
+    
+    Returns:
+        DataFrame processado ou vazio se erro
+    """
+    try:
+        if df.empty or config["ordem_col"] not in df.columns:
+            return pd.DataFrame()
+        
+        df = df.copy()
+        
+        # Processar timestamp
+        ts_col = config["timestamp_col"]
+        if ts_col in df.columns:
+            df[ts_col] = pd.to_datetime(
+                df[ts_col].astype(float) / config["timestamp_divisor"],
+                unit="s"
+            ) - timedelta(hours=3)
+        
+        # Renomear coluna ordem se necessário
+        if config["ordem_col"] != "ordem":
+            df = df.rename(columns={config["ordem_col"]: "ordem"})
+        
+        # Processar coordenadas
+        lat_col = config["lat_col"]
+        lon_col = config["lon_col"]
+        
+        if config["lat_needs_conversion"]:
+            df[lat_col] = pd.to_numeric(
+                df[lat_col].astype(str).str.replace(",", "."),
+                errors="coerce"
+            )
+        else:
+            df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
+        
+        if config["lon_needs_conversion"]:
+            df[lon_col] = pd.to_numeric(
+                df[lon_col].astype(str).str.replace(",", "."),
+                errors="coerce"
+            )
+        else:
+            df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
+        
+        # Processar velocidade
+        vel_col = config["velocidade_col"]
+        if vel_col in df.columns:
+            df[vel_col] = pd.to_numeric(df[vel_col], errors="coerce")
+        
+        # Selecionar colunas finais
+        colunas = ["ordem", ts_col, lat_col, lon_col, config["linha_col"], config["velocidade_col"]]
+        if config["sentido_col"]:
+            colunas.append(config["sentido_col"])
+        
+        colunas = [c for c in colunas if c in df.columns]
+        df = df[colunas].copy()
+        
+        # Renomear para nomes padrão
+        rename_map = {
+            ts_col: "datahora",
+            lat_col: "latitude",
+            lon_col: "longitude",
+            config["linha_col"]: "linha",
+            config["velocidade_col"]: "velocidade",
+        }
+        if config["sentido_col"]:
+            rename_map[config["sentido_col"]] = "sentido"
+        
+        df = df.rename(columns=rename_map)
+        df["tipo"] = config["tipo"]
+        
+        if "sentido" not in df.columns:
+            df["sentido"] = None
+        
+        print(f"{config['tipo']} processado: {len(df)} registros")
+        return df
+        
+    except Exception as e:
+        print(f"ERRO processando {config['tipo']}: {e}")
+        return pd.DataFrame()
+
+
 def calcular_bearing_df(df, hist_list, dist_min=20):
     """
     Adiciona coluna 'direcao' ao DataFrame.
     Só atualiza o bearing quando o veículo andou >= dist_min m;
     caso contrário preserva o último bearing registrado.
     """
-    df       = df.copy()
+    df = df.copy()
     df["direcao"] = float("nan")
-    hist_map = {r["ordem"]: r for r in (hist_list or [])}
-
-    for idx, row in df.iterrows():
+    
+    if not hist_list:
+        return df
+    
+    hist_map = {r["ordem"]: r for r in hist_list}
+    ordens_presentes = df["ordem"].isin(hist_map.keys())
+    
+    if not ordens_presentes.any():
+        return df
+    
+    # Processar apenas veículos com histórico
+    for idx in df[ordens_presentes].index:
+        row = df.loc[idx]
         ant = hist_map.get(row["ordem"])
         if ant is None:
             continue
+        
         t_atual = pd.to_datetime(row["datahora"])
-        t_ant   = pd.to_datetime(ant["datahora"])
-        if abs((t_atual - t_ant).total_seconds() / 60) >= 10:
+        t_ant = pd.to_datetime(ant["datahora"])
+        time_diff = abs((t_atual - t_ant).total_seconds() / 60)
+        
+        if time_diff >= 10:
             continue
+        
         dist = haversine(ant["lat"], ant["lng"], row["lat"], row["lng"])
         if dist >= dist_min:
             df.at[idx, "direcao"] = round(
@@ -247,14 +507,17 @@ def calcular_bearing_df(df, hist_list, dist_min=20):
             )
         else:
             ub = ant.get("ultimo_bearing")
-            df.at[idx, "direcao"] = ub if ub is not None else float("nan")
-
+            if ub is not None:
+                df.at[idx, "direcao"] = ub
+    
     return df
 
 
 def atualizar_historico(hist_list, df):
     """Mantém apenas a posição mais recente por veículo no histórico."""
     hist_map = {r["ordem"]: r for r in (hist_list or [])}
+    
+    # Iterar apenas sobre linhas do dataframe (mais eficiente)
     for _, row in df.iterrows():
         direcao = row.get("direcao")
         ub = (
@@ -275,7 +538,6 @@ def atualizar_historico(hist_list, df):
 def fetch_gps_data():
     """Busca dados GPS das APIs SPPO e BRT e retorna DataFrame unificado."""
     # Usar UTC-3 (BRT) explicitamente para compatibilidade local e no Render
-    from datetime import timezone
     agora  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
     inicio = agora - timedelta(minutes=3)
     fmt    = "%Y-%m-%d+%H:%M:%S"
@@ -305,11 +567,15 @@ def fetch_gps_data():
                 data = resp.json()
                 if isinstance(data, list) and data:
                     sppo_df = pd.DataFrame(data)
-            except Exception:
-                print(f"SPPO body nao e JSON: {resp.text[:200]}")
+            except ValueError:
+                print(f"SPPO body nao e JSON valido")
         print(f"SPPO: {len(sppo_df)} registros brutos")
+    except requests.Timeout:
+        print("ERRO API SPPO: Timeout na requisição")
+    except requests.RequestException as e:
+        print(f"ERRO API SPPO: {type(e).__name__} - {e}")
     except Exception as e:
-        print(f"ERRO API SPPO: {e}")
+        print(f"ERRO inesperado SPPO: {type(e).__name__} - {e}")
 
     # BRT
     try:
@@ -319,45 +585,22 @@ def fetch_gps_data():
             if veiculos:
                 brt_df = pd.DataFrame(veiculos)
         print(f"BRT: {len(brt_df)} registros brutos")
+    except requests.Timeout:
+        print("ERRO API BRT: Timeout na requisição")
+    except requests.RequestException as e:
+        print(f"ERRO API BRT: {type(e).__name__} - {e}")
     except Exception as e:
-        print(f"ERRO API BRT: {e}")
+        print(f"ERRO inesperado BRT: {type(e).__name__} - {e}")
 
     # Processar SPPO
-    if len(sppo_df) > 0 and "ordem" in sppo_df.columns:
-        try:
-            sppo_df["datahora"]   = pd.to_datetime(sppo_df["datahora"].astype(float) / 1000, unit="s") - timedelta(hours=3)
-            sppo_df["velocidade"] = pd.to_numeric(sppo_df["velocidade"], errors="coerce")
-            sppo_df["longitude"]  = pd.to_numeric(
-                sppo_df["longitude"].astype(str).str.replace(",", "."), errors="coerce"
-            )
-            sppo_df["latitude"]   = pd.to_numeric(
-                sppo_df["latitude"].astype(str).str.replace(",", "."), errors="coerce"
-            )
-            sppo_df = sppo_df[["ordem", "datahora", "latitude", "longitude", "linha", "velocidade"]].copy()
-            sppo_df["tipo"]    = "SPPO"
-            sppo_df["sentido"] = None
-            print(f"SPPO processado: {len(sppo_df)} registros")
-        except Exception as e:
-            print(f"ERRO processando SPPO: {e}")
-            sppo_df = pd.DataFrame()
+    if len(sppo_df) > 0:
+        sppo_df = _processar_dados_gps(sppo_df, GPS_CONFIG["sppo"])
     else:
         sppo_df = pd.DataFrame()
 
     # Processar BRT
-    if len(brt_df) > 0 and "codigo" in brt_df.columns:
-        try:
-            brt_df["datahora"]   = pd.to_datetime(brt_df["dataHora"].astype(float) / 1000, unit="s") - timedelta(hours=3)
-            brt_df               = brt_df.rename(columns={"codigo": "ordem"})
-            brt_df["latitude"]   = pd.to_numeric(brt_df["latitude"],  errors="coerce")
-            brt_df["longitude"]  = pd.to_numeric(brt_df["longitude"], errors="coerce")
-            brt_df["velocidade"] = pd.to_numeric(brt_df["velocidade"], errors="coerce")
-            brt_df = brt_df[["ordem", "datahora", "latitude", "longitude",
-                              "linha", "velocidade", "sentido"]].copy()
-            brt_df["tipo"] = "BRT"
-            print(f"BRT processado: {len(brt_df)} registros")
-        except Exception as e:
-            print(f"ERRO processando BRT: {e}")
-            brt_df = pd.DataFrame()
+    if len(brt_df) > 0:
+        brt_df = _processar_dados_gps(brt_df, GPS_CONFIG["brt"])
     else:
         brt_df = pd.DataFrame()
 
@@ -424,12 +667,8 @@ app.layout = html.Div(
 
         # Cabeçalho
         html.Div(
-            html.H4("GPS BRT-SPPO - SMTR/RJ",
-                    style={"margin": 0, "fontSize": "18px", "fontWeight": "bold"}),
-            style={
-                "padding": "8px 16px", "backgroundColor": "#343a40",
-                "color": "white", "display": "flex", "alignItems": "center",
-            },
+            html.H4("GPS BRT-SPPO - SMTR/RJ", style=ESTILOS["header_titulo"]),
+            style=ESTILOS["header"],
         ),
 
         # Controles
@@ -438,17 +677,16 @@ app.layout = html.Div(
                 # Seleção de linha — wrapper com z-index alto para o menu ficar sobre os botões do mapa
                 html.Div(
                     [
-                        html.Label("Linhas:", style={"fontWeight": "bold", "marginBottom": "4px",
-                                                      "textAlign": "center"}),
+                        html.Label("Linhas:", style=ESTILOS["label"]),
                         html.Div(
                             dcc.Dropdown(
                                 id="dropdown-linhas",
                                 options=[{"label": ln, "value": ln} for ln in linhas_short],
                                 multi=True,
                                 placeholder="Selecione uma ou mais linhas...",
-                                style={"width": "min(420px, 90vw)"},
+                                style=ESTILOS["dropdown"],
                             ),
-                            style={"position": "relative", "zIndex": 9999},
+                            style=ESTILOS["dropdown_wrapper"],
                         ),
                     ],
                     style={"display": "flex", "flexDirection": "column", "alignItems": "center"},
@@ -460,27 +698,18 @@ app.layout = html.Div(
                             "Atualizar posições",
                             id="btn-atualizar",
                             n_clicks=0,
-                            style={
-                                "backgroundColor": "#0d6efd", "color": "white",
-                                "border": "none", "padding": "8px 16px",
-                                "borderRadius": "4px", "cursor": "pointer",
-                            },
+                            style=ESTILOS["botao_atualizar"],
                         ),
                         html.P(
                             "Atualização a cada 30s",
-                            style={"color": "#6c757d", "fontSize": "12px", "margin": "0 0 0 10px"},
+                            style=ESTILOS["texto_atualizacao"],
                         ),
                     ],
                     style={"display": "flex", "alignItems": "center", "justifyContent": "center",
                            "flexWrap": "wrap", "gap": "6px"},
                 ),
             ],
-            style={
-                "padding": "10px 16px", "backgroundColor": "#f8f9fa",
-                "borderBottom": "1px solid #dee2e6",
-                "display": "flex", "flexDirection": "column",
-                "alignItems": "center", "gap": "10px",
-            },
+            style=ESTILOS["controles"],
         ),
 
         # Mapa + legenda flutuante
@@ -537,26 +766,13 @@ app.layout = html.Div(
                         id="btn-localizar",
                         n_clicks=0,
                         title="Ir para minha localização",
-                        style={
-                            "width": "34px", "height": "34px",
-                            "backgroundColor": "white", "border": "2px solid rgba(0,0,0,0.3)",
-                            "borderRadius": "4px", "cursor": "pointer",
-                            "fontSize": "16px", "lineHeight": "1",
-                            "boxShadow": "none", "padding": "0",
-                            "display": "flex", "alignItems": "center", "justifyContent": "center",
-                        },
+                        style=ESTILOS["botao_localizacao"],
                     ),
-                    style={
-                        "position": "absolute", "top": "126px", "right": "10px",
-                        "zIndex": 1000,
-                    },
+                    style=ESTILOS["botao_localizacao_container"],
                 ),
                 html.Div(
                     id="legenda",
-                    style={
-                        "position": "absolute", "bottom": "30px", "left": "10px",
-                        "zIndex": 1000, "pointerEvents": "none",
-                    },
+                    style=ESTILOS["legenda_container"],
                 ),
             ],
             style={"position": "relative"},
@@ -610,7 +826,6 @@ def atualizar_gps(_n_int, _n_btn, hist_sppo, hist_brt):
     with _gps_lock:
         _gps_cache = dados_final
 
-    import time
     return int(time.time()), hist_sppo, hist_brt
 
 
@@ -630,30 +845,9 @@ def atualizar_mapa(_ts, linhas_sel):
     cores      = get_linha_cores(linhas_sel)
 
     # --- Legenda --------------------------------------------------------------
-    estilo_caixa = {
-        "background": "white", "padding": "10px 14px",
-        "borderRadius": "4px", "boxShadow": "0 1px 5px rgba(0,0,0,.4)",
-        "font": "12px/1.5 Arial,sans-serif",
-    }
-
     # Mini-legenda de ícones (sempre presente)
-    icone_seta_svg = (
-        "data:image/svg+xml;charset=utf-8,"
-        + urllib.parse.quote(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
-            '<polygon points="14,2 24,24 14,18 4,24" fill="#888" stroke="black" stroke-width="2"/>'
-            "</svg>"
-        )
-    )
-    icone_circulo_svg = (
-        "data:image/svg+xml;charset=utf-8,"
-        + urllib.parse.quote(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
-            '<circle cx="14" cy="14" r="10" fill="#888" stroke="black" stroke-width="2.5"/>'
-            '<circle cx="14" cy="14" r="4" fill="white"/>'
-            "</svg>"
-        )
-    )
+    icone_seta_svg = _gerar_svg_seta()
+    icone_circulo_svg = _gerar_svg_circulo()
     secao_icones = html.Div(
         [
             html.B("Ícones", style={"display": "block", "marginBottom": "5px", "fontSize": "13px"}),
@@ -684,7 +878,7 @@ def atualizar_mapa(_ts, linhas_sel):
                           style={"color": "#888", "fontStyle": "italic"}),
                 secao_icones,
             ],
-            style={**estilo_caixa, "minWidth": "180px"},
+            style={**ESTILOS["caixa_legenda"], "minWidth": "180px"},
         )
     else:
         itens = []
@@ -718,7 +912,7 @@ def atualizar_mapa(_ts, linhas_sel):
                 *itens,
                 secao_icones,
             ],
-            style={**estilo_caixa, "minWidth": "180px", "maxWidth": "260px",
+            style={**ESTILOS["caixa_legenda"], "minWidth": "180px", "maxWidth": "260px",
                    "maxHeight": "40vh", "overflowY": "auto"},
         )
 
@@ -757,8 +951,10 @@ def atualizar_mapa(_ts, linhas_sel):
                         dl.Polyline(positions=coords, color=cor, weight=4,
                                     children=dl.Tooltip(linha_id))
                     )
+        except KeyError as e:
+            print(f"ERRO shapes (coluna faltante): {e}")
         except Exception as e:
-            print(f"ERRO shapes: {e}")
+            print(f"ERRO shapes: {type(e).__name__} - {e}")
 
     # --- Paradas --------------------------------------------------------------
     paradas_layers = []
@@ -781,8 +977,10 @@ def atualizar_mapa(_ts, linhas_sel):
                         children=dl.Popup(str(row.get("stop_name", ""))),
                     )
                 )
+        except KeyError as e:
+            print(f"ERRO paradas (coluna faltante): {e}")
         except Exception as e:
-            print(f"ERRO paradas: {e}")
+            print(f"ERRO paradas: {type(e).__name__} - {e}")
 
     # --- Helper popup ---------------------------------------------------------
     def _popup(row, extra=None):
@@ -892,15 +1090,7 @@ def centralizar_na_posicao(data):
 
     lat, lon = data["lat"], data["lon"]
 
-    icone_usuario = (
-        "data:image/svg+xml;charset=utf-8,"
-        + urllib.parse.quote(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">'
-            '<circle cx="11" cy="11" r="9" fill="#0d6efd" stroke="white" stroke-width="2.5"/>'
-            '<circle cx="11" cy="11" r="3" fill="white"/>'
-            '</svg>'
-        )
-    )
+    icone_usuario = _gerar_svg_usuario()
     marcador = dl.Marker(
         position=[lat, lon],
         icon={"iconUrl": icone_usuario, "iconSize": [22, 22], "iconAnchor": [11, 11]},
