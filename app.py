@@ -29,14 +29,25 @@ from shapely.geometry import LineString, shape as shapely_shape, MultiPolygon
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
-# Paleta de cores
+# Paleta de cores (15 cores com alto contraste)
 # ==============================================================================
 
 PALETA_CORES = [
-    "#E63946", "#F4A261", "#2A9D8F", "#457B9D", "#6A0572",
-    "#F77F00", "#06D6A0", "#118AB2", "#EF476F", "#FFD166",
-    "#8338EC", "#FB5607", "#3A86FF", "#FFBE0B", "#FF006E",
-    "#43AA8B", "#90BE6D", "#F94144", "#577590", "#277DA1",
+    "#E63946",  # Vermelho vibrante
+    "#F77F00",  # Laranja brilhante
+    "#FFBE0B",  # Amarelo ouro
+    "#06D6A0",  # Verde ciano
+    "#118AB2",  # Azul profundo
+    "#8338EC",  # Roxo vibrante
+    "#FF006E",  # Magenta quente
+    "#00B4D8",  # Azul ciano
+    "#FB5607",  # Laranja-vermelho
+    "#3A86FF",  # Azul céu
+    "#2A9D8F",  # Verde azulado
+    "#F94144",  # Vermelho coral
+    "#457B9D",  # Azul aço
+    "#90BE6D",  # Verde suave
+    "#277DA1",  # Azul naval
 ]
 
 # ==============================================================================
@@ -211,45 +222,67 @@ def _carregar_dados_estaticos():
     try:
         _gtfs = {}
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
-            for name in z.namelist():
+            _all_files = z.namelist()
+            print(f"Arquivos no GTFS: {[f for f in _all_files if f.endswith('.txt')]}")
+            for name in _all_files:
                 if not name.endswith(".txt"):
                     continue
                 key = name.replace(".txt", "").split("/")[-1]
-                with z.open(name) as f:
-                    _gtfs[key] = pd.read_csv(f, dtype=str)
+                try:
+                    with z.open(name) as f:
+                        _gtfs[key] = pd.read_csv(f, dtype=str)
+                        print(f"  ✓ {key}: {len(_gtfs[key])} registros")
+                except Exception as e:
+                    print(f"  ✗ Erro ao ler {key}: {e}")
 
         _shapes_gtfs = None
         _stops_gtfs  = None
 
-        if "shapes" in _gtfs:
-            df = _gtfs["shapes"].copy()
-            df["shape_pt_lat"]      = df["shape_pt_lat"].astype(float)
-            df["shape_pt_lon"]      = df["shape_pt_lon"].astype(float)
-            df["shape_pt_sequence"] = df["shape_pt_sequence"].astype(int)
-            lines = (
-                df.sort_values("shape_pt_sequence")
-                .groupby("shape_id")
-                .apply(lambda x: LineString(zip(x["shape_pt_lon"], x["shape_pt_lat"])),
-                       include_groups=False)
-                .reset_index()
-            )
-            lines.columns = ["shape_id", "geometry"]
-            _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+        if "shapes" in _gtfs and not _gtfs["shapes"].empty:
+            try:
+                df = _gtfs["shapes"].copy()
+                print(f"  Processando {len(df)} pontos de shapes...")
+                df["shape_pt_lat"]      = pd.to_numeric(df["shape_pt_lat"], errors="coerce")
+                df["shape_pt_lon"]      = pd.to_numeric(df["shape_pt_lon"], errors="coerce")
+                df["shape_pt_sequence"] = pd.to_numeric(df["shape_pt_sequence"], errors="coerce")
+                df = df.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
+                lines = (
+                    df.sort_values("shape_pt_sequence")
+                    .groupby("shape_id")
+                    .apply(lambda x: LineString(zip(x["shape_pt_lon"], x["shape_pt_lat"])),
+                           include_groups=False)
+                    .reset_index()
+                )
+                lines.columns = ["shape_id", "geometry"]
+                _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+                print(f"  Shapes criadas: {len(_shapes_gtfs)} linhas únicas")
+            except Exception as e:
+                print(f"  ERRO ao processar shapes: {type(e).__name__} - {e}")
+        else:
+            print(f"  AVISO: shapes.txt não encontrado ou vazio no GTFS")
 
-        if "stops" in _gtfs:
-            df = _gtfs["stops"].copy()
-            df["stop_lat"] = df["stop_lat"].astype(float)
-            df["stop_lon"] = df["stop_lon"].astype(float)
-            _stops_gtfs = gpd.GeoDataFrame(
-                df,
-                geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
-                crs="EPSG:4326",
-            )
+        if "stops" in _gtfs and not _gtfs["stops"].empty:
+            try:
+                df = _gtfs["stops"].copy()
+                print(f"  Processando {len(df)} paradas...")
+                df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
+                df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
+                df = df.dropna(subset=["stop_lat", "stop_lon"])
+                _stops_gtfs = gpd.GeoDataFrame(
+                    df,
+                    geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
+                    crs="EPSG:4326",
+                )
+                print(f"  Stops criadas: {len(_stops_gtfs)} paradas")
+            except Exception as e:
+                print(f"  ERRO ao processar stops: {type(e).__name__} - {e}")
+        else:
+            print(f"  AVISO: stops.txt não encontrado ou vazio no GTFS")
 
         gtfs        = _gtfs
         shapes_gtfs = _shapes_gtfs
         stops_gtfs  = _stops_gtfs
-        print("GTFS completo carregado com sucesso.")
+        print(f"GTFS completo carregado. Colunas GTFS: {list(_gtfs.keys())}")
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
     except KeyError as e:
@@ -934,53 +967,88 @@ def atualizar_mapa(_ts, linhas_sel):
 
     # --- Itinerários ----------------------------------------------------------
     shapes_layers = []
-    if linhas_sel and shapes_gtfs is not None and "routes" in gtfs and "trips" in gtfs:
-        try:
-            rotas = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
-            trips = (
-                gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
-                .merge(rotas[["route_id", "route_short_name"]], on="route_id")
-            )
-            for linha_id in linhas_sel:
-                cor     = cores.get(linha_id, "#888888")
-                shp_ids = trips[trips["route_short_name"] == linha_id]["shape_id"].unique()
-                sh      = shapes_gtfs[shapes_gtfs["shape_id"].isin(shp_ids)]
-                for _, row in sh.iterrows():
-                    coords = [[pt[1], pt[0]] for pt in row.geometry.coords]
-                    shapes_layers.append(
-                        dl.Polyline(positions=coords, color=cor, weight=4,
-                                    children=dl.Tooltip(linha_id))
+    if linhas_sel and shapes_gtfs is not None and len(shapes_gtfs) > 0:
+        if "routes" in gtfs and "trips" in gtfs and not gtfs["routes"].empty and not gtfs["trips"].empty:
+            try:
+                rotas = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
+                if not rotas.empty:
+                    trips = (
+                        gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
+                        .merge(rotas[["route_id", "route_short_name"]], on="route_id")
                     )
-        except KeyError as e:
-            print(f"ERRO shapes (coluna faltante): {e}")
-        except Exception as e:
-            print(f"ERRO shapes: {type(e).__name__} - {e}")
+                    for linha_id in linhas_sel:
+                        cor     = cores.get(linha_id, "#888888")
+                        shp_ids = trips[trips["route_short_name"] == linha_id]["shape_id"].unique()
+                        if len(shp_ids) > 0:
+                            sh = shapes_gtfs[shapes_gtfs["shape_id"].isin(shp_ids)]
+                            for _, row in sh.iterrows():
+                                try:
+                                    coords = [[pt[1], pt[0]] for pt in row.geometry.coords]
+                                    if len(coords) > 1:
+                                        shapes_layers.append(
+                                            dl.Polyline(positions=coords, color=cor, weight=4,
+                                                        children=dl.Tooltip(f"Linha {linha_id}"))
+                                        )
+                                except Exception as e:
+                                    print(f"ERRO ao processar shape {linha_id}: {e}")
+            except KeyError as e:
+                print(f"ERRO shapes (coluna faltante): {e}")
+            except Exception as e:
+                print(f"ERRO shapes: {type(e).__name__} - {e}")
+        else:
+            print(f"AVISO: routes ou trips vazios/ausentes no GTFS para shapes")
+    else:
+        if not linhas_sel:
+            pass  # Normal - nenhuma linha selecionada
+        elif shapes_gtfs is None:
+            print("AVISO: shapes_gtfs ainda não carregado ou vazio")
+        else:
+            print(f"AVISO: shapes_gtfs carregado mas vazio")
 
     # --- Paradas --------------------------------------------------------------
     paradas_layers = []
-    if (linhas_sel and stops_gtfs is not None
-            and all(k in gtfs for k in ["routes", "trips", "stop_times"])):
-        try:
-            rotas    = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
-            trips    = gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
-            stop_ids = (
-                gtfs["stop_times"][gtfs["stop_times"]["trip_id"].isin(trips["trip_id"])]
-                ["stop_id"].unique()
-            )
-            stops_f = stops_gtfs[stops_gtfs["stop_id"].isin(stop_ids)]
-            for _, row in stops_f.iterrows():
-                paradas_layers.append(
-                    dl.CircleMarker(
-                        center=[float(row["stop_lat"]), float(row["stop_lon"])],
-                        radius=5, color="darkred",
-                        fillColor="red", fillOpacity=0.8,
-                        children=dl.Popup(str(row.get("stop_name", ""))),
-                    )
-                )
-        except KeyError as e:
-            print(f"ERRO paradas (coluna faltante): {e}")
-        except Exception as e:
-            print(f"ERRO paradas: {type(e).__name__} - {e}")
+    if linhas_sel and stops_gtfs is not None and len(stops_gtfs) > 0:
+        if all(k in gtfs for k in ["routes", "trips", "stop_times"]):
+            if (not gtfs["routes"].empty and not gtfs["trips"].empty and 
+                not gtfs["stop_times"].empty):
+                try:
+                    rotas    = gtfs["routes"][gtfs["routes"]["route_short_name"].isin(linhas_sel)]
+                    if not rotas.empty:
+                        trips    = gtfs["trips"][gtfs["trips"]["route_id"].isin(rotas["route_id"])]
+                        if not trips.empty:
+                            stop_ids = (
+                                gtfs["stop_times"][gtfs["stop_times"]["trip_id"].isin(trips["trip_id"])]
+                                ["stop_id"].unique()
+                            )
+                            if len(stop_ids) > 0:
+                                stops_f = stops_gtfs[stops_gtfs["stop_id"].isin(stop_ids)]
+                                for _, row in stops_f.iterrows():
+                                    try:
+                                        paradas_layers.append(
+                                            dl.CircleMarker(
+                                                center=[float(row["stop_lat"]), float(row["stop_lon"])],
+                                                radius=5, color="darkred",
+                                                fillColor="red", fillOpacity=0.8,
+                                                children=dl.Popup(str(row.get("stop_name", ""))),
+                                            )
+                                        )
+                                    except Exception as e:
+                                        print(f"ERRO ao processar parada: {e}")
+                except KeyError as e:
+                    print(f"ERRO paradas (coluna faltante): {e}")
+                except Exception as e:
+                    print(f"ERRO paradas: {type(e).__name__} - {e}")
+            else:
+                print("AVISO: routes, trips ou stop_times vazios no GTFS")
+        else:
+            print("AVISO: routes, trips ou stop_times ausentes no GTFS")
+    else:
+        if not linhas_sel:
+            pass  # Normal - nenhuma linha selecionada
+        elif stops_gtfs is None:
+            print("AVISO: stops_gtfs ainda não carregado ou vazio")
+        else:
+            print(f"AVISO: stops_gtfs carregado mas vazio")
 
     # --- Helper popup ---------------------------------------------------------
     def _popup(row, extra=None):
