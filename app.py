@@ -11,6 +11,7 @@
 # ==============================================================================
 
 import math
+import os
 import time
 import zipfile
 import urllib.parse
@@ -1281,4 +1282,6 @@ def centralizar_na_posicao(data):
 # ==============================================================================
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=8050)
+    # No Render, a porta deve vir da variável de ambiente PORT.
+    port = int(os.getenv("PORT", "8050"))
+    app.run(debug=False, host="0.0.0.0", port=port)
