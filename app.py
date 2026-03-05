@@ -15,7 +15,7 @@ import pandas as pd
 import requests
 from dash import Input, Output, dcc, html
 from requests.adapters import HTTPAdapter
-from shapely.geometry import LineString, shape as shapely_shape, MultiPolygon
+from shapely.geometry import LineString, Point, shape as shapely_shape, MultiPolygon
 from urllib3.util.retry import Retry
 
 warnings.filterwarnings("ignore")
@@ -596,6 +596,19 @@ def _build_geojson_cluster_layer(df, layer_id):
     ]
 
 
+def _group_vehicle_markers(markers):
+    """Agrupa marcadores com cluster quando disponível; fallback para LayerGroup."""
+    if not markers:
+        return []
+
+    cluster_cls = getattr(dl, "MarkerClusterGroup", None)
+    if cluster_cls is not None:
+        return [cluster_cls(children=markers)]
+
+    # Compatibilidade com versões do dash-leaflet sem MarkerClusterGroup.
+    return [dl.LayerGroup(children=markers)]
+
+
 def _gerar_svg_seta(color="#888"):
     """Gera SVG de seta e retorna data-URI codificado."""
     svg = (
@@ -630,7 +643,15 @@ def _gerar_svg_usuario():
 def _cache_or_generate_svg(color, bearing):
     """Cache de SVG: retorna do cache ou gera e armazena."""
     is_nan = bearing is None or (isinstance(bearing, float) and math.isnan(bearing))
-    cache_key = (color, is_nan)
+    # Inclui o angulo no cache para nao reutilizar a mesma seta para bearings diferentes.
+    if is_nan:
+        cache_key = (color, "circle")
+    else:
+        try:
+            bearing_norm = int(round(float(bearing))) % 360
+        except Exception:
+            bearing_norm = 0
+        cache_key = (color, f"arrow-{bearing_norm}")
 
     with _svg_cache_lock:
         cached = _svg_cache.get(cache_key)
@@ -648,7 +669,7 @@ def _cache_or_generate_svg(color, bearing):
     else:
         svg = (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">'
-            f'<g transform="rotate({bearing:.0f}, 14, 14)">'
+            f'<g transform="rotate({bearing_norm}, 14, 14)">'
             f'<polygon points="14,2 24,24 14,18 4,24" fill="{color}" stroke="black" stroke-width="2"/>'
             f"</g></svg>"
         )
@@ -1008,6 +1029,21 @@ def fetch_gps_data(linhas_sel=None):
         dados = dados[dados["linha"].astype(str).isin(selected_lines)]
         print(f"Filtro seleção: {antes} → {len(dados)} registros")
 
+    # Remove pontos dentro de garagens (veículos possivelmente recolhidos).
+    if len(dados) > 0 and garagens_polygon is not None:
+        try:
+            antes = len(dados)
+            dentro_garagem = dados.apply(
+                lambda row: garagens_polygon.contains(Point(float(row["longitude"]), float(row["latitude"]))),
+                axis=1,
+            )
+            dados = dados[~dentro_garagem]
+            removidos = antes - len(dados)
+            if removidos > 0:
+                print(f"Filtro garagens: removidos {removidos} registros dentro de garagem")
+        except Exception as e:
+            print(f"ERRO no filtro de garagens: {type(e).__name__} - {e}")
+
     # Conversão rápida de coordenadas (sem geometria custosa)
     dados["linha"] = dados["linha"].astype(str)
     dados["lat"] = dados["latitude"].astype(float)
@@ -1329,14 +1365,14 @@ def atualizar_mapa(_ts, linhas_sel):
             html.Div(
                 [
                     html.Img(src=icone_seta[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
-                    html.Span("Com direção", style={"fontSize": "11px"}),
+                    html.Span("Parado ou não atualizado", style={"fontSize": "11px"}),
                 ],
                 style={"display": "flex", "alignItems": "center", "gap": "7px", "marginBottom": "4px"},
             ),
             html.Div(
                 [
                     html.Img(src=icone_circulo[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
-                    html.Span("Sem direção (parado)", style={"fontSize": "11px"}),
+                    html.Span("Com direção", style={"fontSize": "11px"}),
                 ],
                 style={"display": "flex", "alignItems": "center", "gap": "7px"},
             ),
@@ -1409,8 +1445,8 @@ def atualizar_mapa(_ts, linhas_sel):
 
     # --- Itinerários ----------------------------------------------------------
     if not _gtfs_load_event.is_set():
-        print("Aguardando carregamento de GTFS para renderizar shapes/paradas...")
-        _gtfs_load_event.wait(timeout=15)
+        # Nao bloquear callback por muitos segundos; renderiza GPS e legenda imediatamente.
+        print("GTFS ainda carregando: renderizando mapa sem shapes/paradas por enquanto.")
 
     with _gtfs_data_lock:
         shape_coords_snapshot = dict(line_to_shape_coords)
@@ -1524,8 +1560,8 @@ def atualizar_mapa(_ts, linhas_sel):
             )
         )
 
-    onibus_children = [dl.MarkerClusterGroup(children=onibus_layers)] if onibus_layers else []
-    brt_children = [dl.MarkerClusterGroup(children=brt_layers)] if brt_layers else []
+    onibus_children = _group_vehicle_markers(onibus_layers)
+    brt_children = _group_vehicle_markers(brt_layers)
     return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
 
 
@@ -1629,9 +1665,9 @@ def zoom_para_linhas(linhas_sel):
     if not linhas_sel:
         return dash.no_update
 
-    # Aguarda carregamento do GTFS com sincronização baseada em Event.
+    # Evita bloquear a UX em selecao de linha enquanto GTFS ainda carrega.
     if not _gtfs_load_event.is_set():
-        _gtfs_load_event.wait(timeout=15)
+        return dash.no_update
 
     with _gtfs_data_lock:
         bounds_snapshot = dict(line_to_bounds)
