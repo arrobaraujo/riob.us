@@ -146,6 +146,10 @@ ESTILOS = {
 _gps_lock  = threading.Lock()
 _gps_cache = pd.DataFrame()   # último fetch processado
 
+# Sincronização para carregamento de dados estáticos
+_gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
+_gtfs_load_event.clear()
+
 rio_polygon      = None
 garagens_polygon = None
 gtfs             = {}
@@ -291,6 +295,8 @@ def _carregar_dados_estaticos():
         print(f"ERRO ao carregar GTFS: {type(e).__name__} - {e}")
 
     print("Carregamento inicial concluído.")
+    # Sinaliza que o GTFS foi carregado (mesmo que parcialmente)
+    _gtfs_load_event.set()
 
 
 # Shapes/stops em background — não bloqueia o servidor nem o dropdown
@@ -967,6 +973,12 @@ def atualizar_mapa(_ts, linhas_sel):
 
     # --- Itinerários ----------------------------------------------------------
     shapes_layers = []
+    
+    # Aguarda o carregamento do GTFS (máximo 15 segundos)
+    if linhas_sel and not _gtfs_load_event.is_set():
+        print("Aguardando carregamento de GTFS para renderizar shapes...")
+        _gtfs_load_event.wait(timeout=15)
+    
     if linhas_sel and shapes_gtfs is not None and len(shapes_gtfs) > 0:
         if "routes" in gtfs and "trips" in gtfs and not gtfs["routes"].empty and not gtfs["trips"].empty:
             try:
@@ -996,17 +1008,22 @@ def atualizar_mapa(_ts, linhas_sel):
             except Exception as e:
                 print(f"ERRO shapes: {type(e).__name__} - {e}")
         else:
-            print(f"AVISO: routes ou trips vazios/ausentes no GTFS para shapes")
+            if linhas_sel:
+                print(f"AVISO: routes ou trips vazios/ausentes no GTFS para shapes")
     else:
-        if not linhas_sel:
-            pass  # Normal - nenhuma linha selecionada
-        elif shapes_gtfs is None:
-            print("AVISO: shapes_gtfs ainda não carregado ou vazio")
-        else:
-            print(f"AVISO: shapes_gtfs carregado mas vazio")
+        if linhas_sel and shapes_gtfs is None:
+            print("AVISO: shapes_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
+        elif linhas_sel:
+            print(f"AVISO: shapes_gtfs vazio - nenhuma shape para as linhas selecionadas")
 
     # --- Paradas --------------------------------------------------------------
     paradas_layers = []
+    
+    # Aguarda o carregamento do GTFS (máximo 15 segundos)
+    if linhas_sel and not _gtfs_load_event.is_set():
+        print("Aguardando carregamento de GTFS para renderizar paradas...")
+        _gtfs_load_event.wait(timeout=15)
+    
     if linhas_sel and stops_gtfs is not None and len(stops_gtfs) > 0:
         if all(k in gtfs for k in ["routes", "trips", "stop_times"]):
             if (not gtfs["routes"].empty and not gtfs["trips"].empty and 
@@ -1039,16 +1056,16 @@ def atualizar_mapa(_ts, linhas_sel):
                 except Exception as e:
                     print(f"ERRO paradas: {type(e).__name__} - {e}")
             else:
-                print("AVISO: routes, trips ou stop_times vazios no GTFS")
+                if linhas_sel:
+                    print("AVISO: routes, trips ou stop_times vazios no GTFS")
         else:
-            print("AVISO: routes, trips ou stop_times ausentes no GTFS")
+            if linhas_sel:
+                print("AVISO: routes, trips ou stop_times ausentes no GTFS")
     else:
-        if not linhas_sel:
-            pass  # Normal - nenhuma linha selecionada
-        elif stops_gtfs is None:
-            print("AVISO: stops_gtfs ainda não carregado ou vazio")
-        else:
-            print(f"AVISO: stops_gtfs carregado mas vazio")
+        if linhas_sel and stops_gtfs is None:
+            print("AVISO: stops_gtfs não carregado (arquivo gtfs.zip pode estar corrompido)")
+        elif linhas_sel:
+            print(f"AVISO: stops_gtfs vazio - nenhuma parada para as linhas selecionadas")
 
     # --- Helper popup ---------------------------------------------------------
     def _popup(row, extra=None):
