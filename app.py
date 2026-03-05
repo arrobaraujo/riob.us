@@ -249,7 +249,8 @@ def _carregar_dados_estaticos():
                 "routes": {"usecols": ["route_id", "route_short_name"]},
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
                 "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
-                "stops": {"usecols": ["stop_id", "stop_name", "stop_lat", "stop_lon"]},
+                # stop_name pode não existir em alguns GTFS; manter apenas colunas essenciais.
+                "stops": {"usecols": ["stop_id", "stop_lat", "stop_lon"]},
                 "stop_times": {"usecols": ["trip_id", "stop_id"]},
             }
             _zip_names = z.namelist()
@@ -280,15 +281,22 @@ def _carregar_dados_estaticos():
                 df["shape_pt_lon"]      = pd.to_numeric(df["shape_pt_lon"], errors="coerce")
                 df["shape_pt_sequence"] = pd.to_numeric(df["shape_pt_sequence"], errors="coerce")
                 df = df.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
-                lines = (
-                    df.sort_values("shape_pt_sequence")
-                    .groupby("shape_id")
-                    .apply(lambda x: LineString(zip(x["shape_pt_lon"], x["shape_pt_lat"])),
-                           include_groups=False)
-                    .reset_index()
-                )
-                lines.columns = ["shape_id", "geometry"]
-                _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+                df = df.sort_values(["shape_id", "shape_pt_sequence"])
+
+                lines = []
+                for shape_id, grp in df.groupby("shape_id"):
+                    coords = list(zip(grp["shape_pt_lon"], grp["shape_pt_lat"]))
+                    # Evita erro de LineString com menos de 2 pontos.
+                    if len(coords) < 2:
+                        continue
+                    lines.append({"shape_id": shape_id, "geometry": LineString(coords)})
+
+                if lines:
+                    _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+                else:
+                    _shapes_gtfs = gpd.GeoDataFrame(
+                        {"shape_id": [], "geometry": []}, geometry="geometry", crs="EPSG:4326"
+                    )
                 print(f"  Shapes criadas: {len(_shapes_gtfs)} linhas únicas")
             except Exception as e:
                 print(f"  ERRO ao processar shapes: {type(e).__name__} - {e}")
@@ -301,11 +309,21 @@ def _carregar_dados_estaticos():
                 df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
                 df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
                 df = df.dropna(subset=["stop_lat", "stop_lon"])
-                _stops_gtfs = gpd.GeoDataFrame(
-                    df,
-                    geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
-                    crs="EPSG:4326",
-                )
+                if "stop_name" not in df.columns:
+                    df["stop_name"] = ""
+
+                if len(df) > 0:
+                    _stops_gtfs = gpd.GeoDataFrame(
+                        df,
+                        geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
+                        crs="EPSG:4326",
+                    )
+                else:
+                    _stops_gtfs = gpd.GeoDataFrame(
+                        {"stop_id": [], "stop_name": [], "stop_lat": [], "stop_lon": [], "geometry": []},
+                        geometry="geometry",
+                        crs="EPSG:4326",
+                    )
                 print(f"  Stops criadas: {len(_stops_gtfs)} paradas")
             except Exception as e:
                 print(f"  ERRO ao processar stops: {type(e).__name__} - {e}")
