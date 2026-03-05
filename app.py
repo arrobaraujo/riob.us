@@ -1,15 +1,3 @@
-# ==============================================================================
-# GPS BRT-SPPO - SMTR/RJ  |  Python + Dash
-# Equivalente ao app.R em Shiny
-#
-# Estrutura esperada da pasta:
-#   app.py
-#   requirements.txt
-#   Procfile
-#   gtfs/
-#     gtfs.zip
-# ==============================================================================
-
 import math
 import os
 import time
@@ -33,7 +21,7 @@ from urllib3.util.retry import Retry
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
-# Paleta de cores (15 cores com alto contraste)
+# Paleta de cores (10 cores com alto contraste)
 # ==============================================================================
 
 PALETA_CORES = [
@@ -211,6 +199,11 @@ def _build_retry_session():
 # Sessões persistentes para reduzir overhead de conexão/TLS.
 _http_session_sppo = _build_retry_session()
 _http_session_brt = _build_retry_session()
+
+# Versao de build para invalidacao de cache do frontend apos deploy.
+APP_BUILD_ID = os.getenv("APP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "dev"
+print(f"Build ID efetivo: {APP_BUILD_ID}")
+print(f"RENDER_GIT_COMMIT detectado: {os.getenv('RENDER_GIT_COMMIT')}")
 
 MARKER_LIMITS_BY_ZOOM = [
     (9, 150),
@@ -1044,10 +1037,14 @@ app.layout = html.Div(
         dcc.Interval(id="intervalo",        interval=45_000, n_intervals=0),
         dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
 
+        # Compatibilidade com clientes antigos que ainda chamam callback legado.
+        dcc.Store(id="store-hist-sppo", data={}),
+        dcc.Store(id="store-hist-brt", data={}),
+        dcc.Store(id="store-build-id", data=APP_BUILD_ID),
+        dcc.Store(id="store-build-sync", data=None),
         dcc.Store(id="store-linhas-debounce", data=[]),
         dcc.Store(id="store-gps-ts",    data=0),
         dcc.Store(id="store-localizacao", data=None),
-        dcc.Store(id="store-update-status", data={"updating": False, "last_ts": None}),
 
         # Cabeçalho
         html.Div(
@@ -1187,6 +1184,36 @@ app.layout = html.Div(
 # ==============================================================================
 
 
+# Forca refresh unico do browser quando o build do backend mudar.
+app.clientside_callback(
+    """
+    function(buildId) {
+        if (!buildId) {
+            return window.dash_clientside.no_update;
+        }
+        try {
+            var key = "gps_bus_rio_build_id";
+            var prev = window.localStorage.getItem(key);
+            if (prev === null) {
+                window.localStorage.setItem(key, buildId);
+                return window.dash_clientside.no_update;
+            }
+            if (prev !== buildId) {
+                window.localStorage.setItem(key, buildId);
+                window.location.reload();
+            }
+        } catch (e) {
+            // sem-op: se localStorage estiver indisponivel, segue normalmente.
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("store-build-sync", "data"),
+    Input("store-build-id", "data"),
+    prevent_initial_call=False,
+)
+
+
 
 
 @app.callback(
@@ -1208,19 +1235,20 @@ def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
 
 @app.callback(
     Output("store-gps-ts",    "data"),
-    Output("store-update-status", "data"),
+    Output("store-hist-sppo", "data"),
+    Output("store-hist-brt", "data"),
     Input("intervalo",        "n_intervals"),
     Input("btn-atualizar",    "n_clicks"),
     Input("store-linhas-debounce", "data"),
+    running=[
+        (Output("btn-atualizar", "disabled"), True, False),
+        (Output("span-update-icon", "children"), "🔄", ""),
+    ],
     prevent_initial_call=False,
 )
 def atualizar_gps(_n_int, _n_btn, linhas_sel):
     """Busca GPS, armazena no cache server-side e retorna só timestamp."""
     global _gps_cache, _last_update_ts, _hist_sppo_bygps, _hist_brt_bygps
-
-    with _status_lock:
-        last_ts_snapshot = _last_update_ts
-    status = {"updating": True, "last_ts": last_ts_snapshot}
 
     # OTIMIZAÇÃO: Passa linhas para fetch — se vazio, não gasta banda da API
     dados = fetch_gps_data(linhas_sel=linhas_sel or [])
@@ -1230,14 +1258,12 @@ def atualizar_gps(_n_int, _n_btn, linhas_sel):
         new_ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
         with _status_lock:
             _last_update_ts = new_ts
-        status["last_ts"] = new_ts.isoformat()
     
     if len(dados) == 0:
         with _hist_lock:
             _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
             _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
-        status["updating"] = False
-        return dash.no_update, status
+        return dash.no_update, {}, {}
 
     sppo_df = dados[dados["tipo"] == "SPPO"].copy()
     brt_df  = dados[dados["tipo"] == "BRT"].copy()
@@ -1268,9 +1294,8 @@ def atualizar_gps(_n_int, _n_btn, linhas_sel):
     # Salva server-side — nenhum dado pesado vai para o browser
     with _gps_lock:
         _gps_cache = dados_final if not dados_final.empty else pd.DataFrame()
-
-    status["updating"] = False
-    return int(time.time()), status
+    # Mantemos stores legados vazios para compatibilidade com clientes em cache.
+    return int(time.time()), {}, {}
 
 
 @app.callback(
@@ -1571,29 +1596,23 @@ def centralizar_na_posicao(data):
 # ==============================================================================
 
 @app.callback(
-    Output("btn-atualizar", "disabled"),
-    Output("span-update-icon", "children"),
     Output("span-update-time", "children"),
-    Input("store-update-status", "data"),
+    Input("store-gps-ts", "data"),
 )
-def atualizar_ui_atualizacao(status):
-    """Desabilita botão durante atualização e mostra ícone + timestamp."""
-    updating = status.get("updating", False) if status else False
-    last_ts = status.get("last_ts") if status else None
-    
-    # Ícone de atualização (animado quando atualizando)
-    icone = "🔄" if updating else ""
-    
-    # Timestamp da última atualização
+def atualizar_ui_atualizacao(_gps_ts):
+    """Mostra timestamp da última atualização bem-sucedida."""
+    with _status_lock:
+        last_ts = _last_update_ts
+
     tempo_texto = ""
     if last_ts:
         try:
-            dt = datetime.fromisoformat(last_ts)
+            dt = last_ts if isinstance(last_ts, datetime) else datetime.fromisoformat(str(last_ts))
             tempo_texto = dt.strftime("%H:%M:%S")
         except Exception:
             tempo_texto = ""
-    
-    return updating, icone, tempo_texto
+
+    return tempo_texto
 
 
 # ==============================================================================
