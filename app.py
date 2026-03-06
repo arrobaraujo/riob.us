@@ -2194,7 +2194,8 @@ def _calcular_viewport_linhas(linhas_sel):
 
     user_agent = (request.headers.get("User-Agent", "") or "").lower()
     is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
-    min_zoom = 13 if is_mobile else 13
+    # Linha unica costuma ficar melhor com um passo extra de aproximação.
+    min_zoom = 13 if is_mobile else (14 if len(linhas_sel) == 1 else 13)
     zoom = int(max(min_zoom, min(15, math.floor(min(zoom_lat, zoom_lon)))))
 
     print(
@@ -2287,12 +2288,12 @@ def _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce
                     return {"center": center, "zoom": 12}, dash.no_update
             return dash.no_update, dash.no_update
 
-        # Sem suporte a viewport, bounds costuma ser mais confiavel para enquadrar itinerario.
-        # Com viewport nativo, center/zoom e suficiente e evita conflitos com outros gatilhos.
+        # No fallback (sem viewport), usar center/zoom tem se mostrado mais estável em runtime.
+        # bounds permanece apenas para debug/calculo local.
         if MAP_SUPPORTS_VIEWPORT:
             command = {"center": center, "zoom": zoom}
         else:
-            command = {"bounds": bounds}
+            command = {"center": center, "zoom": zoom}
         print(f"Viewport linhas apply: {command}")
         return command, dash.no_update
 
