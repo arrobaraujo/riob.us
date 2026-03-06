@@ -14,6 +14,8 @@ import geopandas as gpd
 import pandas as pd
 import requests
 from dash import Input, Output, dcc, html
+from dash.exceptions import CallbackException
+from flask import request
 from requests.adapters import HTTPAdapter
 from shapely.geometry import LineString, Point, shape as shapely_shape, MultiPolygon
 from urllib3.util.retry import Retry
@@ -510,6 +512,182 @@ def _carregar_dados_estaticos():
     print("Carregamento inicial concluído.")
     # Sinaliza que o GTFS foi carregado (mesmo que parcialmente)
     _gtfs_load_event.set()
+
+
+def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
+    """Recarrega estruturas estaticas do GTFS se faltarem dados de shapes/paradas no runtime.
+
+    Este fallback e util em ambientes onde o carregamento em background pode falhar no startup.
+    """
+    global gtfs, line_to_shape_ids, line_to_stop_ids
+    global line_to_shape_coords, line_to_stops_points, line_to_bounds
+
+    linhas_sel = [str(ln) for ln in (linhas_sel or [])]
+    if not linhas_sel:
+        return
+
+    with _gtfs_data_lock:
+        missing = [
+            ln for ln in linhas_sel
+            if ln not in line_to_shape_coords and ln not in line_to_stops_points
+        ]
+    if not missing:
+        return
+
+    print(f"Fallback GTFS: recarregando estaticos para linhas ausentes: {missing[:8]}")
+
+    try:
+        with zipfile.ZipFile("gtfs/gtfs.zip") as z:
+            _gtfs = {}
+            _target_files = {
+                "routes": {"usecols": ["route_id", "route_short_name"]},
+                "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
+                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
+                "stops": {"usecols": ["stop_id", "stop_name", "stop_lat", "stop_lon"]},
+                "stop_times": {"usecols": ["trip_id", "stop_id"]},
+            }
+            _zip_names = z.namelist()
+            for key, opts in _target_files.items():
+                names = [n for n in _zip_names if n.endswith(f"{key}.txt")]
+                if not names:
+                    continue
+                with z.open(names[0]) as f:
+                    try:
+                        _gtfs[key] = pd.read_csv(
+                            f,
+                            dtype=str,
+                            usecols=opts["usecols"],
+                            low_memory=False,
+                        )
+                    except ValueError:
+                        if key == "stops":
+                            with z.open(names[0]) as f2:
+                                _gtfs[key] = pd.read_csv(
+                                    f2,
+                                    dtype=str,
+                                    usecols=["stop_id", "stop_lat", "stop_lon"],
+                                    low_memory=False,
+                                )
+                            _gtfs[key]["stop_name"] = ""
+
+        if not all(k in _gtfs for k in ["routes", "trips"]):
+            print("Fallback GTFS: routes/trips indisponiveis")
+            return
+
+        rotas = _gtfs["routes"].dropna(subset=["route_id", "route_short_name"])
+        trips = _gtfs["trips"].dropna(subset=["trip_id", "route_id"]).merge(
+            rotas, on="route_id", how="inner"
+        )
+
+        _line_to_shape_ids = {}
+        _line_to_stop_ids = {}
+        _line_to_shape_coords = {}
+        _line_to_stops_points = {}
+        _line_to_bounds = {}
+
+        if "shape_id" in trips.columns:
+            _line_to_shape_ids = (
+                trips.dropna(subset=["shape_id"])
+                .groupby("route_short_name")["shape_id"]
+                .unique()
+                .apply(list)
+                .to_dict()
+            )
+
+        shapes_by_id = {}
+        shape_bounds_by_id = {}
+        if "shapes" in _gtfs and not _gtfs["shapes"].empty:
+            df_shapes = _gtfs["shapes"].copy()
+            df_shapes["shape_pt_lat"] = pd.to_numeric(df_shapes["shape_pt_lat"], errors="coerce")
+            df_shapes["shape_pt_lon"] = pd.to_numeric(df_shapes["shape_pt_lon"], errors="coerce")
+            df_shapes["shape_pt_sequence"] = pd.to_numeric(df_shapes["shape_pt_sequence"], errors="coerce")
+            df_shapes = df_shapes.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
+            df_shapes = df_shapes.sort_values(["shape_id", "shape_pt_sequence"])
+
+            for shape_id, grp in df_shapes.groupby("shape_id"):
+                coords = grp[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
+                if len(coords) < 2:
+                    continue
+                shapes_by_id[shape_id] = coords
+                lats = [c[0] for c in coords]
+                lons = [c[1] for c in coords]
+                shape_bounds_by_id[shape_id] = [min(lats), min(lons), max(lats), max(lons)]
+
+        if shapes_by_id and _line_to_shape_ids:
+            for linha_id, shape_ids in _line_to_shape_ids.items():
+                coords_linha = []
+                min_lat = None
+                min_lon = None
+                max_lat = None
+                max_lon = None
+                for shp_id in shape_ids:
+                    coords = shapes_by_id.get(shp_id)
+                    if not coords:
+                        continue
+                    coords_linha.append(coords)
+                    b = shape_bounds_by_id.get(shp_id)
+                    if not b:
+                        continue
+                    min_lat = b[0] if min_lat is None else min(min_lat, b[0])
+                    min_lon = b[1] if min_lon is None else min(min_lon, b[1])
+                    max_lat = b[2] if max_lat is None else max(max_lat, b[2])
+                    max_lon = b[3] if max_lon is None else max(max_lon, b[3])
+                if coords_linha:
+                    _line_to_shape_coords[linha_id] = coords_linha
+                    if None not in (min_lat, min_lon, max_lat, max_lon):
+                        _line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
+
+        if "stop_times" in _gtfs and "stops" in _gtfs and not _gtfs["stop_times"].empty:
+            st = _gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
+                trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
+            )
+            _line_to_stop_ids = (
+                st.groupby("route_short_name")["stop_id"]
+                .unique()
+                .apply(list)
+                .to_dict()
+            )
+
+            stops_df = _gtfs["stops"].copy()
+            if "stop_name" not in stops_df.columns:
+                stops_df["stop_name"] = ""
+            stops_df["stop_lat"] = pd.to_numeric(stops_df["stop_lat"], errors="coerce")
+            stops_df["stop_lon"] = pd.to_numeric(stops_df["stop_lon"], errors="coerce")
+            stops_df = stops_df.dropna(subset=["stop_lat", "stop_lon", "stop_id"])
+            stops_lookup = stops_df.drop_duplicates(subset=["stop_id"]).set_index("stop_id")
+
+            for linha_id, stop_ids in _line_to_stop_ids.items():
+                pontos_linha = []
+                for stop_id in stop_ids:
+                    if stop_id not in stops_lookup.index:
+                        continue
+                    stop_row = stops_lookup.loc[stop_id]
+                    pontos_linha.append((
+                        float(stop_row["stop_lat"]),
+                        float(stop_row["stop_lon"]),
+                        str(stop_row.get("stop_name", "") or ""),
+                    ))
+                if pontos_linha:
+                    _line_to_stops_points[linha_id] = pontos_linha
+
+        with _gtfs_data_lock:
+            gtfs = _gtfs
+            line_to_shape_ids = _line_to_shape_ids
+            line_to_stop_ids = _line_to_stop_ids
+            line_to_shape_coords = _line_to_shape_coords
+            line_to_stops_points = _line_to_stops_points
+            line_to_bounds = _line_to_bounds
+
+        with _map_static_cache_lock:
+            _map_static_cache.clear()
+
+        _gtfs_load_event.set()
+        print(
+            f"Fallback GTFS pronto: {len(_line_to_shape_coords)} linhas com itinerarios, "
+            f"{len(_line_to_stops_points)} linhas com paradas"
+        )
+    except Exception as e:
+        print(f"ERRO no fallback GTFS: {type(e).__name__} - {e}")
 
 
 # Shapes/stops em background — não bloqueia o servidor nem o dropdown
@@ -1068,6 +1246,46 @@ app    = dash.Dash(
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
+
+@server.after_request
+def _disable_cache_for_dash_endpoints(response):
+    """Evita cache do layout/dependencies para reduzir mismatch de callbacks apos deploy."""
+    path = request.path or ""
+    if path in ("/", "/_dash-layout", "/_dash-dependencies"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+@server.errorhandler(CallbackException)
+def _handle_callback_exception(exc):
+    """Neutraliza requests de frontend antigo (layout/dependencies em cache) sem stacktrace ruidoso."""
+    msg = str(exc)
+    if "Inputs do not match callback definition" in msg:
+        payload = request.get_json(silent=True) or {}
+        output = payload.get("output")
+        outputs = payload.get("outputs")
+        changed = payload.get("changedPropIds")
+        inputs = payload.get("inputs") or []
+        states = payload.get("state") or []
+
+        # Loga um resumo compacto para identificar qual callback/cliente causou mismatch.
+        try:
+            input_ids = [f"{item.get('id')}.{item.get('property')}" for item in inputs if isinstance(item, dict)]
+            state_ids = [f"{item.get('id')}.{item.get('property')}" for item in states if isinstance(item, dict)]
+        except Exception:
+            input_ids = []
+            state_ids = []
+
+        print("AVISO: Callback com Inputs incompatíveis (provável frontend desatualizado).")
+        print(f"  output={output} | outputs={outputs}")
+        print(f"  changedPropIds={changed}")
+        print(f"  inputs({len(input_ids)}): {input_ids[:12]}")
+        print(f"  state({len(state_ids)}): {state_ids[:12]}")
+        return ("", 204)
+    raise exc
+
 app.layout = html.Div(
     [
         dcc.Interval(id="intervalo",        interval=45_000, n_intervals=0),
@@ -1447,6 +1665,9 @@ def atualizar_mapa(_ts, linhas_sel):
     if not _gtfs_load_event.is_set():
         # Nao bloquear callback por muitos segundos; renderiza GPS e legenda imediatamente.
         print("GTFS ainda carregando: renderizando mapa sem shapes/paradas por enquanto.")
+
+    # Fallback no runtime para Render: se as linhas nao tiverem estaticos, tenta recarregar.
+    _recarregar_gtfs_estatico_sob_demanda(linhas_sel)
 
     with _gtfs_data_lock:
         shape_coords_snapshot = dict(line_to_shape_coords)
