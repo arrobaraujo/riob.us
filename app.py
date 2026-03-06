@@ -2206,12 +2206,23 @@ def _calcular_viewport_linhas(linhas_sel):
     return center, zoom, bounds
 
 
-def _resolver_comando_viewport(data_localizacao, linhas_sel):
+def _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce):
     """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
     triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
     trigger = triggered_props[0].split(".")[0] if triggered_props else None
     has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
-    has_lines_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
+    has_dropdown_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
+    has_debounce_trigger = any(prop.startswith("store-linhas-debounce.") for prop in triggered_props)
+    has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
+
+    # Usa a seleção mais recente conforme a origem do trigger.
+    if has_debounce_trigger:
+        linhas_ativas = linhas_sel_debounce or []
+    elif has_dropdown_trigger:
+        linhas_ativas = linhas_sel or []
+    else:
+        linhas_ativas = linhas_sel_debounce or linhas_sel or []
+
     now_ms = time.time() * 1000.0
 
     # Evita que atualização de linhas sobrescreva imediatamente a geolocalização recém-clicada.
@@ -2234,7 +2245,7 @@ def _resolver_comando_viewport(data_localizacao, linhas_sel):
         f"triggered={triggered_props}, "
         f"has_loc={has_location_trigger}, has_lines={has_lines_trigger}, "
         f"loc_ts={recent_location_ms}, delta_loc_ms={delta_loc_ms}, "
-        f"linhas_count={len(linhas_sel or [])}"
+        f"linhas_count={len(linhas_ativas or [])}"
     )
 
     # Quando inputs chegam juntos, sempre prioriza geolocalização.
@@ -2253,16 +2264,16 @@ def _resolver_comando_viewport(data_localizacao, linhas_sel):
         print(f"Viewport localização: center={[lat, lon]}, zoom=15")
         return {"center": [lat, lon], "zoom": 15}, [marcador]
 
-    if has_lines_trigger or trigger == "dropdown-linhas":
+    if has_lines_trigger or trigger in ("dropdown-linhas", "store-linhas-debounce"):
         # Só prioriza geolocalização quando ambos os eventos chegam no mesmo ciclo.
         if has_location_trigger and has_lines_trigger:
             print("Viewport linhas ignorado: trigger simultâneo com geolocalização.")
             return dash.no_update, dash.no_update
 
-        center, zoom, bounds = _calcular_viewport_linhas(linhas_sel or [])
+        center, zoom, bounds = _calcular_viewport_linhas(linhas_ativas)
         if center is None or zoom is None or bounds is None:
             # Fallback: usa centro dos veículos já carregados para primeira seleção.
-            sel = set(str(x) for x in (linhas_sel or []))
+            sel = set(str(x) for x in (linhas_ativas or []))
             with _gps_lock:
                 gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
             if not gps_snapshot.empty and sel:
@@ -2289,11 +2300,12 @@ if MAP_SUPPORTS_VIEWPORT:
         Output("layer-localizacao", "children"),
         Input("store-localizacao", "data"),
         Input("dropdown-linhas", "value"),
+        Input("store-linhas-debounce", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, linhas_sel):
+    def controlar_viewport_mapa(data_localizacao, linhas_sel, linhas_sel_debounce):
         """Controla viewport usando prop nativa 'viewport' quando disponível."""
-        return _resolver_comando_viewport(data_localizacao, linhas_sel)
+        return _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce)
 else:
     @app.callback(
         Output("mapa", "center"),
@@ -2302,11 +2314,12 @@ else:
         Output("layer-localizacao", "children"),
         Input("store-localizacao", "data"),
         Input("dropdown-linhas", "value"),
+        Input("store-linhas-debounce", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, linhas_sel):
+    def controlar_viewport_mapa(data_localizacao, linhas_sel, linhas_sel_debounce):
         """Fallback compatível: converte comando de viewport para center/zoom/bounds."""
-        command, marker_layer = _resolver_comando_viewport(data_localizacao, linhas_sel)
+        command, marker_layer = _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce)
 
         if command is dash.no_update:
             return dash.no_update, dash.no_update, dash.no_update, marker_layer
