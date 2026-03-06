@@ -2154,15 +2154,15 @@ def _calcular_viewport_linhas(linhas_sel):
             max_lat = ne[0] if max_lat is None else max(max_lat, ne[0])
             max_lon = ne[1] if max_lon is None else max(max_lon, ne[1])
     else:
-        # Remove extremos para evitar zoom muito aberto por um ponto espúrio.
-        if len(all_lats) >= 25:
-            print("Zoom linhas debug: aplicando quantis 5%-95%")
+        # Remove extremos apenas em selecoes multi-linha para evitar cortar terminais de uma linha unica.
+        if len(linhas_sel) > 1 and len(all_lats) >= 60:
+            print("Zoom linhas debug: aplicando quantis 2%-98% (multi-linha)")
             lat_s = pd.Series(all_lats)
             lon_s = pd.Series(all_lons)
-            min_lat = float(lat_s.quantile(0.05))
-            max_lat = float(lat_s.quantile(0.95))
-            min_lon = float(lon_s.quantile(0.05))
-            max_lon = float(lon_s.quantile(0.95))
+            min_lat = float(lat_s.quantile(0.02))
+            max_lat = float(lat_s.quantile(0.98))
+            min_lon = float(lon_s.quantile(0.02))
+            max_lon = float(lon_s.quantile(0.98))
         else:
             min_lat = min(all_lats)
             max_lat = max(all_lats)
@@ -2287,8 +2287,12 @@ def _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce
                     return {"center": center, "zoom": 12}, dash.no_update
             return dash.no_update, dash.no_update
 
-        # Comando unico para todos os ambientes: center/zoom evita variacao entre versoes.
-        command = {"center": center, "zoom": zoom}
+        # Sem suporte a viewport, bounds costuma ser mais confiavel para enquadrar itinerario.
+        # Com viewport nativo, center/zoom e suficiente e evita conflitos com outros gatilhos.
+        if MAP_SUPPORTS_VIEWPORT:
+            command = {"center": center, "zoom": zoom}
+        else:
+            command = {"bounds": bounds}
         print(f"Viewport linhas apply: {command}")
         return command, dash.no_update
 
@@ -2331,7 +2335,7 @@ else:
 
             # Prioriza center/zoom quando disponivel (mais robusto no fallback).
             if center is not dash.no_update or zoom is not dash.no_update:
-                return center, zoom, None, marker_layer
+                return center, zoom, dash.no_update, marker_layer
 
             if "bounds" in command:
                 return dash.no_update, dash.no_update, command["bounds"], marker_layer
