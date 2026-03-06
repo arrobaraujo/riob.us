@@ -2551,6 +2551,11 @@ def _calcular_viewport_veiculos(veiculos_sel):
     if filtrado.empty:
         return None, None
 
+    if len(filtrado) == 1:
+        row = filtrado.iloc[0]
+        center = [round(float(row["lat"]), 6), round(float(row["lng"]), 6)]
+        return center, 15
+
     min_lat = float(filtrado["lat"].min())
     max_lat = float(filtrado["lat"].max())
     min_lon = float(filtrado["lng"].min())
@@ -2571,18 +2576,18 @@ def _calcular_viewport_veiculos(veiculos_sel):
     return center, zoom
 
 
-def _resolver_comando_viewport(data_localizacao, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
     """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
     triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
     trigger = triggered_props[0].split(".")[0] if triggered_props else None
     has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
+    has_gps_trigger = any(prop.startswith("store-gps-ts.") for prop in triggered_props)
     has_dropdown_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
-    has_veiculos_trigger = any(prop.startswith("dropdown-veiculos.") for prop in triggered_props)
     has_debounce_trigger = any(prop.startswith("store-linhas-debounce.") for prop in triggered_props)
     has_veiculos_store_trigger = any(prop.startswith("store-veiculos-debounce.") for prop in triggered_props)
     has_tab_trigger = any(prop.startswith("tabs-filtro.") or prop.startswith("store-tab-filtro.") for prop in triggered_props)
     has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
-    has_vehicles_selection_trigger = has_veiculos_trigger or has_veiculos_store_trigger
+    has_vehicles_selection_trigger = has_veiculos_store_trigger
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
 
     # Usa a seleção mais recente conforme a origem do trigger.
@@ -2641,7 +2646,14 @@ def _resolver_comando_viewport(data_localizacao, tab_filtro, linhas_sel, linhas_
             command = {"center": center, "zoom": zoom}
         return command, dash.no_update
 
-    if (modo == "veiculos" and has_vehicles_selection_trigger) or (modo == "veiculos" and has_tab_trigger):
+    if (
+        modo == "veiculos"
+        and (
+            has_vehicles_selection_trigger
+            or has_tab_trigger
+            or (has_gps_trigger and bool(veiculos_ativos))
+        )
+    ):
         center, zoom = _calcular_viewport_veiculos(veiculos_ativos)
         if center is None or zoom is None:
             return dash.no_update, dash.no_update
@@ -2656,15 +2668,16 @@ if MAP_SUPPORTS_VIEWPORT:
         Output("mapa", "viewport"),
         Output("layer-localizacao", "children"),
         Input("store-localizacao", "data"),
+        Input("store-gps-ts", "data"),
         Input("store-tab-filtro", "data"),
         Input("dropdown-linhas", "value"),
         Input("store-linhas-debounce", "data"),
-        Input("dropdown-veiculos", "value"),
+        Input("store-veiculos-debounce", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
         """Controla viewport usando prop nativa 'viewport' quando disponível."""
-        return _resolver_comando_viewport(data_localizacao, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel)
+        return _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel)
 else:
     @app.callback(
         Output("mapa", "center"),
@@ -2672,16 +2685,18 @@ else:
         Output("mapa", "bounds"),
         Output("layer-localizacao", "children"),
         Input("store-localizacao", "data"),
+        Input("store-gps-ts", "data"),
         Input("store-tab-filtro", "data"),
         Input("dropdown-linhas", "value"),
         Input("store-linhas-debounce", "data"),
-        Input("dropdown-veiculos", "value"),
+        Input("store-veiculos-debounce", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
         """Fallback compatível: converte comando de viewport para center/zoom/bounds."""
         command, marker_layer = _resolver_comando_viewport(
             data_localizacao,
+            gps_ts,
             tab_filtro,
             linhas_sel,
             linhas_sel_debounce,
