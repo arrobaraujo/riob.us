@@ -1,1 +1,1 @@
-web: gunicorn app:server --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+web: sh -c 'echo "[startup] PORT=${PORT}"; gunicorn app:server --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 180 --access-logfile - --error-logfile - --log-level info || (echo "[startup] gunicorn falhou, iniciando via python"; python app.py)'
