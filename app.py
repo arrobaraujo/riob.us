@@ -183,6 +183,7 @@ line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
 linhas_dict      = {}
 linhas_short     = []
 linha_cor_fixa   = {}
+lecd_public_map  = {}  # {LECDxxx: numero_publico}
 
 
 def _build_retry_session():
@@ -237,8 +238,59 @@ def _empty_stops_gdf():
     )
 
 
+def _normalizar_linha(valor):
+    """Normaliza identificador de linha para string segura."""
+    if valor is None:
+        return ""
+    return str(valor).strip()
+
+
+def linha_publica(valor_linha):
+    """Retorna o identificador público da linha (quando houver mapeamento LECD)."""
+    ln = _normalizar_linha(valor_linha)
+    return lecd_public_map.get(ln, ln)
+
+
+def linha_exibicao(valor_linha):
+    """Rótulo de exibição para listagens: publico (LECD) quando houver mapeamento."""
+    ln = _normalizar_linha(valor_linha)
+    pub = linha_publica(ln)
+    if ln and pub and ln != pub:
+        return f"{pub} ({ln})"
+    return pub or ln
+
+
+def _carregar_dicionario_lecd():
+    """Carrega mapeamento LECD -> número público para exibição na UI."""
+    global lecd_public_map
+    try:
+        df = pd.read_csv("gtfs/dicionario_lecd.csv", dtype=str)
+        if not {"LECD", "servico"}.issubset(df.columns):
+            print("AVISO: dicionario_lecd.csv sem colunas esperadas (LECD, servico)")
+            lecd_public_map = {}
+            return
+
+        df = df[["LECD", "servico"]].fillna("")
+        mapping = {}
+        for row in df.itertuples(index=False):
+            lecd = _normalizar_linha(row.LECD)
+            serv = _normalizar_linha(row.servico)
+            if lecd and serv:
+                mapping[lecd] = serv
+
+        lecd_public_map = mapping
+        print(f"Dicionário LECD carregado: {len(lecd_public_map)} mapeamentos")
+    except FileNotFoundError:
+        print("AVISO: gtfs/dicionario_lecd.csv não encontrado; usando códigos originais")
+        lecd_public_map = {}
+    except Exception as e:
+        print(f"ERRO ao carregar dicionário LECD: {type(e).__name__} - {e}")
+        lecd_public_map = {}
+
+
 # --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
 # Isso garante que o dropdown já tem opções quando o app abre.
+_carregar_dicionario_lecd()
 print("Carregando routes (síncrono)...")
 try:
     with zipfile.ZipFile("gtfs/gtfs.zip") as _z:
@@ -1267,6 +1319,65 @@ app.index_string = """
                 overflow: hidden;
             }
 
+            body {
+                background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
+            }
+
+            #boot-loader {
+                position: fixed;
+                inset: 0;
+                z-index: 99999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
+                transition: opacity .35s ease, visibility .35s ease;
+            }
+
+            #boot-loader.hide {
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+            }
+
+            .boot-card {
+                min-width: 250px;
+                padding: 16px 20px;
+                border-radius: 12px;
+                background: rgba(255,255,255,.92);
+                border: 1px solid #d5dfeb;
+                box-shadow: 0 10px 30px rgba(31,42,55,.14);
+                text-align: center;
+                font-family: 'Segoe UI', sans-serif;
+                color: #1f2a37;
+            }
+
+            .boot-title {
+                margin: 0 0 10px 0;
+                font-size: 15px;
+                font-weight: 700;
+            }
+
+            .boot-subtitle {
+                margin: 8px 0 0 0;
+                font-size: 12px;
+                color: #4b5a6b;
+            }
+
+            .boot-spinner {
+                width: 34px;
+                height: 34px;
+                margin: 0 auto;
+                border-radius: 50%;
+                border: 3px solid #c8d8ef;
+                border-top-color: #1366d6;
+                animation: spin .9s linear infinite;
+            }
+
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+
             /* Remove contorno de foco visual ao clicar em elementos do mapa. */
             .leaflet-container:focus {
                 outline: none !important;
@@ -1280,7 +1391,50 @@ app.index_string = """
         </style>
     </head>
     <body>
+        <div id="boot-loader" aria-live="polite" aria-label="Carregando aplicação">
+            <div class="boot-card">
+                <p class="boot-title">Consulta de ônibus - Rio de Janeiro</p>
+                <div class="boot-spinner"></div>
+                <p class="boot-subtitle">Carregando mapa e dados...</p>
+            </div>
+        </div>
         {%app_entry%}
+        <script>
+            (function () {
+                function hideLoader() {
+                    var el = document.getElementById('boot-loader');
+                    if (!el) return;
+                    el.classList.add('hide');
+                    setTimeout(function () {
+                        if (el && el.parentNode) el.parentNode.removeChild(el);
+                    }, 450);
+                }
+
+                function appMounted() {
+                    var root = document.getElementById('react-entry-point');
+                    if (!root) return false;
+                    return root.children && root.children.length > 0;
+                }
+
+                var tries = 0;
+                var timer = setInterval(function () {
+                    tries += 1;
+                    if (appMounted()) {
+                        clearInterval(timer);
+                        hideLoader();
+                        return;
+                    }
+                    if (tries > 240) {
+                        clearInterval(timer);
+                        hideLoader();
+                    }
+                }, 50);
+
+                window.addEventListener('load', function () {
+                    setTimeout(hideLoader, 600);
+                });
+            })();
+        </script>
         <footer>
             {%config%}
             {%scripts%}
@@ -1360,7 +1514,7 @@ app.layout = html.Div(
                         html.Div(
                             dcc.Dropdown(
                                 id="dropdown-linhas",
-                                options=[{"label": ln, "value": ln} for ln in linhas_short],
+                                options=[{"label": linha_exibicao(ln), "value": ln} for ln in linhas_short],
                                 multi=True,
                                 placeholder="Selecione uma ou mais linhas...",
                                 style=ESTILOS["dropdown"],
@@ -1665,6 +1819,7 @@ def atualizar_mapa(_ts, linhas_sel):
     for ln in linhas_sel:
         cor       = cores.get(ln, "#888888")
         nome_long = linhas_dict.get(ln, "")
+        linha_label = linha_exibicao(ln)
         itens.append(
             html.Div(
                 [
@@ -1675,7 +1830,7 @@ def atualizar_mapa(_ts, linhas_sel):
                         "display": "inline-block",
                     }),
                     html.Span(
-                        [html.B(ln)]
+                        [html.B(linha_label)]
                         + ([html.Br(), html.Span(nome_long,
                             style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"})]
                            if nome_long else [])
@@ -1738,13 +1893,14 @@ def atualizar_mapa(_ts, linhas_sel):
             for linha_id in linhas_sel:
                 cor = cores.get(linha_id, "#888888")
                 for coords in shape_coords_snapshot.get(linha_id, []):
+                    linha_label = linha_publica(linha_id)
                     shapes_layers.append(
                         dl.Polyline(
                             positions=coords,
                             color=cor,
                             weight=4,
                             className="itinerario-polyline",
-                            children=dl.Tooltip(f"Linha {linha_id}"),
+                            children=dl.Tooltip(f"Linha {linha_label}"),
                         )
                     )
 
@@ -1780,7 +1936,7 @@ def atualizar_mapa(_ts, linhas_sel):
         hora = hora[-8:] if len(hora) >= 8 else hora
         items = [
             html.P(f"Número do veículo: {row.get('ordem', '')}",  style={"margin": "2px 0"}),
-            html.P(f"Serviço: {row.get('linha', '')}",  style={"margin": "2px 0"}),
+            html.P(f"Serviço: {linha_publica(row.get('linha', ''))}",  style={"margin": "2px 0"}),
             html.P(f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
                    style={"margin": "2px 0"}),
             html.P(f"Velocidade: {vel} km/h",         style={"margin": "2px 0"}),
