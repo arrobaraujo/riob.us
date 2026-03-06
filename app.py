@@ -5,6 +5,7 @@ import zipfile
 import urllib.parse
 import warnings
 import threading
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -1302,6 +1303,21 @@ app    = dash.Dash(
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
+
+def _safe_pkg_version(pkg_name):
+    try:
+        return pkg_version(pkg_name)
+    except PackageNotFoundError:
+        return "not-installed"
+    except Exception:
+        return "unknown"
+
+
+print(f"Dash version: {_safe_pkg_version('dash')} | runtime: {getattr(dash, '__version__', 'unknown')}")
+print(f"dash-leaflet version: {_safe_pkg_version('dash-leaflet')}")
+MAP_SUPPORTS_VIEWPORT = "viewport" in getattr(dl.Map, "_prop_names", [])
+print(f"dash-leaflet suporte a 'viewport': {MAP_SUPPORTS_VIEWPORT}")
+
 # CSS global para evitar scroll vertical residual no mobile.
 app.index_string = """
 <!DOCTYPE html>
@@ -2190,15 +2206,8 @@ def _calcular_viewport_linhas(linhas_sel):
     return center, zoom, bounds
 
 
-@app.callback(
-    Output("mapa", "viewport"),
-    Output("layer-localizacao", "children"),
-    Input("store-localizacao", "data"),
-    Input("dropdown-linhas", "value"),
-    prevent_initial_call=True,
-)
-def controlar_viewport_mapa(data_localizacao, linhas_sel):
-    """Controla viewport do mapa sem disputa entre callbacks de linhas e geolocalização."""
+def _resolver_comando_viewport(data_localizacao, linhas_sel):
+    """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
     triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
     trigger = triggered_props[0].split(".")[0] if triggered_props else None
     has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
@@ -2272,6 +2281,44 @@ def controlar_viewport_mapa(data_localizacao, linhas_sel):
         return {"bounds": bounds}, dash.no_update
 
     return dash.no_update, dash.no_update
+
+
+if MAP_SUPPORTS_VIEWPORT:
+    @app.callback(
+        Output("mapa", "viewport"),
+        Output("layer-localizacao", "children"),
+        Input("store-localizacao", "data"),
+        Input("dropdown-linhas", "value"),
+        prevent_initial_call=True,
+    )
+    def controlar_viewport_mapa(data_localizacao, linhas_sel):
+        """Controla viewport usando prop nativa 'viewport' quando disponível."""
+        return _resolver_comando_viewport(data_localizacao, linhas_sel)
+else:
+    @app.callback(
+        Output("mapa", "center"),
+        Output("mapa", "zoom"),
+        Output("mapa", "bounds"),
+        Output("layer-localizacao", "children"),
+        Input("store-localizacao", "data"),
+        Input("dropdown-linhas", "value"),
+        prevent_initial_call=True,
+    )
+    def controlar_viewport_mapa(data_localizacao, linhas_sel):
+        """Fallback compatível: converte comando de viewport para center/zoom/bounds."""
+        command, marker_layer = _resolver_comando_viewport(data_localizacao, linhas_sel)
+
+        if command is dash.no_update:
+            return dash.no_update, dash.no_update, dash.no_update, marker_layer
+
+        if isinstance(command, dict):
+            if "bounds" in command:
+                return dash.no_update, dash.no_update, command["bounds"], marker_layer
+            center = command.get("center", dash.no_update)
+            zoom = command.get("zoom", dash.no_update)
+            return center, zoom, None, marker_layer
+
+        return dash.no_update, dash.no_update, dash.no_update, marker_layer
 
 
 # ==============================================================================
