@@ -2287,9 +2287,10 @@ def _resolver_comando_viewport(data_localizacao, linhas_sel, linhas_sel_debounce
                     return {"center": center, "zoom": 12}, dash.no_update
             return dash.no_update, dash.no_update
 
-        # Em linha, preferir fit por bounds (mais estável que center/zoom em alguns clientes).
-        print(f"Viewport linhas apply: bounds-only={bounds}")
-        return {"bounds": bounds}, dash.no_update
+        # Comando unico para todos os ambientes: center/zoom evita variacao entre versoes.
+        command = {"center": center, "zoom": zoom}
+        print(f"Viewport linhas apply: {command}")
+        return command, dash.no_update
 
     return dash.no_update, dash.no_update
 
@@ -2325,11 +2326,17 @@ else:
             return dash.no_update, dash.no_update, dash.no_update, marker_layer
 
         if isinstance(command, dict):
-            if "bounds" in command:
-                return dash.no_update, dash.no_update, command["bounds"], marker_layer
             center = command.get("center", dash.no_update)
             zoom = command.get("zoom", dash.no_update)
-            return center, zoom, None, marker_layer
+
+            # Prioriza center/zoom quando disponivel (mais robusto no fallback).
+            if center is not dash.no_update or zoom is not dash.no_update:
+                return center, zoom, None, marker_layer
+
+            if "bounds" in command:
+                return dash.no_update, dash.no_update, command["bounds"], marker_layer
+
+            return dash.no_update, dash.no_update, dash.no_update, marker_layer
 
         return dash.no_update, dash.no_update, dash.no_update, marker_layer
 
