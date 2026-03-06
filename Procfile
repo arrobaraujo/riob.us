@@ -1,1 +1,1 @@
-web: gunicorn app:server --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 180 --access-logfile - --error-logfile - --log-level info
+web: sh -c 'gunicorn app:server --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 2 --timeout 180 --access-logfile - --error-logfile - --log-level info'
