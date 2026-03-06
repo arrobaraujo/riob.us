@@ -129,8 +129,8 @@ ESTILOS = {
     },
     "botao_localizacao_container": {
         "position": "absolute",
-        "top": "126px",
-        "right": "10px",
+        "top": "84px",
+        "left": "10px",
         "zIndex": 1000,
     },
     "legenda_container": {
@@ -179,7 +179,7 @@ stops_gtfs       = None
 line_to_shape_ids = {}
 line_to_stop_ids  = {}
 line_to_shape_coords = {}  # {linha: [coords_list]}
-line_to_stops_points = {}  # {linha: [(lat, lon, stop_name)]}
+line_to_stops_points = {}  # {linha: [{lat, lon, stop_name, stop_code, stop_desc, platform_code}]}
 line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
 linhas_dict      = {}
 linhas_short     = []
@@ -371,8 +371,18 @@ def _carregar_dados_estaticos():
                 "routes": {"usecols": ["route_id", "route_short_name"]},
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
                 "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
-                # stop_name pode não existir em alguns GTFS; manter apenas colunas essenciais.
-                "stops": {"usecols": ["stop_id", "stop_lat", "stop_lon"]},
+                # stop_code/stop_desc/platform_code podem nao existir em alguns GTFS.
+                "stops": {
+                    "usecols": [
+                        "stop_id",
+                        "stop_name",
+                        "stop_code",
+                        "stop_desc",
+                        "platform_code",
+                        "stop_lat",
+                        "stop_lon",
+                    ]
+                },
                 "stop_times": {"usecols": ["trip_id", "stop_id"]},
             }
             _zip_names = z.namelist()
@@ -391,7 +401,31 @@ def _carregar_dados_estaticos():
                         )
                         print(f"  ✓ {key}: {len(_gtfs[key])} registros")
                 except Exception as e:
-                    print(f"  ✗ Erro ao ler {key}: {e}")
+                    if key == "stops":
+                        try:
+                            with z.open(names[0]) as f2:
+                                _gtfs[key] = pd.read_csv(
+                                    f2,
+                                    dtype=str,
+                                    usecols=lambda c: c in {
+                                        "stop_id",
+                                        "stop_name",
+                                        "stop_code",
+                                        "stop_desc",
+                                        "platform_code",
+                                        "stop_lat",
+                                        "stop_lon",
+                                    },
+                                    low_memory=False,
+                                )
+                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                                if col not in _gtfs[key].columns:
+                                    _gtfs[key][col] = ""
+                            print(f"  ✓ {key}: {len(_gtfs[key])} registros (modo compatibilidade)")
+                        except Exception as e2:
+                            print(f"  ✗ Erro ao ler {key}: {e2}")
+                    else:
+                        print(f"  ✗ Erro ao ler {key}: {e}")
 
         _shapes_gtfs = _empty_shapes_gdf()
         _stops_gtfs  = _empty_stops_gdf()
@@ -427,8 +461,9 @@ def _carregar_dados_estaticos():
                 df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
                 df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
                 df = df.dropna(subset=["stop_lat", "stop_lon"])
-                if "stop_name" not in df.columns:
-                    df["stop_name"] = ""
+                for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                    if col not in df.columns:
+                        df[col] = ""
 
                 if len(df) > 0:
                     _stops_gtfs = gpd.GeoDataFrame(
@@ -521,11 +556,19 @@ def _carregar_dados_estaticos():
                                 stop_name = ""
                                 if "stop_name" in stop_row and pd.notna(stop_row["stop_name"]):
                                     stop_name = str(stop_row["stop_name"])
-                                pontos_linha.append((
-                                    float(stop_row["stop_lat"]),
-                                    float(stop_row["stop_lon"]),
-                                    stop_name,
-                                ))
+                                stop_code = str(stop_row.get("stop_code", "") or "")
+                                stop_desc = str(stop_row.get("stop_desc", "") or "")
+                                platform_code = str(stop_row.get("platform_code", "") or "")
+                                pontos_linha.append(
+                                    {
+                                        "lat": float(stop_row["stop_lat"]),
+                                        "lon": float(stop_row["stop_lon"]),
+                                        "stop_name": stop_name,
+                                        "stop_code": stop_code,
+                                        "stop_desc": stop_desc,
+                                        "platform_code": platform_code,
+                                    }
+                                )
                             except Exception:
                                 continue
                         if pontos_linha:
@@ -600,7 +643,17 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
                 "routes": {"usecols": ["route_id", "route_short_name"]},
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
                 "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
-                "stops": {"usecols": ["stop_id", "stop_name", "stop_lat", "stop_lon"]},
+                "stops": {
+                    "usecols": [
+                        "stop_id",
+                        "stop_name",
+                        "stop_code",
+                        "stop_desc",
+                        "platform_code",
+                        "stop_lat",
+                        "stop_lon",
+                    ]
+                },
                 "stop_times": {"usecols": ["trip_id", "stop_id"]},
             }
             _zip_names = z.namelist()
@@ -622,10 +675,20 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
                                 _gtfs[key] = pd.read_csv(
                                     f2,
                                     dtype=str,
-                                    usecols=["stop_id", "stop_lat", "stop_lon"],
+                                    usecols=lambda c: c in {
+                                        "stop_id",
+                                        "stop_name",
+                                        "stop_code",
+                                        "stop_desc",
+                                        "platform_code",
+                                        "stop_lat",
+                                        "stop_lon",
+                                    },
                                     low_memory=False,
                                 )
-                            _gtfs[key]["stop_name"] = ""
+                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                                if col not in _gtfs[key].columns:
+                                    _gtfs[key][col] = ""
 
         if not all(k in _gtfs for k in ["routes", "trips"]):
             print("Fallback GTFS: routes/trips indisponiveis")
@@ -706,8 +769,9 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
             )
 
             stops_df = _gtfs["stops"].copy()
-            if "stop_name" not in stops_df.columns:
-                stops_df["stop_name"] = ""
+            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                if col not in stops_df.columns:
+                    stops_df[col] = ""
             stops_df["stop_lat"] = pd.to_numeric(stops_df["stop_lat"], errors="coerce")
             stops_df["stop_lon"] = pd.to_numeric(stops_df["stop_lon"], errors="coerce")
             stops_df = stops_df.dropna(subset=["stop_lat", "stop_lon", "stop_id"])
@@ -719,11 +783,16 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
                     if stop_id not in stops_lookup.index:
                         continue
                     stop_row = stops_lookup.loc[stop_id]
-                    pontos_linha.append((
-                        float(stop_row["stop_lat"]),
-                        float(stop_row["stop_lon"]),
-                        str(stop_row.get("stop_name", "") or ""),
-                    ))
+                    pontos_linha.append(
+                        {
+                            "lat": float(stop_row["stop_lat"]),
+                            "lon": float(stop_row["stop_lon"]),
+                            "stop_name": str(stop_row.get("stop_name", "") or ""),
+                            "stop_code": str(stop_row.get("stop_code", "") or ""),
+                            "stop_desc": str(stop_row.get("stop_desc", "") or ""),
+                            "platform_code": str(stop_row.get("platform_code", "") or ""),
+                        }
+                    )
                 if pontos_linha:
                     _line_to_stops_points[linha_id] = pontos_linha
 
@@ -875,6 +944,25 @@ def _gerar_svg_usuario():
     )
     return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
 
+
+def _gerar_svg_parada():
+    """Gera SVG de placa de parada com icone de onibus e retorna data-URI codificado."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">'
+        '<g transform="translate(2,1)">'
+        '<rect x="1" y="1" width="20" height="18" rx="3" fill="#1f2a37" stroke="#ffffff" stroke-width="1.4"/>'
+        '<rect x="4.2" y="4.5" width="13.6" height="8.2" rx="1.8" fill="#ffffff"/>'
+        '<rect x="5.6" y="6" width="4.8" height="3.6" rx="0.8" fill="#9ec5ff"/>'
+        '<rect x="11.6" y="6" width="4.8" height="3.6" rx="0.8" fill="#9ec5ff"/>'
+        '<rect x="8.7" y="10.1" width="4.6" height="1.8" rx="0.8" fill="#1f2a37"/>'
+        '<circle cx="8" cy="13.9" r="1.25" fill="#1f2a37"/>'
+        '<circle cx="14" cy="13.9" r="1.25" fill="#1f2a37"/>'
+        '<rect x="10.3" y="19" width="1.4" height="4.7" fill="#1f2a37"/>'
+        '</g>'
+        '</svg>'
+    )
+    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
+
 def _cache_or_generate_svg(color, bearing):
     """Cache de SVG: retorna do cache ou gera e armazena."""
     is_nan = bearing is None or (isinstance(bearing, float) and math.isnan(bearing))
@@ -913,6 +1001,14 @@ def _cache_or_generate_svg(color, bearing):
     with _svg_cache_lock:
         _svg_cache[cache_key] = result
     return result
+
+
+STOP_SIGN_ICON = {
+    "iconUrl": _gerar_svg_parada(),
+    "iconSize": [26, 26],
+    "iconAnchor": [13, 24],
+    "popupAnchor": [0, -22],
+}
 
 
 def _limpar_historico_antigo(hist_dict, tipo="SPPO"):
@@ -1920,15 +2016,45 @@ def atualizar_mapa(_ts, linhas_sel):
                         )
                     )
 
-                for stop_lat, stop_lon, stop_name in stops_points_snapshot.get(linha_id, []):
+                def _texto_stop_valor(valor):
+                    texto = str(valor).strip() if valor is not None else ""
+                    if not texto or texto.lower() in {"nan", "none", "null"}:
+                        return "N/D"
+                    return texto
+
+                for stop_item in stops_points_snapshot.get(linha_id, []):
+                    # Compatibilidade com cache antigo: aceita tanto dict novo quanto tupla legado.
+                    if isinstance(stop_item, dict):
+                        stop_lat = stop_item.get("lat")
+                        stop_lon = stop_item.get("lon")
+                        stop_name = stop_item.get("stop_name", "")
+                        stop_code = stop_item.get("stop_code", "")
+                        stop_desc = stop_item.get("stop_desc", "")
+                        platform_code = stop_item.get("platform_code", "")
+                    else:
+                        stop_lat = stop_item[0] if len(stop_item) > 0 else None
+                        stop_lon = stop_item[1] if len(stop_item) > 1 else None
+                        stop_name = stop_item[2] if len(stop_item) > 2 else ""
+                        stop_code = ""
+                        stop_desc = ""
+                        platform_code = ""
+
+                    if stop_lat is None or stop_lon is None:
+                        continue
+
+                    popup_parada = html.Div(
+                        [
+                            html.P(f"Nome: {_texto_stop_valor(stop_name)}", style={"margin": "2px 0"}),
+                            html.P(f"Código: {_texto_stop_valor(stop_code)}", style={"margin": "2px 0"}),
+                            html.P(f"Descrição: {_texto_stop_valor(stop_desc)}", style={"margin": "2px 0"}),
+                            html.P(f"Plataforma: {_texto_stop_valor(platform_code)}", style={"margin": "2px 0"}),
+                        ]
+                    )
                     paradas_layers.append(
-                        dl.CircleMarker(
-                            center=[stop_lat, stop_lon],
-                            radius=4,
-                            color="darkred",
-                            fillColor="red",
-                            fillOpacity=0.75,
-                            children=dl.Popup(stop_name),
+                        dl.Marker(
+                            position=[float(stop_lat), float(stop_lon)],
+                            icon=STOP_SIGN_ICON,
+                            children=dl.Popup(popup_parada),
                         )
                     )
 
