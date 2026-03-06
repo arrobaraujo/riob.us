@@ -50,6 +50,7 @@ ESTILOS = {
         "color": "white",
         "display": "flex",
         "alignItems": "center",
+        "justifyContent": "center",
         "borderBottom": "1px solid #16202b",
         "boxShadow": "0 1px 4px rgba(0,0,0,.12)",
     },
@@ -58,6 +59,7 @@ ESTILOS = {
         "fontSize": "19px",
         "fontWeight": "bold",
         "letterSpacing": "0.2px",
+        "textAlign": "center",
     },
     "controles": {
         "padding": "12px 16px",
@@ -98,12 +100,14 @@ ESTILOS = {
     },
     "caixa_legenda": {
         "background": "rgba(255,255,255,.96)",
-        "padding": "10px 14px",
-        "borderRadius": "8px",
+        "padding": "7px 10px",
+        "borderRadius": "6px",
         "boxShadow": "0 6px 16px rgba(31,42,55,.16)",
         "border": "1px solid #e7ecf3",
-        "font": "12px/1.5 'Segoe UI',sans-serif",
-        "maxHeight": "50vh",
+        "fontFamily": "'Segoe UI',sans-serif",
+        "fontSize": "clamp(9px, 1.1vw, 12px)",
+        "lineHeight": "1.4",
+        "maxHeight": "38vh",
         "overflowY": "auto",
         "overflowX": "hidden",
     },
@@ -1241,10 +1245,50 @@ def fetch_gps_data(linhas_sel=None):
 
 app    = dash.Dash(
     __name__,
-    title="Consulta de ônibus no mapa - Rio de Janeiro",
+    title="🚍 Consulta de ônibus - Rio de Janeiro 🚍",
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
+
+# CSS global para evitar scroll vertical residual no mobile.
+app.index_string = """
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            html, body, #react-entry-point {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+            }
+
+            /* Remove contorno de foco visual ao clicar em elementos do mapa. */
+            .leaflet-container:focus {
+                outline: none !important;
+            }
+
+            .itinerario-polyline:focus,
+            .itinerario-polyline:active {
+                outline: none !important;
+                box-shadow: none !important;
+            }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+"""
 
 
 @server.after_request
@@ -1302,7 +1346,7 @@ app.layout = html.Div(
 
         # Cabeçalho
         html.Div(
-            html.H4("Consulta de ônibus no mapa - Rio de Janeiro", style=ESTILOS["header_titulo"]),
+            html.H4("🚍 Consulta de ônibus - Rio de Janeiro 🚍", style=ESTILOS["header_titulo"]),
             style=ESTILOS["header"],
         ),
 
@@ -1330,13 +1374,13 @@ app.layout = html.Div(
                 html.Div(
                     [
                         html.Button(
-                            "Atualizar posições",
+                            "Atualizar 🔄️",
                             id="btn-atualizar",
                             n_clicks=0,
                             style=ESTILOS["botao_atualizar"],
                         ),
                         html.P(
-                            "Atualizações a cada 45 segs.",
+                            "Última atualização:",
                             style=ESTILOS["texto_atualizacao"],
                         ),
                         html.Span(
@@ -1364,7 +1408,7 @@ app.layout = html.Div(
                     id="mapa",
                     center=[-22.9, -43.2],
                     zoom=11,
-                    style={"height": "calc(100vh - 130px)", "width": "100%"},
+                    style={"height": "100%", "width": "100%"},
                     children=[
                         dl.LayersControl(
                             [
@@ -1380,14 +1424,14 @@ app.layout = html.Div(
                                         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
                                         attribution="Esri",
                                     ),
-                                    name="ESRI Padrão", checked=False,
+                                    name="ESRI Padrão", checked=True,
                                 ),
                                 dl.BaseLayer(
                                     dl.TileLayer(
                                         url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
                                         attribution="Esri",
                                     ),
-                                    name="ESRI P&B", checked=True,
+                                    name="ESRI P&B", checked=False,
                                 ),
                                 dl.Overlay(dl.LayerGroup(id="layer-itinerarios"),
                                            name="Itinerários", checked=True),
@@ -1420,13 +1464,16 @@ app.layout = html.Div(
                     style=ESTILOS["legenda_container"],
                 ),
             ],
-            style={"position": "relative"},
+            style={"position": "relative", "flex": "1 1 auto", "minHeight": 0},
         ),
     ],
     style={
         "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
         "boxSizing": "border-box",
-        "overflowX": "hidden",
+        "display": "flex",
+        "flexDirection": "column",
+        "height": "100dvh",
+        "overflow": "hidden",
         "maxWidth": "100vw",
         "background": "#eef2f7",
     },
@@ -1480,6 +1527,7 @@ app.clientside_callback(
 def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
     """Sincroniza seleção de linhas com debounce de 500ms."""
     trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
+    print(f"Debounce linhas: trigger={trigger}, linhas={linhas_sel}, n_intervals={_n_intervals}")
     if trigger == "dropdown-linhas":
         return dash.no_update, False
     if trigger == "intervalo-linhas-debounce":
@@ -1579,35 +1627,35 @@ def atualizar_mapa(_ts, linhas_sel):
     icone_circulo = _cache_or_generate_svg("#888", 0)
     secao_icones = html.Div(
         [
-            html.B("Ícones:", style={"display": "block", "marginBottom": "5px", "fontSize": "13px"}),
+            html.B("Ícones:", style={"display": "block", "marginBottom": "4px", "fontSize": "10px"}),
             html.Div(
                 [
-                    html.Img(src=icone_seta[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
-                    html.Span("Parado ou não atualizado", style={"fontSize": "11px"}),
+                    html.Img(src=icone_seta[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
+                    html.Span("Parado/Não atualizado", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
                 ],
-                style={"display": "flex", "alignItems": "center", "gap": "7px", "marginBottom": "4px"},
+                style={"display": "flex", "alignItems": "center", "gap": "5px", "marginBottom": "3px"},
             ),
             html.Div(
                 [
-                    html.Img(src=icone_circulo[0], style={"width": "18px", "height": "18px", "flexShrink": 0}),
-                    html.Span("Com direção", style={"fontSize": "11px"}),
+                    html.Img(src=icone_circulo[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
+                    html.Span("Em movimento", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
                 ],
-                style={"display": "flex", "alignItems": "center", "gap": "7px"},
+                style={"display": "flex", "alignItems": "center", "gap": "5px"},
             ),
         ],
-        style={"marginTop": "10px", "paddingTop": "8px", "borderTop": "1px solid #dee2e6"},
+        style={"marginTop": "7px", "paddingTop": "6px", "borderTop": "1px solid #dee2e6"},
     )
 
     if not linhas_sel:
         legenda = html.Div(
             [
                 html.B("Linhas no mapa:",
-                       style={"display": "block", "marginBottom": "4px", "fontSize": "13px"}),
+                       style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
                 html.Span("Nenhuma linha selecionada",
                           style={"color": "#888", "fontStyle": "italic"}),
                 secao_icones,
             ],
-            style={**ESTILOS["caixa_legenda"], "minWidth": "180px"},
+            style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)"},
         )
         # OTIMIZAÇÃO: Retorna early — sem processar shapes/paradas se nada foi selecionado
         return [], [], [], [], legenda
@@ -1622,29 +1670,29 @@ def atualizar_mapa(_ts, linhas_sel):
                 [
                     html.Span(style={
                         "flexShrink": 0, "marginTop": "2px",
-                        "width": "14px", "height": "14px",
-                        "borderRadius": "3px", "background": cor,
+                        "width": "clamp(11px, 1vw, 14px)", "height": "clamp(11px, 1vw, 14px)",
+                        "borderRadius": "2px", "background": cor,
                         "display": "inline-block",
                     }),
                     html.Span(
                         [html.B(ln)]
                         + ([html.Br(), html.Span(nome_long,
-                            style={"color": "#555", "fontSize": "11px"})]
+                            style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"})]
                            if nome_long else [])
                     ),
                 ],
                 style={"display": "flex", "alignItems": "flex-start",
-                       "gap": "8px", "marginBottom": "5px"},
+                       "gap": "6px", "marginBottom": "4px"},
             )
         )
     legenda = html.Div(
         [
             html.B("Linhas no mapa:",
-                   style={"display": "block", "marginBottom": "6px", "fontSize": "13px"}),
+                   style={"display": "block", "marginBottom": "4px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
             *itens,
             secao_icones,
         ],
-        style={**ESTILOS["caixa_legenda"], "minWidth": "180px", "maxWidth": "260px"},
+        style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(195px, 28vw, 280px)"},
     )
 
     if dados.empty:
@@ -1695,6 +1743,7 @@ def atualizar_mapa(_ts, linhas_sel):
                             positions=coords,
                             color=cor,
                             weight=4,
+                            className="itinerario-polyline",
                             children=dl.Tooltip(f"Linha {linha_id}"),
                         )
                     )
@@ -1730,9 +1779,9 @@ def atualizar_mapa(_ts, linhas_sel):
         hora = str(row.get("datahora", ""))
         hora = hora[-8:] if len(hora) >= 8 else hora
         items = [
-            html.P(f"Ordem: {row.get('ordem', '')}",  style={"margin": "2px 0"}),
-            html.P(f"Linha: {row.get('linha', '')}",  style={"margin": "2px 0"}),
-            html.P(f"Nome: {linhas_dict.get(row.get('linha', ''), '')}",
+            html.P(f"Número do veículo: {row.get('ordem', '')}",  style={"margin": "2px 0"}),
+            html.P(f"Serviço: {row.get('linha', '')}",  style={"margin": "2px 0"}),
+            html.P(f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
                    style={"margin": "2px 0"}),
             html.P(f"Velocidade: {vel} km/h",         style={"margin": "2px 0"}),
         ]
@@ -1802,19 +1851,48 @@ app.clientside_callback(
                 resolve(window.dash_clientside.no_update);
                 return;
             }
+
+            function toPayload(pos) {
+                return {
+                    lat: pos.coords.latitude,
+                    lon: pos.coords.longitude,
+                    ts: Date.now(),
+                    acc: pos.coords.accuracy
+                };
+            }
+
+            // 1a tentativa: força leitura fresca (sem cache) com alta precisão.
             navigator.geolocation.getCurrentPosition(
-                function(pos) {
-                    resolve({
-                        lat: pos.coords.latitude,
-                        lon: pos.coords.longitude,
-                        ts:  Date.now()
-                    });
+                function(pos1) {
+                    var acc1 = Number(pos1 && pos1.coords ? pos1.coords.accuracy : NaN);
+
+                    // Se precisão já for boa, resolve imediatamente.
+                    if (!isNaN(acc1) && acc1 <= 120) {
+                        resolve(toPayload(pos1));
+                        return;
+                    }
+
+                    // 2a tentativa: dá mais tempo para o GPS "fixar" (evita precisar de 2º clique).
+                    navigator.geolocation.getCurrentPosition(
+                        function(pos2) {
+                            var acc2 = Number(pos2 && pos2.coords ? pos2.coords.accuracy : NaN);
+                            if (!isNaN(acc2) && (isNaN(acc1) || acc2 <= acc1)) {
+                                resolve(toPayload(pos2));
+                            } else {
+                                resolve(toPayload(pos1));
+                            }
+                        },
+                        function() {
+                            resolve(toPayload(pos1));
+                        },
+                        {enableHighAccuracy: true, timeout: 12000, maximumAge: 0}
+                    );
                 },
                 function(err) {
                     alert("Erro ao obter localização: " + err.message);
                     resolve(window.dash_clientside.no_update);
                 },
-                {enableHighAccuracy: true, timeout: 10000}
+                {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}
             );
         });
     }
@@ -1825,27 +1903,219 @@ app.clientside_callback(
 )
 
 
+def _calcular_viewport_linhas(linhas_sel):
+    """Calcula viewport (center, zoom, bounds) para linhas selecionadas com proteção contra outliers."""
+    if not linhas_sel:
+        print("Zoom linhas: seleção vazia")
+        return None, None, None
+
+    _recarregar_gtfs_estatico_sob_demanda(linhas_sel)
+    if not _gtfs_load_event.is_set():
+        # Primeiro uso pode chegar antes da thread de carga concluir.
+        _gtfs_load_event.wait(timeout=1.2)
+        if not _gtfs_load_event.is_set():
+            print("Zoom linhas: GTFS ainda não disponível para calcular viewport.")
+            return None, None, None
+
+    with _gtfs_data_lock:
+        bounds_snapshot = dict(line_to_bounds)
+        shape_coords_snapshot = dict(line_to_shape_coords)
+
+    all_lats = []
+    all_lons = []
+    total_points = 0
+    kept_points = 0
+    rejected_bbox = 0
+    rejected_polygon = 0
+
+    # Filtro geográfico amplo do município/região metropolitana para descartar pontos espúrios.
+    RIO_LAT_MIN, RIO_LAT_MAX = -23.6, -22.4
+    RIO_LON_MIN, RIO_LON_MAX = -44.3, -42.8
+
+    for linha_id in (str(ln) for ln in linhas_sel):
+        coords_linha = shape_coords_snapshot.get(linha_id, [])
+        for coords in coords_linha:
+            if not coords:
+                continue
+            for pt in coords:
+                total_points += 1
+                try:
+                    lat = float(pt[0])
+                    lon = float(pt[1])
+                except Exception:
+                    continue
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    continue
+                if not (RIO_LAT_MIN <= lat <= RIO_LAT_MAX and RIO_LON_MIN <= lon <= RIO_LON_MAX):
+                    rejected_bbox += 1
+                    continue
+                if rio_polygon is not None:
+                    try:
+                        if not rio_polygon.covers(Point(lon, lat)):
+                            rejected_polygon += 1
+                            continue
+                    except Exception:
+                        pass
+                all_lats.append(lat)
+                all_lons.append(lon)
+                kept_points += 1
+
+    print(
+        f"Zoom linhas debug: linhas={linhas_sel}, total_points={total_points}, "
+        f"kept={kept_points}, rej_bbox={rejected_bbox}, rej_polygon={rejected_polygon}"
+    )
+
+    # Se não houver pontos válidos, tenta fallback por bounds pré-computados.
+    if not all_lats or not all_lons:
+        print("Zoom linhas debug: usando fallback por bounds pré-computados")
+        min_lat = None
+        min_lon = None
+        max_lat = None
+        max_lon = None
+        for linha_id in (str(ln) for ln in linhas_sel):
+            b = bounds_snapshot.get(linha_id)
+            if not b:
+                continue
+            sw, ne = b
+            min_lat = sw[0] if min_lat is None else min(min_lat, sw[0])
+            min_lon = sw[1] if min_lon is None else min(min_lon, sw[1])
+            max_lat = ne[0] if max_lat is None else max(max_lat, ne[0])
+            max_lon = ne[1] if max_lon is None else max(max_lon, ne[1])
+    else:
+        # Remove extremos para evitar zoom muito aberto por um ponto espúrio.
+        if len(all_lats) >= 25:
+            print("Zoom linhas debug: aplicando quantis 5%-95%")
+            lat_s = pd.Series(all_lats)
+            lon_s = pd.Series(all_lons)
+            min_lat = float(lat_s.quantile(0.05))
+            max_lat = float(lat_s.quantile(0.95))
+            min_lon = float(lon_s.quantile(0.05))
+            max_lon = float(lon_s.quantile(0.95))
+        else:
+            min_lat = min(all_lats)
+            max_lat = max(all_lats)
+            min_lon = min(all_lons)
+            max_lon = max(all_lons)
+
+    if None in (min_lat, min_lon, max_lat, max_lon):
+        print(f"Zoom linhas: sem bounds válidos para seleção {linhas_sel}")
+        return None, None, None
+
+    lat_span_raw = abs(max_lat - min_lat)
+    lon_span_raw = abs(max_lon - min_lon)
+
+    # Margem moderada para caber o itinerário sem abrir demais o zoom.
+    lat_pad = max(0.0012, lat_span_raw * 0.08)
+    lon_pad = max(0.0012, lon_span_raw * 0.08)
+    min_lat -= lat_pad
+    max_lat += lat_pad
+    min_lon -= lon_pad
+    max_lon += lon_pad
+    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
+
+    center = [round((min_lat + max_lat) / 2, 6), round((min_lon + max_lon) / 2, 6)]
+
+    lat_span = max(0.0001, abs(max_lat - min_lat))
+    lon_span = max(0.0001, abs(max_lon - min_lon))
+    zoom_lat = math.log2(170.0 / lat_span)
+    zoom_lon = math.log2(360.0 / lon_span)
+
+    user_agent = (request.headers.get("User-Agent", "") or "").lower()
+    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
+    min_zoom = 13 if is_mobile else 13
+    zoom = int(max(min_zoom, min(15, math.floor(min(zoom_lat, zoom_lon)))))
+
+    print(
+        f"Zoom linhas {linhas_sel}: center={center}, "
+        f"span_lat={round(lat_span, 5)}, span_lon={round(lon_span, 5)}, "
+        f"mobile={is_mobile}, zoom={zoom}"
+    )
+    print(f"Zoom linhas {linhas_sel}: bounds={bounds}")
+    return center, zoom, bounds
+
+
 @app.callback(
-    Output("mapa",              "center"),
-    Output("mapa",              "zoom"),
+    Output("mapa", "viewport"),
     Output("layer-localizacao", "children"),
-    Input("store-localizacao",  "data"),
+    Input("store-localizacao", "data"),
+    Input("dropdown-linhas", "value"),
     prevent_initial_call=True,
 )
-def centralizar_na_posicao(data):
-    """Centraliza o mapa e adiciona marcador na posição do usuário."""
-    if not data or data.get("lat") is None:
-        return dash.no_update, dash.no_update, []
+def controlar_viewport_mapa(data_localizacao, linhas_sel):
+    """Controla viewport do mapa sem disputa entre callbacks de linhas e geolocalização."""
+    triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
+    trigger = triggered_props[0].split(".")[0] if triggered_props else None
+    has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
+    has_lines_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
+    now_ms = time.time() * 1000.0
 
-    lat, lon = data["lat"], data["lon"]
+    # Evita que atualização de linhas sobrescreva imediatamente a geolocalização recém-clicada.
+    recent_location_ms = None
+    if isinstance(data_localizacao, dict) and data_localizacao.get("ts") is not None:
+        try:
+            recent_location_ms = float(data_localizacao.get("ts"))
+        except Exception:
+            recent_location_ms = None
 
-    icone_usuario = _gerar_svg_usuario()
-    marcador = dl.Marker(
-        position=[lat, lon],
-        icon={"iconUrl": icone_usuario, "iconSize": [22, 22], "iconAnchor": [11, 11]},
-        children=dl.Tooltip("Você está aqui"),
+    delta_loc_ms = None
+    if recent_location_ms is not None:
+        try:
+            delta_loc_ms = round(now_ms - recent_location_ms, 1)
+        except Exception:
+            delta_loc_ms = None
+
+    print(
+        "Viewport debug: "
+        f"triggered={triggered_props}, "
+        f"has_loc={has_location_trigger}, has_lines={has_lines_trigger}, "
+        f"loc_ts={recent_location_ms}, delta_loc_ms={delta_loc_ms}, "
+        f"linhas_count={len(linhas_sel or [])}"
     )
-    return [lat, lon], 15, [marcador]
+
+    # Quando inputs chegam juntos, sempre prioriza geolocalização.
+    if has_location_trigger or trigger == "store-localizacao":
+        if not data_localizacao or data_localizacao.get("lat") is None:
+            return dash.no_update, dash.no_update
+
+        lat = float(data_localizacao["lat"])
+        lon = float(data_localizacao["lon"])
+        icone_usuario = _gerar_svg_usuario()
+        marcador = dl.Marker(
+            position=[lat, lon],
+            icon={"iconUrl": icone_usuario, "iconSize": [22, 22], "iconAnchor": [11, 11]},
+            children=dl.Tooltip("Você está aqui"),
+        )
+        print(f"Viewport localização: center={[lat, lon]}, zoom=15")
+        return {"center": [lat, lon], "zoom": 15}, [marcador]
+
+    if has_lines_trigger or trigger == "dropdown-linhas":
+        # Só prioriza geolocalização quando ambos os eventos chegam no mesmo ciclo.
+        if has_location_trigger and has_lines_trigger:
+            print("Viewport linhas ignorado: trigger simultâneo com geolocalização.")
+            return dash.no_update, dash.no_update
+
+        center, zoom, bounds = _calcular_viewport_linhas(linhas_sel or [])
+        if center is None or zoom is None or bounds is None:
+            # Fallback: usa centro dos veículos já carregados para primeira seleção.
+            sel = set(str(x) for x in (linhas_sel or []))
+            with _gps_lock:
+                gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+            if not gps_snapshot.empty and sel:
+                gps_snapshot = gps_snapshot[gps_snapshot["linha"].astype(str).isin(sel)]
+                if not gps_snapshot.empty:
+                    center = [
+                        round(float(gps_snapshot["lat"].median()), 6),
+                        round(float(gps_snapshot["lng"].median()), 6),
+                    ]
+                    print(f"Viewport linhas fallback GPS: center={center}, zoom=12")
+                    return {"center": center, "zoom": 12}, dash.no_update
+            return dash.no_update, dash.no_update
+
+        # Em linha, preferir fit por bounds (mais estável que center/zoom em alguns clientes).
+        print(f"Viewport linhas apply: bounds-only={bounds}")
+        return {"bounds": bounds}, dash.no_update
+
+    return dash.no_update, dash.no_update
 
 
 # ==============================================================================
@@ -1870,58 +2140,6 @@ def atualizar_ui_atualizacao(_gps_ts):
             tempo_texto = ""
 
     return tempo_texto
-
-
-# ==============================================================================
-# Callback: Zoom automático ao selecionar linhas
-# ==============================================================================
-
-@app.callback(
-    Output("mapa", "bounds"),
-    Input("store-linhas-debounce", "data"),
-    prevent_initial_call=True,
-)
-def zoom_para_linhas(linhas_sel):
-    """Calcula bounds das shapes selecionadas e faz zoom automático."""
-    if not linhas_sel:
-        return dash.no_update
-
-    # Evita bloquear a UX em selecao de linha enquanto GTFS ainda carrega.
-    if not _gtfs_load_event.is_set():
-        return dash.no_update
-
-    with _gtfs_data_lock:
-        bounds_snapshot = dict(line_to_bounds)
-
-    if not bounds_snapshot:
-        return dash.no_update
-    
-    try:
-        min_lat = None
-        min_lon = None
-        max_lat = None
-        max_lon = None
-        for linha_id in linhas_sel:
-            b = bounds_snapshot.get(linha_id)
-            if not b:
-                continue
-            sw, ne = b
-            min_lat = sw[0] if min_lat is None else min(min_lat, sw[0])
-            min_lon = sw[1] if min_lon is None else min(min_lon, sw[1])
-            max_lat = ne[0] if max_lat is None else max(max_lat, ne[0])
-            max_lon = ne[1] if max_lon is None else max(max_lon, ne[1])
-
-        if None in (min_lat, min_lon, max_lat, max_lon):
-            return dash.no_update
-
-        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-        
-        print(f"Zoom para linhas {linhas_sel}: bounds={bounds}")
-        return bounds
-        
-    except Exception as e:
-        print(f"ERRO ao calcular zoom: {type(e).__name__} - {e}")
-        return dash.no_update
 
 
 # ==============================================================================
