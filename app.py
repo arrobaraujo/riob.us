@@ -45,7 +45,7 @@ PALETA_CORES = [
 
 ESTILOS = {
     "header": {
-        "padding": "10px 18px",
+        "padding": "clamp(6px, 1.4vw, 10px) clamp(10px, 2.2vw, 18px)",
         "backgroundColor": "#1f2a37",
         "color": "white",
         "display": "flex",
@@ -56,7 +56,7 @@ ESTILOS = {
     },
     "header_titulo": {
         "margin": 0,
-        "fontSize": "19px",
+        "fontSize": "clamp(14px, 2.4vw, 19px)",
         "fontWeight": "bold",
         "letterSpacing": "0.2px",
         "textAlign": "center",
@@ -1485,6 +1485,36 @@ app.index_string = """
                 outline: none !important;
                 box-shadow: none !important;
             }
+
+            /* Forca as abas de filtro lado a lado no mobile. */
+            .tabs-filtro-parent {
+                width: 100%;
+            }
+
+            .tabs-filtro-container {
+                display: flex !important;
+                flex-wrap: nowrap !important;
+                width: 100%;
+            }
+
+            .tabs-filtro-item {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                flex: 1 1 50% !important;
+                width: 50% !important;
+                max-width: 50% !important;
+                white-space: nowrap;
+            }
+
+            @media (max-width: 768px) {
+                .tabs-filtro-item {
+                    font-size: 11px !important;
+                    padding: 4px 6px !important;
+                    min-height: 30px !important;
+                    line-height: 18px !important;
+                }
+            }
         </style>
     </head>
     <body>
@@ -1604,20 +1634,38 @@ app.layout = html.Div(
                         dcc.Tabs(
                             id="tabs-filtro",
                             value="linhas",
-                            style={"height": "30px"},
+                            mobile_breakpoint=0,
+                            parent_className="tabs-filtro-parent",
+                            className="tabs-filtro-container",
+                            style={
+                                "height": "32px",
+                                "width": "100%",
+                                "display": "flex",
+                                "flexWrap": "nowrap",
+                            },
                             children=[
                                 dcc.Tab(
                                     label="Linhas",
                                     value="linhas",
+                                    className="tabs-filtro-item",
+                                    selected_className="tabs-filtro-item tabs-filtro-item--selected",
                                     style={
+                                        "display": "inline-flex",
+                                        "flex": "1 1 50%",
+                                        "justifyContent": "center",
+                                        "alignItems": "center",
                                         "padding": "4px 12px",
-                                        "height": "30px",
+                                        "height": "32px",
                                         "lineHeight": "20px",
                                         "fontSize": "12px",
                                     },
                                     selected_style={
+                                        "display": "inline-flex",
+                                        "flex": "1 1 50%",
+                                        "justifyContent": "center",
+                                        "alignItems": "center",
                                         "padding": "4px 12px",
-                                        "height": "30px",
+                                        "height": "32px",
                                         "lineHeight": "20px",
                                         "fontSize": "12px",
                                         "fontWeight": "700",
@@ -1642,15 +1690,25 @@ app.layout = html.Div(
                                 dcc.Tab(
                                     label="Veículos",
                                     value="veiculos",
+                                    className="tabs-filtro-item",
+                                    selected_className="tabs-filtro-item tabs-filtro-item--selected",
                                     style={
+                                        "display": "inline-flex",
+                                        "flex": "1 1 50%",
+                                        "justifyContent": "center",
+                                        "alignItems": "center",
                                         "padding": "4px 12px",
-                                        "height": "30px",
+                                        "height": "32px",
                                         "lineHeight": "20px",
                                         "fontSize": "12px",
                                     },
                                     selected_style={
+                                        "display": "inline-flex",
+                                        "flex": "1 1 50%",
+                                        "justifyContent": "center",
+                                        "alignItems": "center",
                                         "padding": "4px 12px",
-                                        "height": "30px",
+                                        "height": "32px",
                                         "lineHeight": "20px",
                                         "fontSize": "12px",
                                         "fontWeight": "700",
