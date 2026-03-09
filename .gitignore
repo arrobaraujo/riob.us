@@ -3,3 +3,4 @@ venv/
 __pycache__/
 *.pyc
 .env
+gtfs/gtfs_static_cache.pkl

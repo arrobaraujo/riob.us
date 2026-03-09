@@ -1,11 +1,11 @@
 import math
 import os
 import time
+from collections import deque
 import zipfile
 import urllib.parse
 import warnings
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import dash
@@ -13,11 +13,39 @@ import dash_leaflet as dl
 import geopandas as gpd
 import pandas as pd
 import requests
-from dash import Input, Output, dcc, html
+from dash import Input, Output, html
 from dash.exceptions import CallbackException
 from flask import request
+from callbacks_ui import register_ui_callbacks
+from callbacks_viewport import register_viewport_callbacks
+from geo_helpers import build_point_mask
+from gps_data_logic import fetch_gps_data_service
+from interval_logic import compute_poll_interval_ms
+from gtfs_static_logic import (
+    carregar_dados_estaticos_service,
+    recarregar_gtfs_estatico_sob_demanda_service,
+)
+from map_data_logic import (
+    construir_legenda_linhas,
+    construir_legenda_sem_veiculos,
+    construir_legenda_veiculos,
+    construir_legenda_vazia,
+    construir_secao_icones,
+    filtrar_por_veiculos,
+    linhas_ativas_por_veiculos,
+    montar_opcoes_veiculos,
+    split_gps_por_tipo,
+)
+from map_layers_logic import construir_camadas_estaticas, construir_camadas_veiculos
+from perf_logging import perf_log
+from ui_layout import APP_INDEX_STRING, build_app_layout
+from viewport_logic import (
+    calcular_viewport_linhas as viewport_logic_calcular_viewport_linhas,
+    calcular_viewport_veiculos as viewport_logic_calcular_viewport_veiculos,
+    resolver_comando_viewport as viewport_logic_resolver_comando_viewport,
+    normalize_map_center as viewport_logic_normalize_map_center,
+)
 from requests.adapters import HTTPAdapter
-from shapely.geometry import LineString, Point, shape as shapely_shape, MultiPolygon
 from urllib3.util.retry import Retry
 
 warnings.filterwarnings("ignore")
@@ -128,7 +156,7 @@ ESTILOS = {
     },
     "botao_localizacao_container": {
         "position": "absolute",
-        "top": "84px",
+        "top": "clamp(76px, 12vh, 128px)",
         "left": "10px",
         "zIndex": 1000,
     },
@@ -149,6 +177,7 @@ ESTILOS = {
 _gps_lock  = threading.Lock()
 _gps_cache = pd.DataFrame()   # último fetch processado
 _last_update_ts = None  # timestamp da última atualização bem-sucedida
+_last_fetch_had_data = True
 _status_lock = threading.Lock()  # protege _last_update_ts
 _gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 
@@ -156,6 +185,30 @@ _gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 _map_static_cache_lock = threading.Lock()
 _map_static_cache = {}
 _MAP_STATIC_CACHE_MAX_ITEMS = 64
+_MAP_STATIC_CACHE_TTL_SECONDS = int(os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900"))
+
+# Cache das camadas dinâmicas de veículos por fingerprint do snapshot.
+_vehicle_layers_cache_lock = threading.Lock()
+_vehicle_layers_cache = {}
+_VEHICLE_LAYERS_CACHE_MAX_ITEMS = 96
+_VEHICLE_LAYERS_CACHE_TTL_SECONDS = int(os.getenv("VEHICLE_LAYERS_CACHE_TTL_SECONDS", "120"))
+
+_POLL_INTERVAL_IDLE_MS = int(os.getenv("POLL_INTERVAL_IDLE_MS", "90000"))
+_POLL_INTERVAL_LINES_ACTIVE_MS = int(os.getenv("POLL_INTERVAL_LINES_ACTIVE_MS", "30000"))
+_POLL_INTERVAL_VEHICLES_ACTIVE_MS = int(os.getenv("POLL_INTERVAL_VEHICLES_ACTIVE_MS", "20000"))
+
+# Janela curta de métricas para p95 operacional.
+_perf_metrics_lock = threading.Lock()
+_perf_metrics = {
+    "atualizar_gps_total_ms": deque(maxlen=120),
+    "atualizar_mapa_total_ms": deque(maxlen=120),
+    "atualizar_mapa_static_ms": deque(maxlen=120),
+    "atualizar_mapa_vehicles_ms": deque(maxlen=120),
+}
+_vehicle_layer_cache_stats = {
+    "hit": 0,
+    "miss": 0,
+}
 
 # Sincronização para carregamento de dados estáticos
 _gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
@@ -172,6 +225,8 @@ _hist_brt_bygps = {}   # Mesmo para BRT
 _HIST_MAX_AGE_SECONDS = 300  # 5 minutos — remove histórico antigo automaticamente
 rio_polygon      = None
 garagens_polygon = None
+_rio_polygon_prepared = None
+_garagens_polygon_prepared = None
 gtfs             = {}
 shapes_gtfs      = None
 stops_gtfs       = None
@@ -222,6 +277,22 @@ MARKER_LIMITS_BY_ZOOM = [
 # Modo leve para interacao: reduz custo de renderizacao quando ha muitos pontos.
 LIGHTWEIGHT_MARKER_THRESHOLD = 220
 MAX_STOPS_PER_RENDER = 450
+
+
+def _perf_record(metric_name, value_ms):
+    with _perf_metrics_lock:
+        bucket = _perf_metrics.get(metric_name)
+        if bucket is not None:
+            bucket.append(float(value_ms))
+
+
+def _perf_p95(metric_name):
+    with _perf_metrics_lock:
+        bucket = _perf_metrics.get(metric_name)
+        if not bucket:
+            return 0.0
+        series = pd.Series(list(bucket), dtype="float64")
+    return float(series.quantile(0.95)) if len(series) > 0 else 0.0
 
 
 def _empty_shapes_gdf():
@@ -331,279 +402,35 @@ def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
     global stops_gtfs, line_to_shape_ids, line_to_stop_ids
     global line_to_shape_coords, line_to_stops_points, line_to_bounds
+    global _rio_polygon_prepared, _garagens_polygon_prepared
 
-    # --- Limite do Rio de Janeiro (via API IBGE) ------------------------------
-    try:
-        _resp = requests.get(
-            "https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3304557"
-            "?formato=application/vnd.geo%2Bjson",
-            timeout=30,
-        )
-        _resp.raise_for_status()
-        _geojson = _resp.json()
-        _geometrias = [
-            shapely_shape(feat["geometry"])
-            for feat in _geojson.get("features", [])
-            if feat.get("geometry")
-        ]
-        if _geometrias:
-            rio_polygon = _geometrias[0] if len(_geometrias) == 1 else MultiPolygon(_geometrias)
-        else:
-            print("AVISO: GeoJSON do IBGE sem geometrias.")
-    except requests.RequestException as e:
-        print(f"ERRO ao carregar limites do Rio (API): {type(e).__name__} - {e}")
-    except Exception as e:
-        print(f"ERRO ao carregar limites do Rio: {type(e).__name__} - {e}")
+    t0 = time.perf_counter()
+    loaded = carregar_dados_estaticos_service(
+        empty_shapes_gdf_fn=_empty_shapes_gdf,
+        empty_stops_gdf_fn=_empty_stops_gdf,
+    )
 
-    # --- Garagens -------------------------------------------------------------
-    try:
-        garagens_gdf     = gpd.read_file("garagens/Garagens_de_operadores_SPPO.shp")
-        garagens_gdf     = garagens_gdf.to_crs("EPSG:4326")
-        garagens_polygon = garagens_gdf.geometry.union_all()
-    except FileNotFoundError:
-        print("ERRO: Arquivo Garagens_de_operadores_SPPO.shp não encontrado")
-    except Exception as e:
-        print(f"ERRO ao carregar garagens: {type(e).__name__} - {e}")
+    rio_polygon = loaded["rio_polygon"]
+    _rio_polygon_prepared = loaded["rio_polygon_prepared"]
+    garagens_polygon = loaded["garagens_polygon"]
+    _garagens_polygon_prepared = loaded["garagens_polygon_prepared"]
 
-    # --- GTFS otimizado (somente arquivos necessários) ------------------------
-    try:
-        _gtfs = {}
-        _line_to_shape_ids = {}
-        _line_to_stop_ids = {}
-        _line_to_shape_coords = {}
-        _line_to_stops_points = {}
-        _line_to_bounds = {}
-        with zipfile.ZipFile("gtfs/gtfs.zip") as z:
-            _target_files = {
-                "routes": {"usecols": ["route_id", "route_short_name"]},
-                "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
-                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
-                # stop_code/stop_desc/platform_code podem nao existir em alguns GTFS.
-                "stops": {
-                    "usecols": [
-                        "stop_id",
-                        "stop_name",
-                        "stop_code",
-                        "stop_desc",
-                        "platform_code",
-                        "stop_lat",
-                        "stop_lon",
-                    ]
-                },
-                "stop_times": {"usecols": ["trip_id", "stop_id"]},
-            }
-            _zip_names = z.namelist()
-            for key, opts in _target_files.items():
-                names = [n for n in _zip_names if n.endswith(f"{key}.txt")]
-                if not names:
-                    print(f"  AVISO: {key}.txt não encontrado no GTFS")
-                    continue
-                try:
-                    with z.open(names[0]) as f:
-                        _gtfs[key] = pd.read_csv(
-                            f,
-                            dtype=str,
-                            usecols=opts["usecols"],
-                            low_memory=False,
-                        )
-                except Exception as e:
-                    if key == "stops":
-                        try:
-                            with z.open(names[0]) as f2:
-                                _gtfs[key] = pd.read_csv(
-                                    f2,
-                                    dtype=str,
-                                    usecols=lambda c: c in {
-                                        "stop_id",
-                                        "stop_name",
-                                        "stop_code",
-                                        "stop_desc",
-                                        "platform_code",
-                                        "stop_lat",
-                                        "stop_lon",
-                                    },
-                                    low_memory=False,
-                                )
-                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
-                                if col not in _gtfs[key].columns:
-                                    _gtfs[key][col] = ""
-                        except Exception as e2:
-                            print(f"  ✗ Erro ao ler {key}: {e2}")
-                    else:
-                        print(f"  ✗ Erro ao ler {key}: {e}")
+    with _gtfs_data_lock:
+        gtfs = loaded["gtfs"]
+        shapes_gtfs = loaded["shapes_gtfs"]
+        stops_gtfs = loaded["stops_gtfs"]
+        line_to_shape_ids = loaded["line_to_shape_ids"]
+        line_to_stop_ids = loaded["line_to_stop_ids"]
+        line_to_shape_coords = loaded["line_to_shape_coords"]
+        line_to_stops_points = loaded["line_to_stops_points"]
+        line_to_bounds = loaded["line_to_bounds"]
 
-        _shapes_gtfs = _empty_shapes_gdf()
-        _stops_gtfs  = _empty_stops_gdf()
-
-        if "shapes" in _gtfs and not _gtfs["shapes"].empty:
-            try:
-                df = _gtfs["shapes"].copy()
-                df["shape_pt_lat"]      = pd.to_numeric(df["shape_pt_lat"], errors="coerce")
-                df["shape_pt_lon"]      = pd.to_numeric(df["shape_pt_lon"], errors="coerce")
-                df["shape_pt_sequence"] = pd.to_numeric(df["shape_pt_sequence"], errors="coerce")
-                df = df.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
-                df = df.sort_values(["shape_id", "shape_pt_sequence"])
-
-                lines = []
-                for shape_id, grp in df.groupby("shape_id"):
-                    coords = list(zip(grp["shape_pt_lon"], grp["shape_pt_lat"]))
-                    # Evita erro de LineString com menos de 2 pontos.
-                    if len(coords) < 2:
-                        continue
-                    lines.append({"shape_id": shape_id, "geometry": LineString(coords)})
-
-                if lines:
-                    _shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
-            except Exception as e:
-                print(f"  ERRO ao processar shapes: {type(e).__name__} - {e}")
-        else:
-            print(f"  AVISO: shapes.txt não encontrado ou vazio no GTFS")
-
-        if "stops" in _gtfs and not _gtfs["stops"].empty:
-            try:
-                df = _gtfs["stops"].copy()
-                df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
-                df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
-                df = df.dropna(subset=["stop_lat", "stop_lon"])
-                for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
-                    if col not in df.columns:
-                        df[col] = ""
-
-                if len(df) > 0:
-                    _stops_gtfs = gpd.GeoDataFrame(
-                        df,
-                        geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
-                        crs="EPSG:4326",
-                    )
-            except Exception as e:
-                print(f"  ERRO ao processar stops: {type(e).__name__} - {e}")
-        else:
-            print(f"  AVISO: stops.txt não encontrado ou vazio no GTFS")
-
-        # Pré-computa índices por linha para reduzir custo no callback do mapa
-        if all(k in _gtfs for k in ["routes", "trips"]):
-            try:
-                rotas = _gtfs["routes"].dropna(subset=["route_id", "route_short_name"])
-                trips = _gtfs["trips"].dropna(subset=["trip_id", "route_id"]).merge(
-                    rotas, on="route_id", how="inner"
-                )
-
-                if "shape_id" in trips.columns:
-                    _line_to_shape_ids = (
-                        trips.dropna(subset=["shape_id"])
-                        .groupby("route_short_name")["shape_id"]
-                        .unique()
-                        .apply(list)
-                        .to_dict()
-                    )
-
-                if "stop_times" in _gtfs and not _gtfs["stop_times"].empty:
-                    st = _gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
-                        trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
-                    )
-                    _line_to_stop_ids = (
-                        st.groupby("route_short_name")["stop_id"]
-                        .unique()
-                        .apply(list)
-                        .to_dict()
-                    )
-
-                # Pré-computa coordenadas de shapes/paradas por linha (lazy render rápido)
-                if not _shapes_gtfs.empty and _line_to_shape_ids:
-                    shapes_lookup = _shapes_gtfs.set_index("shape_id")
-                    for linha_id, shape_ids in _line_to_shape_ids.items():
-                        coords_linha = []
-                        min_lat = None
-                        min_lon = None
-                        max_lat = None
-                        max_lon = None
-                        for shp_id in shape_ids:
-                            if shp_id not in shapes_lookup.index:
-                                continue
-                            try:
-                                geom = shapes_lookup.loc[shp_id, "geometry"]
-                                if geom is None:
-                                    continue
-                                coords = [[pt[1], pt[0]] for pt in geom.coords]
-                                if len(coords) > 1:
-                                    coords_linha.append(coords)
-                                    lats = [c[0] for c in coords]
-                                    lons = [c[1] for c in coords]
-                                    seg_min_lat, seg_max_lat = min(lats), max(lats)
-                                    seg_min_lon, seg_max_lon = min(lons), max(lons)
-                                    min_lat = seg_min_lat if min_lat is None else min(min_lat, seg_min_lat)
-                                    min_lon = seg_min_lon if min_lon is None else min(min_lon, seg_min_lon)
-                                    max_lat = seg_max_lat if max_lat is None else max(max_lat, seg_max_lat)
-                                    max_lon = seg_max_lon if max_lon is None else max(max_lon, seg_max_lon)
-                            except Exception:
-                                continue
-                        if coords_linha:
-                            _line_to_shape_coords[linha_id] = coords_linha
-                            if None not in (min_lat, min_lon, max_lat, max_lon):
-                                _line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
-
-                if not _stops_gtfs.empty and _line_to_stop_ids:
-                    stops_lookup = _stops_gtfs.set_index("stop_id")
-                    for linha_id, stop_ids in _line_to_stop_ids.items():
-                        pontos_linha = []
-                        for stop_id in stop_ids:
-                            if stop_id not in stops_lookup.index:
-                                continue
-                            try:
-                                stop_row = stops_lookup.loc[stop_id]
-                                stop_name = ""
-                                if "stop_name" in stop_row and pd.notna(stop_row["stop_name"]):
-                                    stop_name = str(stop_row["stop_name"])
-                                stop_code = str(stop_row.get("stop_code", "") or "")
-                                stop_desc = str(stop_row.get("stop_desc", "") or "")
-                                platform_code = str(stop_row.get("platform_code", "") or "")
-                                pontos_linha.append(
-                                    {
-                                        "lat": float(stop_row["stop_lat"]),
-                                        "lon": float(stop_row["stop_lon"]),
-                                        "stop_name": stop_name,
-                                        "stop_code": stop_code,
-                                        "stop_desc": stop_desc,
-                                        "platform_code": platform_code,
-                                    }
-                                )
-                            except Exception:
-                                continue
-                        if pontos_linha:
-                            _line_to_stops_points[linha_id] = pontos_linha
-
-            except Exception as e:
-                print(f"ERRO ao montar índices GTFS por linha: {type(e).__name__} - {e}")
-
-        with _gtfs_data_lock:
-            gtfs        = _gtfs
-            shapes_gtfs = _shapes_gtfs if _shapes_gtfs is not None else _empty_shapes_gdf()
-            stops_gtfs  = _stops_gtfs if _stops_gtfs is not None else _empty_stops_gdf()
-            line_to_shape_ids = _line_to_shape_ids
-            line_to_stop_ids  = _line_to_stop_ids
-            line_to_shape_coords = _line_to_shape_coords
-            line_to_stops_points = _line_to_stops_points
-            line_to_bounds = _line_to_bounds
-        with _map_static_cache_lock:
-            _map_static_cache.clear()
-    except FileNotFoundError:
-        print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
-        with _gtfs_data_lock:
-            shapes_gtfs = _empty_shapes_gdf()
-            stops_gtfs = _empty_stops_gdf()
-    except KeyError as e:
-        print(f"ERRO ao carregar GTFS (coluna faltante): {e}")
-        with _gtfs_data_lock:
-            shapes_gtfs = _empty_shapes_gdf()
-            stops_gtfs = _empty_stops_gdf()
-    except Exception as e:
-        print(f"ERRO ao carregar GTFS: {type(e).__name__} - {e}")
-        with _gtfs_data_lock:
-            shapes_gtfs = _empty_shapes_gdf()
-            stops_gtfs = _empty_stops_gdf()
+    with _map_static_cache_lock:
+        _map_static_cache.clear()
 
     # Sinaliza que o GTFS foi carregado (mesmo que parcialmente)
     _gtfs_load_event.set()
+    perf_log(f"PERF gtfs_static_load total_ms={(time.perf_counter() - t0) * 1000:.1f}")
 
 
 def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
@@ -626,180 +453,22 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
     if not missing:
         return
 
-    try:
-        with zipfile.ZipFile("gtfs/gtfs.zip") as z:
-            _gtfs = {}
-            _target_files = {
-                "routes": {"usecols": ["route_id", "route_short_name"]},
-                "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
-                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
-                "stops": {
-                    "usecols": [
-                        "stop_id",
-                        "stop_name",
-                        "stop_code",
-                        "stop_desc",
-                        "platform_code",
-                        "stop_lat",
-                        "stop_lon",
-                    ]
-                },
-                "stop_times": {"usecols": ["trip_id", "stop_id"]},
-            }
-            _zip_names = z.namelist()
-            for key, opts in _target_files.items():
-                names = [n for n in _zip_names if n.endswith(f"{key}.txt")]
-                if not names:
-                    continue
-                with z.open(names[0]) as f:
-                    try:
-                        _gtfs[key] = pd.read_csv(
-                            f,
-                            dtype=str,
-                            usecols=opts["usecols"],
-                            low_memory=False,
-                        )
-                    except ValueError:
-                        if key == "stops":
-                            with z.open(names[0]) as f2:
-                                _gtfs[key] = pd.read_csv(
-                                    f2,
-                                    dtype=str,
-                                    usecols=lambda c: c in {
-                                        "stop_id",
-                                        "stop_name",
-                                        "stop_code",
-                                        "stop_desc",
-                                        "platform_code",
-                                        "stop_lat",
-                                        "stop_lon",
-                                    },
-                                    low_memory=False,
-                                )
-                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
-                                if col not in _gtfs[key].columns:
-                                    _gtfs[key][col] = ""
+    loaded = recarregar_gtfs_estatico_sob_demanda_service(linhas_sel)
+    if not loaded:
+        return
 
-        if not all(k in _gtfs for k in ["routes", "trips"]):
-            print("AVISO: Fallback GTFS com routes/trips indisponíveis")
-            return
+    with _gtfs_data_lock:
+        gtfs = loaded["gtfs"]
+        line_to_shape_ids = loaded["line_to_shape_ids"]
+        line_to_stop_ids = loaded["line_to_stop_ids"]
+        line_to_shape_coords = loaded["line_to_shape_coords"]
+        line_to_stops_points = loaded["line_to_stops_points"]
+        line_to_bounds = loaded["line_to_bounds"]
 
-        rotas = _gtfs["routes"].dropna(subset=["route_id", "route_short_name"])
-        trips = _gtfs["trips"].dropna(subset=["trip_id", "route_id"]).merge(
-            rotas, on="route_id", how="inner"
-        )
+    with _map_static_cache_lock:
+        _map_static_cache.clear()
 
-        _line_to_shape_ids = {}
-        _line_to_stop_ids = {}
-        _line_to_shape_coords = {}
-        _line_to_stops_points = {}
-        _line_to_bounds = {}
-
-        if "shape_id" in trips.columns:
-            _line_to_shape_ids = (
-                trips.dropna(subset=["shape_id"])
-                .groupby("route_short_name")["shape_id"]
-                .unique()
-                .apply(list)
-                .to_dict()
-            )
-
-        shapes_by_id = {}
-        shape_bounds_by_id = {}
-        if "shapes" in _gtfs and not _gtfs["shapes"].empty:
-            df_shapes = _gtfs["shapes"].copy()
-            df_shapes["shape_pt_lat"] = pd.to_numeric(df_shapes["shape_pt_lat"], errors="coerce")
-            df_shapes["shape_pt_lon"] = pd.to_numeric(df_shapes["shape_pt_lon"], errors="coerce")
-            df_shapes["shape_pt_sequence"] = pd.to_numeric(df_shapes["shape_pt_sequence"], errors="coerce")
-            df_shapes = df_shapes.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
-            df_shapes = df_shapes.sort_values(["shape_id", "shape_pt_sequence"])
-
-            for shape_id, grp in df_shapes.groupby("shape_id"):
-                coords = grp[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
-                if len(coords) < 2:
-                    continue
-                shapes_by_id[shape_id] = coords
-                lats = [c[0] for c in coords]
-                lons = [c[1] for c in coords]
-                shape_bounds_by_id[shape_id] = [min(lats), min(lons), max(lats), max(lons)]
-
-        if shapes_by_id and _line_to_shape_ids:
-            for linha_id, shape_ids in _line_to_shape_ids.items():
-                coords_linha = []
-                min_lat = None
-                min_lon = None
-                max_lat = None
-                max_lon = None
-                for shp_id in shape_ids:
-                    coords = shapes_by_id.get(shp_id)
-                    if not coords:
-                        continue
-                    coords_linha.append(coords)
-                    b = shape_bounds_by_id.get(shp_id)
-                    if not b:
-                        continue
-                    min_lat = b[0] if min_lat is None else min(min_lat, b[0])
-                    min_lon = b[1] if min_lon is None else min(min_lon, b[1])
-                    max_lat = b[2] if max_lat is None else max(max_lat, b[2])
-                    max_lon = b[3] if max_lon is None else max(max_lon, b[3])
-                if coords_linha:
-                    _line_to_shape_coords[linha_id] = coords_linha
-                    if None not in (min_lat, min_lon, max_lat, max_lon):
-                        _line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
-
-        if "stop_times" in _gtfs and "stops" in _gtfs and not _gtfs["stop_times"].empty:
-            st = _gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
-                trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
-            )
-            _line_to_stop_ids = (
-                st.groupby("route_short_name")["stop_id"]
-                .unique()
-                .apply(list)
-                .to_dict()
-            )
-
-            stops_df = _gtfs["stops"].copy()
-            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
-                if col not in stops_df.columns:
-                    stops_df[col] = ""
-            stops_df["stop_lat"] = pd.to_numeric(stops_df["stop_lat"], errors="coerce")
-            stops_df["stop_lon"] = pd.to_numeric(stops_df["stop_lon"], errors="coerce")
-            stops_df = stops_df.dropna(subset=["stop_lat", "stop_lon", "stop_id"])
-            stops_lookup = stops_df.drop_duplicates(subset=["stop_id"]).set_index("stop_id")
-
-            for linha_id, stop_ids in _line_to_stop_ids.items():
-                pontos_linha = []
-                for stop_id in stop_ids:
-                    if stop_id not in stops_lookup.index:
-                        continue
-                    stop_row = stops_lookup.loc[stop_id]
-                    pontos_linha.append(
-                        {
-                            "lat": float(stop_row["stop_lat"]),
-                            "lon": float(stop_row["stop_lon"]),
-                            "stop_name": str(stop_row.get("stop_name", "") or ""),
-                            "stop_code": str(stop_row.get("stop_code", "") or ""),
-                            "stop_desc": str(stop_row.get("stop_desc", "") or ""),
-                            "platform_code": str(stop_row.get("platform_code", "") or ""),
-                        }
-                    )
-                if pontos_linha:
-                    _line_to_stops_points[linha_id] = pontos_linha
-
-        with _gtfs_data_lock:
-            gtfs = _gtfs
-            line_to_shape_ids = _line_to_shape_ids
-            line_to_stop_ids = _line_to_stop_ids
-            line_to_shape_coords = _line_to_shape_coords
-            line_to_stops_points = _line_to_stops_points
-            line_to_bounds = _line_to_bounds
-
-        with _map_static_cache_lock:
-            _map_static_cache.clear()
-
-        _gtfs_load_event.set()
-    except Exception as e:
-        print(f"ERRO no fallback GTFS: {type(e).__name__} - {e}")
+    _gtfs_load_event.set()
 
 
 # Shapes/stops em background — não bloqueia o servidor nem o dropdown
@@ -1217,19 +886,24 @@ def atualizar_historico(hist_dict, df):
     Mantém apenas a posição mais recente por veículo no histórico.
     Formato novo: {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
     """
-    # Iterar apenas sobre linhas do dataframe (mais eficiente)
-    for _, row in df.iterrows():
-        bearing = row.get("direcao")
+    ts_now = time.time()
+    # itertuples reduz overhead de iterrows em ciclos frequentes.
+    for row in df.itertuples(index=False):
+        bearing = getattr(row, "direcao", None)
         # Converte NaN para None
         if bearing is not None and isinstance(bearing, float) and math.isnan(bearing):
             bearing = None
 
-        hist_dict[row["ordem"]] = {
-            "lat": float(row["lat"]),
-            "lng": float(row["lng"]),
-            "datahora": str(row["datahora"]),
+        ordem = str(getattr(row, "ordem", "")).strip()
+        if not ordem:
+            continue
+
+        hist_dict[ordem] = {
+            "lat": float(getattr(row, "lat")),
+            "lng": float(getattr(row, "lng")),
+            "datahora": str(getattr(row, "datahora")),
             "bearing": bearing,
-            "ts_add": time.time(),  # Timestamp para limpeza automática
+            "ts_add": ts_now,  # Timestamp para limpeza automática
         }
 
     return hist_dict
@@ -1241,11 +915,15 @@ def _filtrar_pontos_fora_municipio(df):
         return df
 
     try:
-        dentro_municipio = df.apply(
-            lambda row: rio_polygon.covers(Point(float(row["longitude"]), float(row["latitude"]))),
-            axis=1,
+        mask = build_point_mask(
+            df,
+            lon_col="longitude",
+            lat_col="latitude",
+            polygon=rio_polygon,
+            prepared_polygon=_rio_polygon_prepared,
+            predicate="covered_by",
         )
-        filtrado = df[dentro_municipio]
+        filtrado = df[mask]
         return filtrado
     except Exception as e:
         print(f"ERRO no filtro de município: {type(e).__name__} - {e}")
@@ -1254,135 +932,20 @@ def _filtrar_pontos_fora_municipio(df):
 
 def fetch_gps_data(linhas_sel=None, veiculos_sel=None, modo="linhas"):
     """Busca dados GPS das APIs SPPO e BRT e retorna DataFrame unificado."""
-    linhas_sel = [str(ln) for ln in (linhas_sel or []) if str(ln).strip()]
-    veiculos_sel = [str(v) for v in (veiculos_sel or []) if str(v).strip()]
-
-    # Em modo linhas, evita chamada remota quando não há seleção.
-    if modo == "linhas" and not linhas_sel:
-        return pd.DataFrame()
-
-    # Usar UTC-3 (BRT) explicitamente para compatibilidade local e no Render
-    agora  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
-    inicio = agora - timedelta(minutes=3)
-    fmt    = "%Y-%m-%d+%H:%M:%S"
-
-    selected_lines = set(linhas_sel)
-    selected_vehicles = set(veiculos_sel)
-    sppo_df = pd.DataFrame()
-    brt_df  = pd.DataFrame()
-
-    # Sessão compartilhada com headers para simular browser
-    _headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.data.rio/",
-    }
-
-    def _fetch_sppo():
-        url_sppo = (
-            f"https://dados.mobilidade.rio/gps/sppo"
-            f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
-        )
-        try:
-            resp = _http_session_sppo.get(url_sppo, headers=_headers, timeout=20)
-            if resp.status_code != 200:
-                return pd.DataFrame()
-            data = resp.json()
-            if not isinstance(data, list) or not data:
-                return pd.DataFrame()
-            if selected_lines:
-                data = [r for r in data if str(r.get("linha", "")) in selected_lines]
-            return pd.DataFrame(data) if data else pd.DataFrame()
-        except requests.Timeout:
-            print("ERRO API SPPO: Timeout na requisição")
-        except requests.RequestException as e:
-            print(f"ERRO API SPPO: {type(e).__name__} - {e}")
-        except ValueError:
-            print("ERRO API SPPO: body não é JSON válido")
-        except Exception as e:
-            print(f"ERRO inesperado SPPO: {type(e).__name__} - {e}")
-        return pd.DataFrame()
-
-    def _fetch_brt():
-        try:
-            resp = _http_session_brt.get("https://dados.mobilidade.rio/gps/brt", headers=_headers, timeout=20)
-            if resp.status_code != 200:
-                return pd.DataFrame()
-            veiculos = resp.json().get("veiculos") or []
-            if selected_lines:
-                veiculos = [r for r in veiculos if str(r.get("linha", "")) in selected_lines]
-            return pd.DataFrame(veiculos) if veiculos else pd.DataFrame()
-        except requests.Timeout:
-            print("ERRO API BRT: Timeout na requisição")
-        except requests.RequestException as e:
-            print(f"ERRO API BRT: {type(e).__name__} - {e}")
-        except Exception as e:
-            print(f"ERRO inesperado BRT: {type(e).__name__} - {e}")
-        return pd.DataFrame()
-
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        fut_sppo = ex.submit(_fetch_sppo)
-        fut_brt = ex.submit(_fetch_brt)
-        sppo_df = fut_sppo.result()
-        brt_df = fut_brt.result()
-
-    # Processar SPPO
-    if len(sppo_df) > 0:
-        sppo_df = _processar_dados_gps(sppo_df, GPS_CONFIG["sppo"])
-    else:
-        sppo_df = pd.DataFrame()
-
-    # Processar BRT
-    if len(brt_df) > 0:
-        brt_df = _processar_dados_gps(brt_df, GPS_CONFIG["brt"])
-    else:
-        brt_df = pd.DataFrame()
-
-    # Combinar e filtrar
-    dados = pd.concat([sppo_df, brt_df], ignore_index=True)
-    if len(dados) == 0:
-        return pd.DataFrame()
-
-    dados = dados.dropna(subset=["latitude", "longitude"])
-    dados = dados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
-    dados = dados[dados["datahora"] >= inicio]
-
-    # Mantém apenas veículos de linhas presentes no GTFS apenas no modo linhas.
-    if modo == "linhas" and linhas_short:
-        dados = dados[dados["linha"].isin(linhas_short)]
-
-    # Filtro final por linhas selecionadas (garantia)
-    if selected_lines:
-        dados = dados[dados["linha"].astype(str).isin(selected_lines)]
-
-    # Filtro por veículos selecionados (modo veículos).
-    if selected_vehicles:
-        dados = dados[dados["ordem"].astype(str).isin(selected_vehicles)]
-
-    # Sempre remove pontos fora do município, independentemente do modo.
-    dados = _filtrar_pontos_fora_municipio(dados)
-
-    # Remove pontos dentro de garagens (veículos possivelmente recolhidos).
-    if modo == "linhas" and len(dados) > 0 and garagens_polygon is not None:
-        try:
-            dentro_garagem = dados.apply(
-                lambda row: garagens_polygon.contains(Point(float(row["longitude"]), float(row["latitude"]))),
-                axis=1,
-            )
-            dados = dados[~dentro_garagem]
-        except Exception as e:
-            print(f"ERRO no filtro de garagens: {type(e).__name__} - {e}")
-
-    # Conversão rápida de coordenadas (sem geometria custosa)
-    dados["linha"] = dados["linha"].astype(str)
-    dados["lat"] = dados["latitude"].astype(float)
-    dados["lng"] = dados["longitude"].astype(float)
-    dados = dados.reset_index(drop=True)
-    # Manter apenas colunas necessárias para reduzir tamanho do store
-    colunas_uteis = ["ordem", "lat", "lng", "linha", "velocidade", "tipo", "sentido", "datahora"]
-    colunas_uteis = [c for c in colunas_uteis if c in dados.columns]
-    dados = dados[colunas_uteis]
-    return dados
+    return fetch_gps_data_service(
+        linhas_sel=linhas_sel,
+        veiculos_sel=veiculos_sel,
+        modo=modo,
+        http_session_sppo=_http_session_sppo,
+        http_session_brt=_http_session_brt,
+        processar_dados_gps_fn=_processar_dados_gps,
+        gps_config=GPS_CONFIG,
+        linhas_short=linhas_short,
+        filtrar_pontos_fora_municipio_fn=_filtrar_pontos_fora_municipio,
+        garagens_polygon=garagens_polygon,
+        garagens_polygon_prepared=_garagens_polygon_prepared,
+        build_point_mask_fn=build_point_mask,
+    )
 
 
 # ==============================================================================
@@ -1399,206 +962,7 @@ server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
 MAP_SUPPORTS_VIEWPORT = "viewport" in getattr(dl.Map, "_prop_names", [])
 
-# CSS global para evitar scroll vertical residual no mobile.
-app.index_string = """
-<!DOCTYPE html>
-<html>
-    <head>
-        {%metas%}
-        <title>{%title%}</title>
-        {%favicon%}
-        {%css%}
-        <style>
-            html, body, #react-entry-point {
-                height: 100%;
-                margin: 0;
-                padding: 0;
-                overflow: hidden;
-            }
-
-            body {
-                background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
-            }
-
-            #boot-loader {
-                position: fixed;
-                inset: 0;
-                z-index: 99999;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
-                transition: opacity .35s ease, visibility .35s ease;
-            }
-
-            #boot-loader.hide {
-                opacity: 0;
-                visibility: hidden;
-                pointer-events: none;
-            }
-
-            .boot-card {
-                min-width: 250px;
-                padding: 16px 20px;
-                border-radius: 12px;
-                background: rgba(255,255,255,.92);
-                border: 1px solid #d5dfeb;
-                box-shadow: 0 10px 30px rgba(31,42,55,.14);
-                text-align: center;
-                font-family: 'Segoe UI', sans-serif;
-                color: #1f2a37;
-            }
-
-            .boot-title {
-                margin: 0 0 10px 0;
-                font-size: 15px;
-                font-weight: 700;
-            }
-
-            .boot-subtitle {
-                margin: 8px 0 0 0;
-                font-size: 12px;
-                color: #4b5a6b;
-            }
-
-            .boot-spinner {
-                width: 34px;
-                height: 34px;
-                margin: 0 auto;
-                border-radius: 50%;
-                border: 3px solid #c8d8ef;
-                border-top-color: #1366d6;
-                animation: spin .9s linear infinite;
-            }
-
-            @keyframes spin {
-                to { transform: rotate(360deg); }
-            }
-
-            /* Remove contorno de foco visual ao clicar em elementos do mapa. */
-            .leaflet-container:focus {
-                outline: none !important;
-            }
-
-            .itinerario-polyline:focus,
-            .itinerario-polyline:active {
-                outline: none !important;
-                box-shadow: none !important;
-            }
-
-            /* Forca as abas de filtro lado a lado no mobile. */
-            .tabs-filtro-parent {
-                width: 100%;
-            }
-
-            .tabs-filtro-container {
-                display: flex !important;
-                flex-wrap: nowrap !important;
-                width: 100%;
-            }
-
-            .tabs-filtro-item {
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                flex: 1 1 50% !important;
-                width: 50% !important;
-                max-width: 50% !important;
-                white-space: nowrap;
-            }
-
-            @media (max-width: 768px) {
-                .tabs-filtro-item {
-                    font-size: 11px !important;
-                    padding: 4px 6px !important;
-                    min-height: 30px !important;
-                    line-height: 18px !important;
-                }
-            }
-
-            /* Oculta o loading padrão do Dash (canto superior esquerdo).
-               Mantemos apenas o loader customizado (#boot-loader). */
-            ._dash-loading,
-            ._dash-loading-callback {
-                display: none !important;
-            }
-        </style>
-    </head>
-    <body>
-        <div id="boot-loader" aria-live="polite" aria-label="Carregando aplicação">
-            <div class="boot-card">
-                <p class="boot-title">Consulta de ônibus - Rio de Janeiro</p>
-                <div class="boot-spinner"></div>
-                <p class="boot-subtitle">Carregando mapa e dados...</p>
-            </div>
-        </div>
-        {%app_entry%}
-        <script>
-            (function () {
-                function hideLoader() {
-                    var el = document.getElementById('boot-loader');
-                    if (!el) return;
-                    el.classList.add('hide');
-                    setTimeout(function () {
-                        if (el && el.parentNode) el.parentNode.removeChild(el);
-                    }, 450);
-                }
-
-                function appMounted() {
-                    var root = document.getElementById('react-entry-point');
-                    if (!root) return false;
-                    return root.children && root.children.length > 0;
-                }
-
-                var tries = 0;
-                var timer = setInterval(function () {
-                    tries += 1;
-                    if (appMounted()) {
-                        clearInterval(timer);
-                        hideLoader();
-                        return;
-                    }
-                    if (tries > 240) {
-                        clearInterval(timer);
-                        hideLoader();
-                    }
-                }, 50);
-
-                window.addEventListener('load', function () {
-                    setTimeout(hideLoader, 600);
-                });
-
-                // Captura instancia real do Leaflet para comandos de foco clientside.
-                function patchLeafletMapCapture() {
-                    if (!window.L || !window.L.Map || window.__gps_map_capture_patched) return;
-                    var originalInit = window.L.Map.prototype.initialize;
-                    window.L.Map.prototype.initialize = function () {
-                        var out = originalInit.apply(this, arguments);
-                        window.__gps_leaflet_map = this;
-                        return out;
-                    };
-                    window.__gps_map_capture_patched = true;
-                }
-
-                patchLeafletMapCapture();
-                var patchTry = 0;
-                var patchTimer = setInterval(function () {
-                    patchTry += 1;
-                    patchLeafletMapCapture();
-                    if (window.__gps_map_capture_patched || patchTry > 120) {
-                        clearInterval(patchTimer);
-                    }
-                }, 100);
-            })();
-        </script>
-        <footer>
-            {%config%}
-            {%scripts%}
-            {%renderer%}
-        </footer>
-    </body>
-</html>
-"""
+app.index_string = APP_INDEX_STRING
 
 
 @server.after_request
@@ -1631,262 +995,11 @@ def _handle_callback_exception(exc):
         return ("", 204)
     raise exc
 
-app.layout = html.Div(
-    [
-        dcc.Interval(id="intervalo",        interval=45_000, n_intervals=0),
-        dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
-        dcc.Interval(id="intervalo-veiculos-recenter", interval=300, n_intervals=0, disabled=True),
-
-        # Compatibilidade com clientes antigos que ainda chamam callback legado.
-        dcc.Store(id="store-hist-sppo", data={}),
-        dcc.Store(id="store-hist-brt", data={}),
-        dcc.Store(id="store-build-id", data=APP_BUILD_ID),
-        dcc.Store(id="store-build-sync", data=None),
-        dcc.Store(id="store-force-map-view", data=None),
-        dcc.Store(id="store-force-map-view-ack", data=None),
-        dcc.Store(id="store-tab-filtro", data="linhas"),
-        dcc.Store(id="store-linhas-debounce", data=[]),
-        dcc.Store(id="store-veiculos-debounce", data=[]),
-        dcc.Store(id="store-veiculos-recenter-token", data=0),
-        dcc.Store(id="store-veiculos-opcoes", data=[]),
-        dcc.Store(id="store-gps-ts",    data=0),
-        dcc.Store(id="store-localizacao", data=None),
-
-        # Cabeçalho
-        html.Div(
-            html.H4("🚍 Consulta de ônibus - Rio de Janeiro 🚍", style=ESTILOS["header_titulo"]),
-            style=ESTILOS["header"],
-        ),
-
-        # Controles
-        html.Div(
-            [
-                # Seleção de linha — wrapper com z-index alto para o menu ficar sobre os botões do mapa
-                html.Div(
-                    [
-                        dcc.Tabs(
-                            id="tabs-filtro",
-                            value="linhas",
-                            mobile_breakpoint=0,
-                            parent_className="tabs-filtro-parent",
-                            className="tabs-filtro-container",
-                            style={
-                                "height": "32px",
-                                "width": "100%",
-                                "display": "flex",
-                                "flexWrap": "nowrap",
-                            },
-                            children=[
-                                dcc.Tab(
-                                    label="Linhas",
-                                    value="linhas",
-                                    className="tabs-filtro-item",
-                                    selected_className="tabs-filtro-item tabs-filtro-item--selected",
-                                    style={
-                                        "display": "inline-flex",
-                                        "flex": "1 1 50%",
-                                        "justifyContent": "center",
-                                        "alignItems": "center",
-                                        "padding": "4px 12px",
-                                        "height": "32px",
-                                        "lineHeight": "20px",
-                                        "fontSize": "12px",
-                                    },
-                                    selected_style={
-                                        "display": "inline-flex",
-                                        "flex": "1 1 50%",
-                                        "justifyContent": "center",
-                                        "alignItems": "center",
-                                        "padding": "4px 12px",
-                                        "height": "32px",
-                                        "lineHeight": "20px",
-                                        "fontSize": "12px",
-                                        "fontWeight": "700",
-                                    },
-                                    children=html.Div(
-                                        [
-                                            html.Label("Linhas:", style=ESTILOS["label"]),
-                                            html.Div(
-                                                dcc.Dropdown(
-                                                    id="dropdown-linhas",
-                                                    options=[{"label": linha_exibicao(ln), "value": ln} for ln in linhas_short],
-                                                    multi=True,
-                                                    placeholder="Selecione uma ou mais linhas...",
-                                                    style=ESTILOS["dropdown"],
-                                                ),
-                                                style=ESTILOS["dropdown_wrapper"],
-                                            ),
-                                        ],
-                                        style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
-                                    ),
-                                ),
-                                dcc.Tab(
-                                    label="Veículos",
-                                    value="veiculos",
-                                    className="tabs-filtro-item",
-                                    selected_className="tabs-filtro-item tabs-filtro-item--selected",
-                                    style={
-                                        "display": "inline-flex",
-                                        "flex": "1 1 50%",
-                                        "justifyContent": "center",
-                                        "alignItems": "center",
-                                        "padding": "4px 12px",
-                                        "height": "32px",
-                                        "lineHeight": "20px",
-                                        "fontSize": "12px",
-                                    },
-                                    selected_style={
-                                        "display": "inline-flex",
-                                        "flex": "1 1 50%",
-                                        "justifyContent": "center",
-                                        "alignItems": "center",
-                                        "padding": "4px 12px",
-                                        "height": "32px",
-                                        "lineHeight": "20px",
-                                        "fontSize": "12px",
-                                        "fontWeight": "700",
-                                    },
-                                    children=html.Div(
-                                        [
-                                            html.Label("Veículos:", style=ESTILOS["label"]),
-                                            html.Div(
-                                                dcc.Dropdown(
-                                                    id="dropdown-veiculos",
-                                                    options=[],
-                                                    multi=True,
-                                                    placeholder="Selecione um ou mais veículos...",
-                                                    style=ESTILOS["dropdown"],
-                                                ),
-                                                style=ESTILOS["dropdown_wrapper"],
-                                            ),
-                                        ],
-                                        style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
-                                    ),
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="texto-ajuda-tab",
-                            style={"fontSize": "11px", "color": "#5a6573", "textAlign": "center", "marginTop": "2px"},
-                        ),
-                    ],
-                    style={"display": "flex", "flexDirection": "column", "alignItems": "center", "width": "min(460px, 94vw)"},
-                ),
-                # Botão + texto — centralizados e agrupados
-                html.Div(
-                    [
-                        html.Button(
-                            "Atualizar 🔄️",
-                            id="btn-atualizar",
-                            n_clicks=0,
-                            style=ESTILOS["botao_atualizar"],
-                        ),
-                        html.P(
-                            "Última atualização:",
-                            style=ESTILOS["texto_atualizacao"],
-                        ),
-                        html.Span(
-                            id="span-update-icon",
-                            style={"marginLeft": "8px", "fontSize": "14px"},
-                            children="",
-                        ),
-                        html.Span(
-                            id="span-update-time",
-                            style={"marginLeft": "12px", "fontSize": "12px", "color": "#6c757d"},
-                            children="",
-                        ),
-                    ],
-                    style={
-                        "display": "flex",
-                        "alignItems": "center",
-                        "justifyContent": "center",
-                        "flexWrap": "wrap",
-                        "gap": "6px",
-                        "width": "min(460px, 94vw)",
-                        "margin": "0 auto",
-                        "textAlign": "center",
-                    },
-                ),
-            ],
-            style=ESTILOS["controles"],
-        ),
-
-        # Mapa + legenda flutuante
-        html.Div(
-            [
-                dl.Map(
-                    id="mapa",
-                    center=[-22.9, -43.2],
-                    zoom=11,
-                    style={"height": "100%", "width": "100%"},
-                    children=[
-                        dl.LayersControl(
-                            [
-                                dl.BaseLayer(
-                                    dl.TileLayer(
-                                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                                        attribution="© OpenStreetMap contributors",
-                                    ),
-                                    name="OSM", checked=False,
-                                ),
-                                dl.BaseLayer(
-                                    dl.TileLayer(
-                                        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-                                        attribution="Esri",
-                                    ),
-                                    name="ESRI Padrão", checked=True,
-                                ),
-                                dl.BaseLayer(
-                                    dl.TileLayer(
-                                        url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-                                        attribution="Esri",
-                                    ),
-                                    name="ESRI P&B", checked=False,
-                                ),
-                                dl.Overlay(dl.LayerGroup(id="layer-itinerarios"),
-                                           name="Itinerários", checked=True),
-                                dl.Overlay(dl.LayerGroup(id="layer-paradas"),
-                                           name="Paradas", checked=False),
-                                dl.Overlay(dl.LayerGroup(id="layer-onibus"),
-                                           name="Ônibus", checked=True),
-                                dl.Overlay(dl.LayerGroup(id="layer-brt"),
-                                           name="BRT", checked=True),
-                                dl.Overlay(dl.LayerGroup(id="layer-localizacao"),
-                                           name="Minha posição", checked=True),
-                            ],
-                            position="topright",
-                        ),
-                    ],
-                ),
-                # Botão de localização — posicionado abaixo do controle de camadas
-                html.Div(
-                    html.Button(
-                        "📍",
-                        id="btn-localizar",
-                        n_clicks=0,
-                        title="Ir para minha localização",
-                        style=ESTILOS["botao_localizacao"],
-                    ),
-                    style=ESTILOS["botao_localizacao_container"],
-                ),
-                html.Div(
-                    id="legenda",
-                    style=ESTILOS["legenda_container"],
-                ),
-            ],
-            style={"position": "relative", "flex": "1 1 auto", "minHeight": 0},
-        ),
-    ],
-    style={
-        "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
-        "boxSizing": "border-box",
-        "display": "flex",
-        "flexDirection": "column",
-        "height": "100dvh",
-        "overflow": "hidden",
-        "maxWidth": "100vw",
-        "background": "#eef2f7",
-    },
+app.layout = build_app_layout(
+    estilos=ESTILOS,
+    linhas_short=linhas_short,
+    linha_exibicao=linha_exibicao,
+    app_build_id=APP_BUILD_ID,
 )
 
 
@@ -1924,119 +1037,33 @@ app.clientside_callback(
     prevent_initial_call=False,
 )
 
-
-app.clientside_callback(
-    """
-    function(cmd) {
-        if (!cmd) {
-            return window.dash_clientside.no_update;
-        }
-        try {
-            var map = window.__gps_leaflet_map || null;
-            if (!map) {
-                return {ok: false, reason: 'leaflet_map_not_captured', ts: Date.now(), token: cmd.token || null};
-            }
-
-            if (Array.isArray(cmd.center) && cmd.center.length >= 2) {
-                var z = (typeof cmd.zoom === 'number') ? cmd.zoom : map.getZoom();
-                map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
-                // Reaplica em seguida para neutralizar sobrescritas de estado no mesmo ciclo.
-                setTimeout(function () {
-                    try {
-                        map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
-                    } catch (e2) {
-                        // sem-op
-                    }
-                }, 140);
-            }
-
-            map.invalidateSize(false);
-            return {ok: true, ts: Date.now(), token: cmd.token || null};
-        } catch (e) {
-            return {ok: false, reason: String(e), ts: Date.now(), token: cmd.token || null};
-        }
-    }
-    """,
-    Output("store-force-map-view-ack", "data"),
-    Input("store-force-map-view", "data"),
-    prevent_initial_call=True,
-)
+def _get_last_update_ts():
+    with _status_lock:
+        return _last_update_ts
 
 
+register_ui_callbacks(app, _get_last_update_ts)
 
 
 @app.callback(
-    Output("store-tab-filtro", "data"),
-    Output("texto-ajuda-tab", "children"),
-    Output("dropdown-linhas", "value"),
-    Output("dropdown-veiculos", "value"),
-    Input("tabs-filtro", "value"),
+    Output("intervalo", "interval"),
+    Input("store-tab-filtro", "data"),
+    Input("store-linhas-debounce", "data"),
+    Input("store-veiculos-debounce", "data"),
     prevent_initial_call=False,
 )
-def sincronizar_tab_filtro(tab_value):
-    """Mantém estado da aba ativa e texto de ajuda do filtro."""
-    tab = tab_value or "linhas"
-    if tab == "veiculos":
-        # Limpa a seleção de linhas ao entrar na aba de veículos.
-        return tab, "Pesquise pelo número do veículo ou linha.", [], dash.no_update
-    # Limpa a seleção de veículos ao voltar para a aba de linhas.
-    return "linhas", "Pesquise pelo número da linha.", dash.no_update, []
-
-
-@app.callback(
-    Output("store-linhas-debounce", "data"),
-    Output("intervalo-linhas-debounce", "disabled"),
-    Input("dropdown-linhas", "value"),
-    Input("intervalo-linhas-debounce", "n_intervals"),
-    prevent_initial_call=True,
-)
-def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
-    """Sincroniza seleção de linhas com debounce de 500ms."""
-    trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
-    if trigger == "dropdown-linhas":
-        return dash.no_update, False
-    if trigger == "intervalo-linhas-debounce":
-        return linhas_sel or [], True
-    return dash.no_update, dash.no_update
-
-
-@app.callback(
-    Output("store-veiculos-debounce", "data"),
-    Input("dropdown-veiculos", "value"),
-)
-def sincronizar_veiculos(veiculos_sel):
-    """Sincroniza seleção de veículos sem debounce para resposta imediata."""
-    return [str(v) for v in (veiculos_sel or []) if str(v).strip()]
-
-
-@app.callback(
-    Output("intervalo-veiculos-recenter", "disabled"),
-    Output("store-veiculos-recenter-token", "data"),
-    Input("store-veiculos-debounce", "data"),
-    Input("store-tab-filtro", "data"),
-    Input("intervalo-veiculos-recenter", "n_intervals"),
-    prevent_initial_call=True,
-)
-def agendar_recenter_veiculos(veiculos_sel, tab_filtro, _tick):
-    """Agenda um segundo comando de recenter curto para evitar corrida no primeiro ciclo."""
-    trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
-    if trigger in ("store-veiculos-debounce", "store-tab-filtro"):
-        if tab_filtro == "veiculos" and len(veiculos_sel or []) > 0:
-            return False, dash.no_update
-        return True, dash.no_update
-    if trigger == "intervalo-veiculos-recenter":
-        # Emite token para forçar segundo ciclo separado de viewport.
-        return True, int(time.time() * 1000)
-    return dash.no_update, dash.no_update
-
-
-@app.callback(
-    Output("dropdown-veiculos", "options"),
-    Input("store-veiculos-opcoes", "data"),
-)
-def atualizar_opcoes_veiculos(opcoes):
-    """Atualiza opções do dropdown de veículos com snapshot das APIs."""
-    return opcoes or []
+def ajustar_intervalo_polling(tab_filtro, linhas_sel, veiculos_sel):
+    with _status_lock:
+        fetch_ok = _last_fetch_had_data
+    return compute_poll_interval_ms(
+        tab_filtro=tab_filtro,
+        linhas_sel=linhas_sel,
+        veiculos_sel=veiculos_sel,
+        last_fetch_had_data=fetch_ok,
+        idle_ms=_POLL_INTERVAL_IDLE_MS,
+        lines_active_ms=_POLL_INTERVAL_LINES_ACTIVE_MS,
+        vehicles_active_ms=_POLL_INTERVAL_VEHICLES_ACTIVE_MS,
+    )
 
 
 @app.callback(
@@ -2057,11 +1084,13 @@ def atualizar_opcoes_veiculos(opcoes):
 )
 def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     """Busca GPS, armazena no cache server-side e retorna só timestamp."""
-    global _gps_cache, _last_update_ts, _hist_sppo_bygps, _hist_brt_bygps
+    global _gps_cache, _last_update_ts, _last_fetch_had_data, _hist_sppo_bygps, _hist_brt_bygps
 
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
     linhas_sel = linhas_sel or []
     veiculos_sel = veiculos_sel or []
+
+    t0 = time.perf_counter()
 
     # Em modo veículos, carrega snapshot completo para alimentar o dropdown e o filtro no mapa.
     dados = fetch_gps_data(
@@ -2070,44 +1099,42 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         modo=modo,
     )
 
-    opcoes_veiculos = []
-    if not dados.empty:
-        base_opcoes = (
-            dados.sort_values("datahora", ascending=False)
-            .drop_duplicates("ordem")
-            .copy()
-        )
-        opcoes_veiculos = [
-            {
-                "label": veiculo_exibicao(row["ordem"], row.get("linha", ""), row.get("tipo", "")),
-                "value": str(row["ordem"]),
-            }
-            for _, row in base_opcoes.iterrows()
-            if str(row.get("ordem", "")).strip()
-        ]
-    
+    t_fetch = time.perf_counter()
+    opcoes_veiculos = montar_opcoes_veiculos(dados, veiculo_exibicao)
+
     # Atualiza timestamp apenas se fetch foi bem-sucedido
     if len(dados) > 0:
         new_ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
         with _status_lock:
             _last_update_ts = new_ts
-    
+            _last_fetch_had_data = True
+
     if len(dados) == 0:
+        with _gps_lock:
+            _gps_cache = pd.DataFrame()
+        with _status_lock:
+            _last_fetch_had_data = False
         with _hist_lock:
             _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
             _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
-        return dash.no_update, {}, {}, opcoes_veiculos
+        total_ms = (time.perf_counter() - t0) * 1000
+        fetch_ms = (t_fetch - t0) * 1000
+        _perf_record("atualizar_gps_total_ms", total_ms)
+        perf_log(
+            f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
+            f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n=0"
+        )
+        return int(time.time()), {}, {}, []
 
     # Em modo veículos, aplica filtro por seleção após montar opções.
     if modo == "veiculos" and veiculos_sel:
-        dados = dados[dados["ordem"].astype(str).isin(set(str(v) for v in veiculos_sel))]
+        dados = filtrar_por_veiculos(dados, veiculos_sel)
         if dados.empty:
             with _gps_lock:
                 _gps_cache = pd.DataFrame()
             return int(time.time()), {}, {}, opcoes_veiculos
 
-    sppo_df = dados[dados["tipo"] == "SPPO"].copy()
-    brt_df  = dados[dados["tipo"] == "BRT"].copy()
+    sppo_df, brt_df = split_gps_por_tipo(dados)
 
     # Calcula bearing apenas se há dados (otimização de CPU)
     if len(sppo_df) > 0:
@@ -2128,15 +1155,53 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         with _hist_lock:
             _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
 
-    dados_final             = pd.concat([sppo_df, brt_df], ignore_index=True)
+    dados_final = pd.concat([sppo_df, brt_df], ignore_index=True)
     if not dados_final.empty:
         dados_final["datahora"] = dados_final["datahora"].astype(str)
 
     # Salva server-side — nenhum dado pesado vai para o browser
     with _gps_lock:
         _gps_cache = dados_final if not dados_final.empty else pd.DataFrame()
+    total_ms = (time.perf_counter() - t0) * 1000
+    fetch_ms = (t_fetch - t0) * 1000
+    _perf_record("atualizar_gps_total_ms", total_ms)
+    perf_log(
+        f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
+        f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n={len(dados_final)}"
+    )
     # Mantemos stores legados vazios para compatibilidade com clientes em cache.
     return int(time.time()), {}, {}, opcoes_veiculos
+
+
+def _bounds_to_box(bounds):
+    if not bounds or not isinstance(bounds, (list, tuple)) or len(bounds) < 2:
+        return None
+    try:
+        sw = bounds[0]
+        ne = bounds[1]
+        return {
+            "min_lat": float(sw[0]),
+            "min_lon": float(sw[1]),
+            "max_lat": float(ne[0]),
+            "max_lon": float(ne[1]),
+        }
+    except Exception:
+        return None
+
+
+def _filtrar_df_por_viewport(df, bounds):
+    if df is None or df.empty:
+        return df
+    box = _bounds_to_box(bounds)
+    if box is None:
+        return df
+    lat = pd.to_numeric(df["lat"], errors="coerce")
+    lng = pd.to_numeric(df["lng"], errors="coerce")
+    mask = (
+        lat.between(box["min_lat"], box["max_lat"]) &
+        lng.between(box["min_lon"], box["max_lon"])
+    )
+    return df[mask]
 
 
 @app.callback(
@@ -2149,10 +1214,12 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     Input("store-tab-filtro",   "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
+    Input("mapa", "bounds"),
     prevent_initial_call=False,
 )
-def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel):
+def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
     """Reconstrói as camadas do mapa lendo do cache server-side."""
+    t0 = time.perf_counter()
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
     linhas_sel = linhas_sel or []
     veiculos_sel = veiculos_sel or []
@@ -2162,132 +1229,47 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel):
     # Lê do cache server-side PRIMEIRO
     with _gps_lock:
         dados = _gps_cache
+    with _status_lock:
+        fetch_ok = _last_fetch_had_data
     
 
     # --- Legenda --------------------------------------------------------------
-    # Mini-legenda de ícones (sempre presente)
-    icone_seta = _cache_or_generate_svg("#888", float("nan"))
-    icone_circulo = _cache_or_generate_svg("#888", 0)
-    secao_icones = html.Div(
-        [
-            html.B("Ícones:", style={"display": "block", "marginBottom": "4px", "fontSize": "10px"}),
-            html.Div(
-                [
-                    html.Img(src=icone_seta[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
-                    html.Span("Parado/Não atualizado", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
-                ],
-                style={"display": "flex", "alignItems": "center", "gap": "5px", "marginBottom": "3px"},
-            ),
-            html.Div(
-                [
-                    html.Img(src=icone_circulo[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
-                    html.Span("Em movimento", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
-                ],
-                style={"display": "flex", "alignItems": "center", "gap": "5px"},
-            ),
-        ],
-        style={"marginTop": "7px", "paddingTop": "6px", "borderTop": "1px solid #dee2e6"},
-    )
+    secao_icones = construir_secao_icones(_cache_or_generate_svg)
 
     if dados.empty:
-        titulo = "Veículos no mapa:" if modo == "veiculos" else "Linhas no mapa:"
-        texto_vazio = "Nenhum dado disponível no momento"
-        legenda = html.Div(
-            [
-                html.B(titulo, style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-                html.Span(texto_vazio, style={"color": "#888", "fontStyle": "italic"}),
-                secao_icones,
-            ],
-            style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)"},
+        legenda = construir_legenda_vazia(
+            modo=modo,
+            fetch_ok=fetch_ok,
+            secao_icones=secao_icones,
+            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
         return [], [], [], [], legenda
 
     if modo == "veiculos":
         if not selected_vehicles:
-            legenda = html.Div(
-                [
-                    html.B("Veículos no mapa:", style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-                    html.Span("Nenhum veículo selecionado", style={"color": "#888", "fontStyle": "italic"}),
-                    secao_icones,
-                ],
-                style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)"},
-            )
+            legenda = construir_legenda_sem_veiculos(secao_icones, ESTILOS["caixa_legenda"])
             return [], [], [], [], legenda
 
         dados_filtrados = dados[dados["ordem"].astype(str).isin(selected_vehicles)].copy()
-        linhas_gtfs_ativas = sorted(
-            {
-                str(ln)
-                for ln in dados_filtrados["linha"].astype(str).tolist()
-                if str(ln) in set(str(x) for x in linhas_short)
-            }
-        )
+        dados_filtrados = _filtrar_df_por_viewport(dados_filtrados, map_bounds)
+        if dados_filtrados.empty:
+            legenda = construir_legenda_sem_veiculos(
+                secao_icones,
+                ESTILOS["caixa_legenda"],
+                mensagem="Nenhum veículo visível no viewport",
+            )
+            return [], [], [], [], legenda
+        linhas_gtfs_ativas = linhas_ativas_por_veiculos(dados_filtrados, linhas_short)
         linhas_render = linhas_gtfs_ativas
         cores = get_linha_cores(linhas_render)
 
-        itens = []
-        base_legenda = dados_filtrados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
-        for row in base_legenda.itertuples(index=False):
-            linha_val = str(getattr(row, "linha", "") or "")
-            ordem_val = str(getattr(row, "ordem", "") or "")
-            tipo_val = str(getattr(row, "tipo", "") or "")
-            nome_long = linhas_dict.get(linha_val, "")
-            linha_label = linha_exibicao(linha_val) if linha_val else "Sem linha"
-            cor = cores.get(linha_val, "#888888") if linha_val in linhas_render else "#9aa3ad"
-            itens.append(
-                html.Div(
-                    [
-                        html.Span(
-                            style={
-                                "flexShrink": 0,
-                                "marginTop": "2px",
-                                "width": "clamp(11px, 1vw, 14px)",
-                                "height": "clamp(11px, 1vw, 14px)",
-                                "borderRadius": "2px",
-                                "background": cor,
-                                "display": "inline-block",
-                            }
-                        ),
-                        html.Span(
-                            [
-                                html.B(f"Veículo {ordem_val}"),
-                                html.Br(),
-                                html.Span(
-                                    f"Linha {linha_label}",
-                                    style={"color": "#4f5b68", "fontSize": "clamp(9px, 1vw, 11px)"},
-                                ),
-                            ]
-                            + (
-                                [
-                                    html.Br(),
-                                    html.Span(
-                                        nome_long,
-                                        style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"},
-                                    ),
-                                ]
-                                if nome_long
-                                else []
-                            )
-                            + [
-                                html.Br(),
-                                html.Span(
-                                    f"Fonte: {tipo_val}",
-                                    style={"color": "#6a7583", "fontSize": "clamp(9px, 1vw, 11px)"},
-                                ),
-                            ]
-                        ),
-                    ],
-                    style={"display": "flex", "alignItems": "flex-start", "gap": "6px", "marginBottom": "4px"},
-                )
-            )
-
-        legenda = html.Div(
-            [
-                html.B("Veículos no mapa:", style={"display": "block", "marginBottom": "4px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-                *itens,
-                secao_icones,
-            ],
-            style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(215px, 32vw, 320px)"},
+        legenda = construir_legenda_veiculos(
+            dados_filtrados=dados_filtrados,
+            cores=cores,
+            linhas_dict=linhas_dict,
+            linha_exibicao_fn=linha_exibicao,
+            secao_icones=secao_icones,
+            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
     else:
         if not linhas_sel:
@@ -2303,56 +1285,20 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel):
 
         linhas_render = [str(ln) for ln in linhas_sel]
         cores = get_linha_cores(linhas_render)
-        itens = []
-        for ln in linhas_render:
-            cor = cores.get(ln, "#888888")
-            nome_long = linhas_dict.get(ln, "")
-            linha_label = linha_exibicao(ln)
-            itens.append(
-                html.Div(
-                    [
-                        html.Span(
-                            style={
-                                "flexShrink": 0,
-                                "marginTop": "2px",
-                                "width": "clamp(11px, 1vw, 14px)",
-                                "height": "clamp(11px, 1vw, 14px)",
-                                "borderRadius": "2px",
-                                "background": cor,
-                                "display": "inline-block",
-                            }
-                        ),
-                        html.Span(
-                            [html.B(linha_label)]
-                            + (
-                                [
-                                    html.Br(),
-                                    html.Span(
-                                        nome_long,
-                                        style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"},
-                                    ),
-                                ]
-                                if nome_long
-                                else []
-                            )
-                        ),
-                    ],
-                    style={"display": "flex", "alignItems": "flex-start", "gap": "6px", "marginBottom": "4px"},
-                )
-            )
-
-        legenda = html.Div(
-            [
-                html.B("Linhas no mapa:", style={"display": "block", "marginBottom": "4px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-                *itens,
-                secao_icones,
-            ],
-            style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(195px, 28vw, 280px)"},
+        legenda = construir_legenda_linhas(
+            linhas_render=linhas_render,
+            cores=cores,
+            linhas_dict=linhas_dict,
+            linha_exibicao_fn=linha_exibicao,
+            secao_icones=secao_icones,
+            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
         dados_filtrados = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
 
-    sppo_df = dados_filtrados[dados_filtrados["tipo"] == "SPPO"].copy() if len(dados_filtrados) > 0 else pd.DataFrame()
-    brt_df  = dados_filtrados[dados_filtrados["tipo"] == "BRT"].copy()  if len(dados_filtrados) > 0 else pd.DataFrame()
+    sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
+    sppo_df = _filtrar_df_por_viewport(sppo_df, map_bounds)
+    brt_df = _filtrar_df_por_viewport(brt_df, map_bounds)
+    t_split = time.perf_counter()
 
     # Reduz marcadores em zoom baixo para evitar travamentos na renderização
     # Sem Input de zoom no callback para evitar incompatibilidade de payload
@@ -2360,706 +1306,131 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel):
     sppo_df = _limit_df_for_render(sppo_df, 11)
     brt_df = _limit_df_for_render(brt_df, 11)
 
-    # --- Itinerários ----------------------------------------------------------
-    if not _gtfs_load_event.is_set():
-        # Nao bloquear callback por muitos segundos; renderiza GPS e legenda imediatamente.
-        pass
+    shapes_layers, paradas_layers = construir_camadas_estaticas(
+        modo=modo,
+        linhas_render=linhas_render,
+        cores=cores,
+        gtfs_load_event=_gtfs_load_event,
+        recarregar_gtfs_estatico_sob_demanda=_recarregar_gtfs_estatico_sob_demanda,
+        gtfs_data_lock=_gtfs_data_lock,
+        line_to_shape_coords=line_to_shape_coords,
+        line_to_stops_points=line_to_stops_points,
+        map_static_cache_lock=_map_static_cache_lock,
+        map_static_cache=_map_static_cache,
+        map_static_cache_max_items=_MAP_STATIC_CACHE_MAX_ITEMS,
+        map_static_cache_ttl_seconds=_MAP_STATIC_CACHE_TTL_SECONDS,
+        linha_publica_fn=linha_publica,
+        stop_sign_icon=STOP_SIGN_ICON,
+        limit_list_for_render_fn=_limit_list_for_render,
+        max_stops_per_render=MAX_STOPS_PER_RENDER,
+        viewport_bounds=map_bounds if modo == "veiculos" else None,
+    )
+    t_static = time.perf_counter()
 
-    # Fallback no runtime para Render: se as linhas nao tiverem estaticos, tenta recarregar.
-    _recarregar_gtfs_estatico_sob_demanda(linhas_render)
+    onibus_children, brt_children, cache_meta = construir_camadas_veiculos(
+        sppo_df=sppo_df,
+        brt_df=brt_df,
+        cores=cores,
+        linhas_render=linhas_render,
+        lightweight_marker_threshold=LIGHTWEIGHT_MARKER_THRESHOLD,
+        build_geojson_cluster_layer_fn=_build_geojson_cluster_layer,
+        group_vehicle_markers_fn=_group_vehicle_markers,
+        make_vehicle_icon_fn=make_vehicle_icon,
+        linha_publica_fn=linha_publica,
+        linhas_dict=linhas_dict,
+        vehicle_layers_cache_lock=_vehicle_layers_cache_lock,
+        vehicle_layers_cache=_vehicle_layers_cache,
+        vehicle_layers_cache_max_items=_VEHICLE_LAYERS_CACHE_MAX_ITEMS,
+        vehicle_layers_cache_ttl_seconds=_VEHICLE_LAYERS_CACHE_TTL_SECONDS,
+        emit_cache_meta=True,
+    )
+    total_ms = (time.perf_counter() - t0) * 1000
+    split_ms = (t_split - t0) * 1000
+    static_ms = (t_static - t_split) * 1000
+    vehicles_ms = (time.perf_counter() - t_static) * 1000
+    _perf_record("atualizar_mapa_total_ms", total_ms)
+    _perf_record("atualizar_mapa_static_ms", static_ms)
+    _perf_record("atualizar_mapa_vehicles_ms", vehicles_ms)
 
-    with _gtfs_data_lock:
-        shape_coords_snapshot = dict(line_to_shape_coords)
-        stops_points_snapshot = dict(line_to_stops_points)
+    with _perf_metrics_lock:
+        if cache_meta.get("hit"):
+            _vehicle_layer_cache_stats["hit"] += 1
+        else:
+            _vehicle_layer_cache_stats["miss"] += 1
+        hits = _vehicle_layer_cache_stats["hit"]
+        misses = _vehicle_layer_cache_stats["miss"]
+    total_cache_checks = max(1, hits + misses)
+    hit_rate = (hits / total_cache_checks) * 100.0
 
-    cache_key = (modo,) + tuple(sorted(str(ln) for ln in linhas_render))
-    with _map_static_cache_lock:
-        cached_layers = _map_static_cache.get(cache_key)
+    perf_log(
+        f"PERF atualizar_mapa modo={modo} total_ms={total_ms:.1f} "
+        f"split_ms={split_ms:.1f} static_ms={static_ms:.1f} vehicles_ms={vehicles_ms:.1f} "
+        f"p95_total_ms={_perf_p95('atualizar_mapa_total_ms'):.1f} "
+        f"cache_hit={cache_meta.get('hit')} cache_hit_rate={hit_rate:.1f}% "
+        f"cache_fp={cache_meta.get('fingerprint_mode')} cache_evictions={int(cache_meta.get('evictions') or 0)}"
+    )
 
-    if cached_layers is not None:
-        # Evita mutar listas do cache em renderizações subsequentes.
-        shapes_layers = list(cached_layers[0])
-        paradas_layers = list(cached_layers[1])
-    else:
-        shapes_layers = []
-        paradas_layers = []
-
-    if cached_layers is None:
-        try:
-            for linha_id in linhas_render:
-                cor = cores.get(linha_id, "#888888")
-                for coords in shape_coords_snapshot.get(linha_id, []):
-                    linha_label = linha_publica(linha_id)
-                    shapes_layers.append(
-                        dl.Polyline(
-                            positions=coords,
-                            color=cor,
-                            weight=4,
-                            className="itinerario-polyline",
-                            children=dl.Tooltip(f"Linha {linha_label}"),
-                        )
-                    )
-
-                def _texto_stop_valor(valor):
-                    texto = str(valor).strip() if valor is not None else ""
-                    if not texto or texto.lower() in {"nan", "none", "null"}:
-                        return "N/D"
-                    return texto
-
-                for stop_item in stops_points_snapshot.get(linha_id, []):
-                    # Compatibilidade com cache antigo: aceita tanto dict novo quanto tupla legado.
-                    if isinstance(stop_item, dict):
-                        stop_lat = stop_item.get("lat")
-                        stop_lon = stop_item.get("lon")
-                        stop_name = stop_item.get("stop_name", "")
-                        stop_code = stop_item.get("stop_code", "")
-                        stop_desc = stop_item.get("stop_desc", "")
-                        platform_code = stop_item.get("platform_code", "")
-                    else:
-                        stop_lat = stop_item[0] if len(stop_item) > 0 else None
-                        stop_lon = stop_item[1] if len(stop_item) > 1 else None
-                        stop_name = stop_item[2] if len(stop_item) > 2 else ""
-                        stop_code = ""
-                        stop_desc = ""
-                        platform_code = ""
-
-                    if stop_lat is None or stop_lon is None:
-                        continue
-
-                    popup_parada = html.Div(
-                        [
-                            html.P(f"Nome: {_texto_stop_valor(stop_name)}", style={"margin": "2px 0"}),
-                            html.P(f"Código: {_texto_stop_valor(stop_code)}", style={"margin": "2px 0"}),
-                            html.P(f"Descrição: {_texto_stop_valor(stop_desc)}", style={"margin": "2px 0"}),
-                            html.P(f"Plataforma: {_texto_stop_valor(platform_code)}", style={"margin": "2px 0"}),
-                        ]
-                    )
-                    paradas_layers.append(
-                        dl.Marker(
-                            position=[float(stop_lat), float(stop_lon)],
-                            icon=STOP_SIGN_ICON,
-                            children=dl.Popup(popup_parada),
-                        )
-                    )
-
-            # Em selecao ampla, renderiza subconjunto de paradas para manter fluidez.
-            paradas_layers = _limit_list_for_render(paradas_layers, MAX_STOPS_PER_RENDER)
-        except Exception as e:
-            print(f"ERRO ao montar camadas estáticas por linha: {type(e).__name__} - {e}")
-
-        with _map_static_cache_lock:
-            if len(_map_static_cache) >= _MAP_STATIC_CACHE_MAX_ITEMS:
-                _map_static_cache.clear()
-            _map_static_cache[cache_key] = (list(shapes_layers), list(paradas_layers))
-
-    # --- Helper popup ---------------------------------------------------------
-    def _popup(row, extra=None):
-        try:
-            vel = round(float(row.get("velocidade", 0)), 1)
-        except Exception:
-            vel = 0
-        hora = str(row.get("datahora", ""))
-        hora = hora[-8:] if len(hora) >= 8 else hora
-        items = [
-            html.P(f"Número do veículo: {row.get('ordem', '')}",  style={"margin": "2px 0"}),
-            html.P(f"Serviço: {linha_publica(row.get('linha', ''))}",  style={"margin": "2px 0"}),
-            html.P(f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
-                   style={"margin": "2px 0"}),
-            html.P(f"Fonte: {row.get('tipo', '')}", style={"margin": "2px 0"}),
-            html.P(f"Velocidade: {vel} km/h",         style={"margin": "2px 0"}),
-        ]
-        if extra:
-            items.append(html.P(extra, style={"margin": "2px 0"}))
-        items.append(html.P(f"Hora: {hora}", style={"margin": "2px 0"}))
-        return dl.Popup(html.Div(items))
-
-    # --- Ônibus/BRT -----------------------------------------------------------
-    lightweight_mode = (len(sppo_df) + len(brt_df)) > LIGHTWEIGHT_MARKER_THRESHOLD
-    if lightweight_mode:
-        onibus_children = _build_geojson_cluster_layer(sppo_df, "geojson-sppo")
-        brt_children = _build_geojson_cluster_layer(brt_df, "geojson-brt")
-        return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
-
-    # Modo detalhado: marcadores com icone direcional e popup.
-    onibus_layers = []
-    for row in sppo_df.itertuples(index=False):
-        row_dict = row._asdict()
-        cor = cores.get(str(row_dict.get("linha", "")), "#1a6faf") if linhas_render else "#1a6faf"
-        try:
-            bearing = float(row_dict.get("direcao", float("nan")))
-        except Exception:
-            bearing = float("nan")
-        onibus_layers.append(
-            dl.Marker(
-                position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon(bearing, cor))),
-                children=_popup(row_dict),
-            )
-        )
-
-    brt_layers = []
-    for row in brt_df.itertuples(index=False):
-        row_dict = row._asdict()
-        cor = cores.get(str(row_dict.get("linha", "")), "#e67e00") if linhas_render else "#e67e00"
-        try:
-            bearing = float(row_dict.get("direcao", float("nan")))
-        except Exception:
-            bearing = float("nan")
-        brt_layers.append(
-            dl.Marker(
-                position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon(bearing, cor))),
-                children=_popup(row_dict, extra=f"Sentido: {row_dict.get('sentido', '')}"),
-            )
-        )
-
-    onibus_children = _group_vehicle_markers(onibus_layers)
-    brt_children = _group_vehicle_markers(brt_layers)
     return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
 
 
-# ==============================================================================
-# Callbacks de geolocalização
-# ==============================================================================
-
-# Clientside callback: chama navigator.geolocation diretamente no browser.
-# Funciona em todos os cliques pois sempre grava um objeto novo no store.
-app.clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        return new Promise(function(resolve) {
-            if (!navigator.geolocation) {
-                alert("Geolocalização não suportada neste navegador.");
-                resolve(window.dash_clientside.no_update);
-                return;
-            }
-
-            function toPayload(pos) {
-                return {
-                    lat: pos.coords.latitude,
-                    lon: pos.coords.longitude,
-                    ts: Date.now(),
-                    acc: pos.coords.accuracy
-                };
-            }
-
-            // 1a tentativa: força leitura fresca (sem cache) com alta precisão.
-            navigator.geolocation.getCurrentPosition(
-                function(pos1) {
-                    var acc1 = Number(pos1 && pos1.coords ? pos1.coords.accuracy : NaN);
-
-                    // Se precisão já for boa, resolve imediatamente.
-                    if (!isNaN(acc1) && acc1 <= 120) {
-                        resolve(toPayload(pos1));
-                        return;
-                    }
-
-                    // 2a tentativa: dá mais tempo para o GPS "fixar" (evita precisar de 2º clique).
-                    navigator.geolocation.getCurrentPosition(
-                        function(pos2) {
-                            var acc2 = Number(pos2 && pos2.coords ? pos2.coords.accuracy : NaN);
-                            if (!isNaN(acc2) && (isNaN(acc1) || acc2 <= acc1)) {
-                                resolve(toPayload(pos2));
-                            } else {
-                                resolve(toPayload(pos1));
-                            }
-                        },
-                        function() {
-                            resolve(toPayload(pos1));
-                        },
-                        {enableHighAccuracy: true, timeout: 12000, maximumAge: 0}
-                    );
-                },
-                function(err) {
-                    alert("Erro ao obter localização: " + err.message);
-                    resolve(window.dash_clientside.no_update);
-                },
-                {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}
-            );
-        });
-    }
-    """,
-    Output("store-localizacao", "data"),
-    Input("btn-localizar",      "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
 def _calcular_viewport_linhas(linhas_sel):
-    """Calcula viewport (center, zoom, bounds) para linhas selecionadas com proteção contra outliers."""
-    if not linhas_sel:
-        return None, None, None
-
-    _recarregar_gtfs_estatico_sob_demanda(linhas_sel)
-    if not _gtfs_load_event.is_set():
-        # Primeiro uso pode chegar antes da thread de carga concluir.
-        _gtfs_load_event.wait(timeout=1.2)
-        if not _gtfs_load_event.is_set():
-            return None, None, None
-
-    with _gtfs_data_lock:
-        bounds_snapshot = dict(line_to_bounds)
-        shape_coords_snapshot = dict(line_to_shape_coords)
-
-    all_lats = []
-    all_lons = []
-
-    # Filtro geográfico amplo do município/região metropolitana para descartar pontos espúrios.
-    RIO_LAT_MIN, RIO_LAT_MAX = -23.6, -22.4
-    RIO_LON_MIN, RIO_LON_MAX = -44.3, -42.8
-
-    for linha_id in (str(ln) for ln in linhas_sel):
-        coords_linha = shape_coords_snapshot.get(linha_id, [])
-        for coords in coords_linha:
-            if not coords:
-                continue
-            for pt in coords:
-                try:
-                    lat = float(pt[0])
-                    lon = float(pt[1])
-                except Exception:
-                    continue
-                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                    continue
-                if not (RIO_LAT_MIN <= lat <= RIO_LAT_MAX and RIO_LON_MIN <= lon <= RIO_LON_MAX):
-                    continue
-                if rio_polygon is not None:
-                    try:
-                        if not rio_polygon.covers(Point(lon, lat)):
-                            continue
-                    except Exception:
-                        pass
-                all_lats.append(lat)
-                all_lons.append(lon)
-
-    # Se não houver pontos válidos, tenta fallback por bounds pré-computados.
-    if not all_lats or not all_lons:
-        min_lat = None
-        min_lon = None
-        max_lat = None
-        max_lon = None
-        for linha_id in (str(ln) for ln in linhas_sel):
-            b = bounds_snapshot.get(linha_id)
-            if not b:
-                continue
-            sw, ne = b
-            min_lat = sw[0] if min_lat is None else min(min_lat, sw[0])
-            min_lon = sw[1] if min_lon is None else min(min_lon, sw[1])
-            max_lat = ne[0] if max_lat is None else max(max_lat, ne[0])
-            max_lon = ne[1] if max_lon is None else max(max_lon, ne[1])
-    else:
-        # Remove extremos apenas em selecoes multi-linha para evitar cortar terminais de uma linha unica.
-        if len(linhas_sel) > 1 and len(all_lats) >= 60:
-            lat_s = pd.Series(all_lats)
-            lon_s = pd.Series(all_lons)
-            min_lat = float(lat_s.quantile(0.02))
-            max_lat = float(lat_s.quantile(0.98))
-            min_lon = float(lon_s.quantile(0.02))
-            max_lon = float(lon_s.quantile(0.98))
-        else:
-            min_lat = min(all_lats)
-            max_lat = max(all_lats)
-            min_lon = min(all_lons)
-            max_lon = max(all_lons)
-
-    if None in (min_lat, min_lon, max_lat, max_lon):
-        return None, None, None
-
-    lat_span_raw = abs(max_lat - min_lat)
-    lon_span_raw = abs(max_lon - min_lon)
-
-    # Margem moderada para caber o itinerário sem abrir demais o zoom.
-    lat_pad = max(0.0012, lat_span_raw * 0.08)
-    lon_pad = max(0.0012, lon_span_raw * 0.08)
-    min_lat -= lat_pad
-    max_lat += lat_pad
-    min_lon -= lon_pad
-    max_lon += lon_pad
-    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
-
-    center = [round((min_lat + max_lat) / 2, 6), round((min_lon + max_lon) / 2, 6)]
-
-    lat_span = max(0.0001, abs(max_lat - min_lat))
-    lon_span = max(0.0001, abs(max_lon - min_lon))
-    zoom_lat = math.log2(170.0 / lat_span)
-    zoom_lon = math.log2(360.0 / lon_span)
-
-    user_agent = (request.headers.get("User-Agent", "") or "").lower()
-    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
-    # Linha unica costuma ficar melhor com um passo extra de aproximação.
-    min_zoom = 13 if is_mobile else (14 if len(linhas_sel) == 1 else 13)
-    zoom_base = math.floor(min(zoom_lat, zoom_lon))
-    zoom = int(max(min_zoom, min(17, zoom_base + 2)))
-
-    return center, zoom, bounds
+    return viewport_logic_calcular_viewport_linhas(
+        linhas_sel=linhas_sel,
+        recarregar_gtfs_estatico_sob_demanda=_recarregar_gtfs_estatico_sob_demanda,
+        gtfs_load_event=_gtfs_load_event,
+        gtfs_data_lock=_gtfs_data_lock,
+        line_to_bounds=line_to_bounds,
+        line_to_shape_coords=line_to_shape_coords,
+        request=request,
+    )
 
 
 def _calcular_viewport_veiculos(veiculos_sel):
-    """Calcula viewport para veículos selecionados usando heurística similar à aba de linhas."""
-    if not veiculos_sel:
-        return None, None, None
+    def _get_gps_snapshot():
+        with _gps_lock:
+            return _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
 
-    with _gps_lock:
-        gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
-
-    if gps_snapshot.empty:
-        return None, None, None
-
-    filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_sel))]
-    if filtrado.empty:
-        return None, None, None
-
-    # Mantém somente coordenadas válidas para evitar viewport ruim por outliers.
-    filtrado = filtrado.copy()
-    filtrado["lat"] = pd.to_numeric(filtrado["lat"], errors="coerce")
-    filtrado["lng"] = pd.to_numeric(filtrado["lng"], errors="coerce")
-    filtrado = filtrado.dropna(subset=["lat", "lng"])
-    filtrado = filtrado[
-        filtrado["lat"].between(-90, 90)
-        & filtrado["lng"].between(-180, 180)
-    ]
-    if filtrado.empty:
-        return None, None, None
-
-    # Filtro geográfico amplo do município/região metropolitana para descartar pontos espúrios.
-    RIO_LAT_MIN, RIO_LAT_MAX = -23.6, -22.4
-    RIO_LON_MIN, RIO_LON_MAX = -44.3, -42.8
-    filtrado = filtrado[
-        filtrado["lat"].between(RIO_LAT_MIN, RIO_LAT_MAX)
-        & filtrado["lng"].between(RIO_LON_MIN, RIO_LON_MAX)
-    ]
-    if filtrado.empty:
-        return None, None, None
-
-    if rio_polygon is not None:
-        try:
-            dentro_municipio = filtrado.apply(
-                lambda row: rio_polygon.covers(Point(float(row["lng"]), float(row["lat"]))),
-                axis=1,
-            )
-            filtrado = filtrado[dentro_municipio]
-        except Exception:
-            pass
-
-    if filtrado.empty:
-        return None, None, None
-
-    if len(filtrado) == 1:
-        row = filtrado.iloc[0]
-        min_lat = max_lat = float(row["lat"])
-        min_lon = max_lon = float(row["lng"])
-    elif len(filtrado) >= 30:
-        # Corta extremos apenas em seleção maior para reduzir efeito de outliers.
-        min_lat = float(filtrado["lat"].quantile(0.02))
-        max_lat = float(filtrado["lat"].quantile(0.98))
-        min_lon = float(filtrado["lng"].quantile(0.02))
-        max_lon = float(filtrado["lng"].quantile(0.98))
-    else:
-        min_lat = float(filtrado["lat"].min())
-        max_lat = float(filtrado["lat"].max())
-        min_lon = float(filtrado["lng"].min())
-        max_lon = float(filtrado["lng"].max())
-
-    lat_span_raw = abs(max_lat - min_lat)
-    lon_span_raw = abs(max_lon - min_lon)
-
-    # Margem moderada para caber seleção sem "abrir" o mapa em excesso.
-    lat_pad = max(0.0012, lat_span_raw * 0.08)
-    lon_pad = max(0.0012, lon_span_raw * 0.08)
-    min_lat -= lat_pad
-    max_lat += lat_pad
-    min_lon -= lon_pad
-    max_lon += lon_pad
-
-    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
-
-    center = [
-        round((min_lat + max_lat) / 2.0, 6),
-        round((min_lon + max_lon) / 2.0, 6),
-    ]
-
-    lat_span = max(0.0001, abs(max_lat - min_lat))
-    lon_span = max(0.0001, abs(max_lon - min_lon))
-    zoom_lat = math.log2(170.0 / lat_span)
-    zoom_lon = math.log2(360.0 / lon_span)
-
-    user_agent = (request.headers.get("User-Agent", "") or "").lower()
-    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
-    min_zoom = 14 if is_mobile else (15 if len(filtrado) == 1 else 13)
-    max_zoom = 16
-    zoom = int(max(min_zoom, min(max_zoom, math.floor(min(zoom_lat, zoom_lon)))))
-
-    return center, zoom, bounds
+    return viewport_logic_calcular_viewport_veiculos(
+        veiculos_sel=veiculos_sel,
+        get_gps_snapshot=_get_gps_snapshot,
+        rio_polygon=rio_polygon,
+        rio_polygon_prepared=_rio_polygon_prepared,
+        build_point_mask=build_point_mask,
+        request=request,
+    )
 
 
 def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
-    """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
-    triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
-    trigger = triggered_props[0].split(".")[0] if triggered_props else None
-    has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
-    has_gps_trigger = any(prop.startswith("store-gps-ts.") for prop in triggered_props)
-    has_dropdown_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
-    has_debounce_trigger = any(prop.startswith("store-linhas-debounce.") for prop in triggered_props)
-    has_veiculos_store_trigger = any(prop.startswith("store-veiculos-debounce.") for prop in triggered_props)
-    has_veiculos_recenter_trigger = any(prop.startswith("store-veiculos-recenter-token.") for prop in triggered_props)
-    has_tab_trigger = any(prop.startswith("tabs-filtro.") or prop.startswith("store-tab-filtro.") for prop in triggered_props)
-    has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
-    has_vehicles_selection_trigger = has_veiculos_store_trigger
-    modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
+    def _get_gps_snapshot():
+        with _gps_lock:
+            return _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
 
-    # Usa a seleção mais recente conforme a origem do trigger.
-    if has_debounce_trigger:
-        linhas_ativas = linhas_sel_debounce or []
-    elif has_dropdown_trigger:
-        linhas_ativas = linhas_sel or []
-    else:
-        linhas_ativas = linhas_sel_debounce or linhas_sel or []
-
-    veiculos_ativos = veiculos_sel or []
-
-    # Quando inputs chegam juntos, sempre prioriza geolocalização.
-    if has_location_trigger or trigger == "store-localizacao":
-        if not data_localizacao or data_localizacao.get("lat") is None:
-            return dash.no_update, dash.no_update
-
-        lat = float(data_localizacao["lat"])
-        lon = float(data_localizacao["lon"])
-        icone_usuario = _gerar_svg_usuario()
-        marcador = dl.Marker(
-            position=[lat, lon],
-            icon={"iconUrl": icone_usuario, "iconSize": [22, 22], "iconAnchor": [11, 11]},
-            children=dl.Tooltip("Você está aqui"),
-        )
-        return {"center": [lat, lon], "zoom": 15}, [marcador]
-
-    if (modo == "linhas" and (has_lines_trigger or trigger in ("dropdown-linhas", "store-linhas-debounce"))) or (
-        modo == "linhas" and has_tab_trigger
-    ):
-        # Só prioriza geolocalização quando ambos os eventos chegam no mesmo ciclo.
-        if has_location_trigger and has_lines_trigger:
-            return dash.no_update, dash.no_update
-
-        center, zoom, bounds = _calcular_viewport_linhas(linhas_ativas)
-        if center is None or zoom is None or bounds is None:
-            # Fallback: usa centro dos veículos já carregados para primeira seleção.
-            sel = set(str(x) for x in (linhas_ativas or []))
-            with _gps_lock:
-                gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
-            if not gps_snapshot.empty and sel:
-                gps_snapshot = gps_snapshot[gps_snapshot["linha"].astype(str).isin(sel)]
-                if not gps_snapshot.empty:
-                    center = [
-                        round(float(gps_snapshot["lat"].median()), 6),
-                        round(float(gps_snapshot["lng"].median()), 6),
-                    ]
-                    return {"center": center, "zoom": 12}, dash.no_update
-            return dash.no_update, dash.no_update
-
-        # No fallback (sem viewport), usar center/zoom tem se mostrado mais estável em runtime.
-        # bounds permanece apenas para debug/calculo local.
-        if MAP_SUPPORTS_VIEWPORT:
-            command = {"center": center, "zoom": zoom}
-        else:
-            command = {"center": center, "zoom": zoom}
-        return command, dash.no_update
-
-    if (
-        modo == "veiculos"
-        and (
-            has_vehicles_selection_trigger
-            or has_veiculos_recenter_trigger
-            or has_tab_trigger
-            or (has_gps_trigger and bool(veiculos_ativos))
-        )
-    ):
-        # Primeiro tenta reaproveitar a mesma lógica da aba de linhas com as linhas
-        # presentes na seleção de veículos (mais estável no runtime atual).
-        linhas_veiculos = []
-        try:
-            with _gps_lock:
-                gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
-            if not gps_snapshot.empty and veiculos_ativos:
-                filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_ativos))]
-                if not filtrado.empty and "linha" in filtrado.columns:
-                    linhas_veiculos = sorted(set(str(v) for v in filtrado["linha"].dropna().astype(str).tolist() if str(v).strip()))
-        except Exception:
-            linhas_veiculos = []
-
-        center = zoom = bounds = None
-        if linhas_veiculos:
-            center, zoom, bounds = _calcular_viewport_linhas(linhas_veiculos)
-
-        # Fallback para cálculo por ponto(s) de veículo.
-        if center is None or zoom is None or bounds is None:
-            center, zoom, bounds = _calcular_viewport_veiculos(veiculos_ativos)
-
-        # Em seleção de 1 veículo, prioriza foco no ponto atual com zoom mais fechado.
-        if len(veiculos_ativos) == 1:
-            try:
-                with _gps_lock:
-                    gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
-                if not gps_snapshot.empty:
-                    row = gps_snapshot[gps_snapshot["ordem"].astype(str) == str(veiculos_ativos[0])]
-                    if not row.empty:
-                        lat = float(row.iloc[0]["lat"])
-                        lng = float(row.iloc[0]["lng"])
-                        center = [round(lat, 6), round(lng, 6)]
-                        # Zoom mais próximo para inspeção do veículo.
-                        zoom = max(int(zoom or 17), 17)
-                        bounds = [[round(lat - 0.0008, 6), round(lng - 0.0008, 6)], [round(lat + 0.0008, 6), round(lng + 0.0008, 6)]]
-            except Exception:
-                pass
-
-        if center is None or zoom is None or bounds is None:
-            return dash.no_update, dash.no_update
-
-        command = {
-            "center": dash.no_update,
-            "zoom": dash.no_update,
-            "force_view": {
-                "center": center,
-                "zoom": zoom,
-                "token": int(time.time() * 1000),
-            },
-        }
-        return command, dash.no_update
-
-    return dash.no_update, dash.no_update
+    return viewport_logic_resolver_comando_viewport(
+        data_localizacao=data_localizacao,
+        gps_ts=gps_ts,
+        tab_filtro=tab_filtro,
+        linhas_sel=linhas_sel,
+        linhas_sel_debounce=linhas_sel_debounce,
+        veiculos_sel=veiculos_sel,
+        veiculos_recenter_token=veiculos_recenter_token,
+        gerar_svg_usuario=_gerar_svg_usuario,
+        calcular_viewport_linhas_fn=_calcular_viewport_linhas,
+        calcular_viewport_veiculos_fn=_calcular_viewport_veiculos,
+        get_gps_snapshot=_get_gps_snapshot,
+        map_supports_viewport=MAP_SUPPORTS_VIEWPORT,
+    )
 
 
 def _normalize_map_center(center_value):
-    """Normaliza center para formato aceito pelo componente de mapa no fallback."""
-    if center_value is dash.no_update or center_value is None:
-        return center_value
-    if isinstance(center_value, dict):
-        lat = center_value.get("lat")
-        lng = center_value.get("lng")
-        if lat is None or lng is None:
-            return center_value
-        try:
-            return [float(lat), float(lng)]
-        except Exception:
-            return center_value
-    if isinstance(center_value, (list, tuple)) and len(center_value) >= 2:
-        try:
-            return [float(center_value[0]), float(center_value[1])]
-        except Exception:
-            return center_value
-    return center_value
+    return viewport_logic_normalize_map_center(center_value)
 
 
-if MAP_SUPPORTS_VIEWPORT:
-    @app.callback(
-        Output("mapa", "viewport"),
-        Output("layer-localizacao", "children"),
-        Output("store-force-map-view", "data"),
-        Input("store-localizacao", "data"),
-        Input("store-gps-ts", "data"),
-        Input("store-tab-filtro", "data"),
-        Input("dropdown-linhas", "value"),
-        Input("store-linhas-debounce", "data"),
-        Input("store-veiculos-debounce", "data"),
-        Input("store-veiculos-recenter-token", "data"),
-        prevent_initial_call=True,
-    )
-    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
-        """Controla viewport usando prop nativa 'viewport' quando disponível."""
-        command, marker_layer = _resolver_comando_viewport(
-            data_localizacao,
-            gps_ts,
-            tab_filtro,
-            linhas_sel,
-            linhas_sel_debounce,
-            veiculos_sel,
-            veiculos_recenter_token,
-        )
-        if command is dash.no_update:
-            return dash.no_update, marker_layer, dash.no_update
-        force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
-        if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
-            return dash.no_update, marker_layer, force_cmd
-        return command, marker_layer, force_cmd
-else:
-    @app.callback(
-        Output("mapa", "center"),
-        Output("mapa", "zoom"),
-        Output("mapa", "bounds"),
-        Output("layer-localizacao", "children"),
-        Output("store-force-map-view", "data"),
-        Input("store-localizacao", "data"),
-        Input("store-gps-ts", "data"),
-        Input("store-tab-filtro", "data"),
-        Input("dropdown-linhas", "value"),
-        Input("store-linhas-debounce", "data"),
-        Input("store-veiculos-debounce", "data"),
-        Input("store-veiculos-recenter-token", "data"),
-        prevent_initial_call=True,
-    )
-    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
-        """Fallback compatível: converte comando de viewport para center/zoom/bounds."""
-        command, marker_layer = _resolver_comando_viewport(
-            data_localizacao,
-            gps_ts,
-            tab_filtro,
-            linhas_sel,
-            linhas_sel_debounce,
-            veiculos_sel,
-            veiculos_recenter_token,
-        )
-
-        if command is dash.no_update:
-            return dash.no_update, dash.no_update, dash.no_update, marker_layer, dash.no_update
-
-        force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
-
-        if isinstance(command, dict):
-            if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
-                return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
-
-            center = command.get("center", dash.no_update)
-            zoom = command.get("zoom", dash.no_update)
-            center = _normalize_map_center(center)
-            bounds = command.get("bounds", dash.no_update)
-            if command.get("clear_bounds") is True:
-                bounds = None
-
-            # Prioriza center/zoom quando disponivel (mais robusto no fallback).
-            if center is not dash.no_update or zoom is not dash.no_update:
-                if tab_filtro == "veiculos":
-                    return center, zoom, dash.no_update, marker_layer, force_cmd
-                return center, zoom, bounds, marker_layer, force_cmd
-
-            if "bounds" in command:
-                return dash.no_update, dash.no_update, command["bounds"], marker_layer, force_cmd
-
-            return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
-
-        return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
-
-
-# ==============================================================================
-# Callback: Atualizar UI do botão e timestamp de atualização
-# ==============================================================================
-
-@app.callback(
-    Output("span-update-time", "children"),
-    Input("store-gps-ts", "data"),
+register_viewport_callbacks(
+    app=app,
+    map_supports_viewport=MAP_SUPPORTS_VIEWPORT,
+    resolver_comando_viewport=_resolver_comando_viewport,
+    normalize_map_center=_normalize_map_center,
 )
-def atualizar_ui_atualizacao(_gps_ts):
-    """Mostra timestamp da última atualização bem-sucedida."""
-    with _status_lock:
-        last_ts = _last_update_ts
-
-    tempo_texto = ""
-    if last_ts:
-        try:
-            dt = last_ts if isinstance(last_ts, datetime) else datetime.fromisoformat(str(last_ts))
-            tempo_texto = dt.strftime("%H:%M:%S")
-        except Exception:
-            tempo_texto = ""
-
-    return tempo_texto
 
 
 # ==============================================================================
