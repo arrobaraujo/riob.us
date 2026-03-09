@@ -1515,6 +1515,13 @@ app.index_string = """
                     line-height: 18px !important;
                 }
             }
+
+            /* Oculta o loading padrão do Dash (canto superior esquerdo).
+               Mantemos apenas o loader customizado (#boot-loader). */
+            ._dash-loading,
+            ._dash-loading-callback {
+                display: none !important;
+            }
         </style>
     </head>
     <body>
@@ -1560,6 +1567,28 @@ app.index_string = """
                 window.addEventListener('load', function () {
                     setTimeout(hideLoader, 600);
                 });
+
+                // Captura instancia real do Leaflet para comandos de foco clientside.
+                function patchLeafletMapCapture() {
+                    if (!window.L || !window.L.Map || window.__gps_map_capture_patched) return;
+                    var originalInit = window.L.Map.prototype.initialize;
+                    window.L.Map.prototype.initialize = function () {
+                        var out = originalInit.apply(this, arguments);
+                        window.__gps_leaflet_map = this;
+                        return out;
+                    };
+                    window.__gps_map_capture_patched = true;
+                }
+
+                patchLeafletMapCapture();
+                var patchTry = 0;
+                var patchTimer = setInterval(function () {
+                    patchTry += 1;
+                    patchLeafletMapCapture();
+                    if (window.__gps_map_capture_patched || patchTry > 120) {
+                        clearInterval(patchTimer);
+                    }
+                }, 100);
             })();
         </script>
         <footer>
@@ -1606,15 +1635,19 @@ app.layout = html.Div(
     [
         dcc.Interval(id="intervalo",        interval=45_000, n_intervals=0),
         dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
+        dcc.Interval(id="intervalo-veiculos-recenter", interval=300, n_intervals=0, disabled=True),
 
         # Compatibilidade com clientes antigos que ainda chamam callback legado.
         dcc.Store(id="store-hist-sppo", data={}),
         dcc.Store(id="store-hist-brt", data={}),
         dcc.Store(id="store-build-id", data=APP_BUILD_ID),
         dcc.Store(id="store-build-sync", data=None),
+        dcc.Store(id="store-force-map-view", data=None),
+        dcc.Store(id="store-force-map-view-ack", data=None),
         dcc.Store(id="store-tab-filtro", data="linhas"),
         dcc.Store(id="store-linhas-debounce", data=[]),
         dcc.Store(id="store-veiculos-debounce", data=[]),
+        dcc.Store(id="store-veiculos-recenter-token", data=0),
         dcc.Store(id="store-veiculos-opcoes", data=[]),
         dcc.Store(id="store-gps-ts",    data=0),
         dcc.Store(id="store-localizacao", data=None),
@@ -1684,7 +1717,7 @@ app.layout = html.Div(
                                                 style=ESTILOS["dropdown_wrapper"],
                                             ),
                                         ],
-                                        style={"paddingTop": "4px"},
+                                        style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
                                     ),
                                 ),
                                 dcc.Tab(
@@ -1727,7 +1760,7 @@ app.layout = html.Div(
                                                 style=ESTILOS["dropdown_wrapper"],
                                             ),
                                         ],
-                                        style={"paddingTop": "4px"},
+                                        style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
                                     ),
                                 ),
                             ],
@@ -1763,8 +1796,16 @@ app.layout = html.Div(
                             children="",
                         ),
                     ],
-                    style={"display": "flex", "alignItems": "center", "justifyContent": "center",
-                           "flexWrap": "wrap", "gap": "6px"},
+                    style={
+                        "display": "flex",
+                        "alignItems": "center",
+                        "justifyContent": "center",
+                        "flexWrap": "wrap",
+                        "gap": "6px",
+                        "width": "min(460px, 94vw)",
+                        "margin": "0 auto",
+                        "textAlign": "center",
+                    },
                 ),
             ],
             style=ESTILOS["controles"],
@@ -1884,6 +1925,44 @@ app.clientside_callback(
 )
 
 
+app.clientside_callback(
+    """
+    function(cmd) {
+        if (!cmd) {
+            return window.dash_clientside.no_update;
+        }
+        try {
+            var map = window.__gps_leaflet_map || null;
+            if (!map) {
+                return {ok: false, reason: 'leaflet_map_not_captured', ts: Date.now(), token: cmd.token || null};
+            }
+
+            if (Array.isArray(cmd.center) && cmd.center.length >= 2) {
+                var z = (typeof cmd.zoom === 'number') ? cmd.zoom : map.getZoom();
+                map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
+                // Reaplica em seguida para neutralizar sobrescritas de estado no mesmo ciclo.
+                setTimeout(function () {
+                    try {
+                        map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
+                    } catch (e2) {
+                        // sem-op
+                    }
+                }, 140);
+            }
+
+            map.invalidateSize(false);
+            return {ok: true, ts: Date.now(), token: cmd.token || null};
+        } catch (e) {
+            return {ok: false, reason: String(e), ts: Date.now(), token: cmd.token || null};
+        }
+    }
+    """,
+    Output("store-force-map-view-ack", "data"),
+    Input("store-force-map-view", "data"),
+    prevent_initial_call=True,
+)
+
+
 
 
 @app.callback(
@@ -1928,6 +2007,27 @@ def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
 def sincronizar_veiculos(veiculos_sel):
     """Sincroniza seleção de veículos sem debounce para resposta imediata."""
     return [str(v) for v in (veiculos_sel or []) if str(v).strip()]
+
+
+@app.callback(
+    Output("intervalo-veiculos-recenter", "disabled"),
+    Output("store-veiculos-recenter-token", "data"),
+    Input("store-veiculos-debounce", "data"),
+    Input("store-tab-filtro", "data"),
+    Input("intervalo-veiculos-recenter", "n_intervals"),
+    prevent_initial_call=True,
+)
+def agendar_recenter_veiculos(veiculos_sel, tab_filtro, _tick):
+    """Agenda um segundo comando de recenter curto para evitar corrida no primeiro ciclo."""
+    trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
+    if trigger in ("store-veiculos-debounce", "store-tab-filtro"):
+        if tab_filtro == "veiculos" and len(veiculos_sel or []) > 0:
+            return False, dash.no_update
+        return True, dash.no_update
+    if trigger == "intervalo-veiculos-recenter":
+        # Emite token para forçar segundo ciclo separado de viewport.
+        return True, int(time.time() * 1000)
+    return dash.no_update, dash.no_update
 
 
 @app.callback(
@@ -2589,52 +2689,111 @@ def _calcular_viewport_linhas(linhas_sel):
     is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
     # Linha unica costuma ficar melhor com um passo extra de aproximação.
     min_zoom = 13 if is_mobile else (14 if len(linhas_sel) == 1 else 13)
-    zoom = int(max(min_zoom, min(15, math.floor(min(zoom_lat, zoom_lon)))))
+    zoom_base = math.floor(min(zoom_lat, zoom_lon))
+    zoom = int(max(min_zoom, min(17, zoom_base + 2)))
 
     return center, zoom, bounds
 
 
 def _calcular_viewport_veiculos(veiculos_sel):
-    """Calcula viewport para veículos selecionados usando snapshot em memória."""
+    """Calcula viewport para veículos selecionados usando heurística similar à aba de linhas."""
     if not veiculos_sel:
-        return None, None
+        return None, None, None
 
     with _gps_lock:
         gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
 
     if gps_snapshot.empty:
-        return None, None
+        return None, None, None
 
     filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_sel))]
     if filtrado.empty:
-        return None, None
+        return None, None, None
+
+    # Mantém somente coordenadas válidas para evitar viewport ruim por outliers.
+    filtrado = filtrado.copy()
+    filtrado["lat"] = pd.to_numeric(filtrado["lat"], errors="coerce")
+    filtrado["lng"] = pd.to_numeric(filtrado["lng"], errors="coerce")
+    filtrado = filtrado.dropna(subset=["lat", "lng"])
+    filtrado = filtrado[
+        filtrado["lat"].between(-90, 90)
+        & filtrado["lng"].between(-180, 180)
+    ]
+    if filtrado.empty:
+        return None, None, None
+
+    # Filtro geográfico amplo do município/região metropolitana para descartar pontos espúrios.
+    RIO_LAT_MIN, RIO_LAT_MAX = -23.6, -22.4
+    RIO_LON_MIN, RIO_LON_MAX = -44.3, -42.8
+    filtrado = filtrado[
+        filtrado["lat"].between(RIO_LAT_MIN, RIO_LAT_MAX)
+        & filtrado["lng"].between(RIO_LON_MIN, RIO_LON_MAX)
+    ]
+    if filtrado.empty:
+        return None, None, None
+
+    if rio_polygon is not None:
+        try:
+            dentro_municipio = filtrado.apply(
+                lambda row: rio_polygon.covers(Point(float(row["lng"]), float(row["lat"]))),
+                axis=1,
+            )
+            filtrado = filtrado[dentro_municipio]
+        except Exception:
+            pass
+
+    if filtrado.empty:
+        return None, None, None
 
     if len(filtrado) == 1:
         row = filtrado.iloc[0]
-        center = [round(float(row["lat"]), 6), round(float(row["lng"]), 6)]
-        return center, 15
+        min_lat = max_lat = float(row["lat"])
+        min_lon = max_lon = float(row["lng"])
+    elif len(filtrado) >= 30:
+        # Corta extremos apenas em seleção maior para reduzir efeito de outliers.
+        min_lat = float(filtrado["lat"].quantile(0.02))
+        max_lat = float(filtrado["lat"].quantile(0.98))
+        min_lon = float(filtrado["lng"].quantile(0.02))
+        max_lon = float(filtrado["lng"].quantile(0.98))
+    else:
+        min_lat = float(filtrado["lat"].min())
+        max_lat = float(filtrado["lat"].max())
+        min_lon = float(filtrado["lng"].min())
+        max_lon = float(filtrado["lng"].max())
 
-    min_lat = float(filtrado["lat"].min())
-    max_lat = float(filtrado["lat"].max())
-    min_lon = float(filtrado["lng"].min())
-    max_lon = float(filtrado["lng"].max())
+    lat_span_raw = abs(max_lat - min_lat)
+    lon_span_raw = abs(max_lon - min_lon)
 
-    lat_pad = max(0.0012, abs(max_lat - min_lat) * 0.16)
-    lon_pad = max(0.0012, abs(max_lon - min_lon) * 0.16)
+    # Margem moderada para caber seleção sem "abrir" o mapa em excesso.
+    lat_pad = max(0.0012, lat_span_raw * 0.08)
+    lon_pad = max(0.0012, lon_span_raw * 0.08)
+    min_lat -= lat_pad
+    max_lat += lat_pad
+    min_lon -= lon_pad
+    max_lon += lon_pad
+
+    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
+
     center = [
         round((min_lat + max_lat) / 2.0, 6),
         round((min_lon + max_lon) / 2.0, 6),
     ]
 
-    lat_span = max(0.0001, abs((max_lat + lat_pad) - (min_lat - lat_pad)))
-    lon_span = max(0.0001, abs((max_lon + lon_pad) - (min_lon - lon_pad)))
+    lat_span = max(0.0001, abs(max_lat - min_lat))
+    lon_span = max(0.0001, abs(max_lon - min_lon))
     zoom_lat = math.log2(170.0 / lat_span)
     zoom_lon = math.log2(360.0 / lon_span)
-    zoom = int(max(12, min(16, math.floor(min(zoom_lat, zoom_lon)))))
-    return center, zoom
+
+    user_agent = (request.headers.get("User-Agent", "") or "").lower()
+    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
+    min_zoom = 14 if is_mobile else (15 if len(filtrado) == 1 else 13)
+    max_zoom = 16
+    zoom = int(max(min_zoom, min(max_zoom, math.floor(min(zoom_lat, zoom_lon)))))
+
+    return center, zoom, bounds
 
 
-def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
     """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
     triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
     trigger = triggered_props[0].split(".")[0] if triggered_props else None
@@ -2643,6 +2802,7 @@ def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel,
     has_dropdown_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
     has_debounce_trigger = any(prop.startswith("store-linhas-debounce.") for prop in triggered_props)
     has_veiculos_store_trigger = any(prop.startswith("store-veiculos-debounce.") for prop in triggered_props)
+    has_veiculos_recenter_trigger = any(prop.startswith("store-veiculos-recenter-token.") for prop in triggered_props)
     has_tab_trigger = any(prop.startswith("tabs-filtro.") or prop.startswith("store-tab-filtro.") for prop in triggered_props)
     has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
     has_vehicles_selection_trigger = has_veiculos_store_trigger
@@ -2708,49 +2868,135 @@ def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel,
         modo == "veiculos"
         and (
             has_vehicles_selection_trigger
+            or has_veiculos_recenter_trigger
             or has_tab_trigger
             or (has_gps_trigger and bool(veiculos_ativos))
         )
     ):
-        center, zoom = _calcular_viewport_veiculos(veiculos_ativos)
-        if center is None or zoom is None:
+        # Primeiro tenta reaproveitar a mesma lógica da aba de linhas com as linhas
+        # presentes na seleção de veículos (mais estável no runtime atual).
+        linhas_veiculos = []
+        try:
+            with _gps_lock:
+                gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+            if not gps_snapshot.empty and veiculos_ativos:
+                filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_ativos))]
+                if not filtrado.empty and "linha" in filtrado.columns:
+                    linhas_veiculos = sorted(set(str(v) for v in filtrado["linha"].dropna().astype(str).tolist() if str(v).strip()))
+        except Exception:
+            linhas_veiculos = []
+
+        center = zoom = bounds = None
+        if linhas_veiculos:
+            center, zoom, bounds = _calcular_viewport_linhas(linhas_veiculos)
+
+        # Fallback para cálculo por ponto(s) de veículo.
+        if center is None or zoom is None or bounds is None:
+            center, zoom, bounds = _calcular_viewport_veiculos(veiculos_ativos)
+
+        # Em seleção de 1 veículo, prioriza foco no ponto atual com zoom mais fechado.
+        if len(veiculos_ativos) == 1:
+            try:
+                with _gps_lock:
+                    gps_snapshot = _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+                if not gps_snapshot.empty:
+                    row = gps_snapshot[gps_snapshot["ordem"].astype(str) == str(veiculos_ativos[0])]
+                    if not row.empty:
+                        lat = float(row.iloc[0]["lat"])
+                        lng = float(row.iloc[0]["lng"])
+                        center = [round(lat, 6), round(lng, 6)]
+                        # Zoom mais próximo para inspeção do veículo.
+                        zoom = max(int(zoom or 17), 17)
+                        bounds = [[round(lat - 0.0008, 6), round(lng - 0.0008, 6)], [round(lat + 0.0008, 6), round(lng + 0.0008, 6)]]
+            except Exception:
+                pass
+
+        if center is None or zoom is None or bounds is None:
             return dash.no_update, dash.no_update
-        command = {"center": center, "zoom": zoom}
+
+        command = {
+            "center": dash.no_update,
+            "zoom": dash.no_update,
+            "force_view": {
+                "center": center,
+                "zoom": zoom,
+                "token": int(time.time() * 1000),
+            },
+        }
         return command, dash.no_update
 
     return dash.no_update, dash.no_update
+
+
+def _normalize_map_center(center_value):
+    """Normaliza center para formato aceito pelo componente de mapa no fallback."""
+    if center_value is dash.no_update or center_value is None:
+        return center_value
+    if isinstance(center_value, dict):
+        lat = center_value.get("lat")
+        lng = center_value.get("lng")
+        if lat is None or lng is None:
+            return center_value
+        try:
+            return [float(lat), float(lng)]
+        except Exception:
+            return center_value
+    if isinstance(center_value, (list, tuple)) and len(center_value) >= 2:
+        try:
+            return [float(center_value[0]), float(center_value[1])]
+        except Exception:
+            return center_value
+    return center_value
 
 
 if MAP_SUPPORTS_VIEWPORT:
     @app.callback(
         Output("mapa", "viewport"),
         Output("layer-localizacao", "children"),
+        Output("store-force-map-view", "data"),
         Input("store-localizacao", "data"),
         Input("store-gps-ts", "data"),
         Input("store-tab-filtro", "data"),
         Input("dropdown-linhas", "value"),
         Input("store-linhas-debounce", "data"),
         Input("store-veiculos-debounce", "data"),
+        Input("store-veiculos-recenter-token", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
         """Controla viewport usando prop nativa 'viewport' quando disponível."""
-        return _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel)
+        command, marker_layer = _resolver_comando_viewport(
+            data_localizacao,
+            gps_ts,
+            tab_filtro,
+            linhas_sel,
+            linhas_sel_debounce,
+            veiculos_sel,
+            veiculos_recenter_token,
+        )
+        if command is dash.no_update:
+            return dash.no_update, marker_layer, dash.no_update
+        force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
+        if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
+            return dash.no_update, marker_layer, force_cmd
+        return command, marker_layer, force_cmd
 else:
     @app.callback(
         Output("mapa", "center"),
         Output("mapa", "zoom"),
         Output("mapa", "bounds"),
         Output("layer-localizacao", "children"),
+        Output("store-force-map-view", "data"),
         Input("store-localizacao", "data"),
         Input("store-gps-ts", "data"),
         Input("store-tab-filtro", "data"),
         Input("dropdown-linhas", "value"),
         Input("store-linhas-debounce", "data"),
         Input("store-veiculos-debounce", "data"),
+        Input("store-veiculos-recenter-token", "data"),
         prevent_initial_call=True,
     )
-    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel):
+    def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
         """Fallback compatível: converte comando de viewport para center/zoom/bounds."""
         command, marker_layer = _resolver_comando_viewport(
             data_localizacao,
@@ -2759,25 +3005,37 @@ else:
             linhas_sel,
             linhas_sel_debounce,
             veiculos_sel,
+            veiculos_recenter_token,
         )
 
         if command is dash.no_update:
-            return dash.no_update, dash.no_update, dash.no_update, marker_layer
+            return dash.no_update, dash.no_update, dash.no_update, marker_layer, dash.no_update
+
+        force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
 
         if isinstance(command, dict):
+            if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
+                return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
+
             center = command.get("center", dash.no_update)
             zoom = command.get("zoom", dash.no_update)
+            center = _normalize_map_center(center)
+            bounds = command.get("bounds", dash.no_update)
+            if command.get("clear_bounds") is True:
+                bounds = None
 
             # Prioriza center/zoom quando disponivel (mais robusto no fallback).
             if center is not dash.no_update or zoom is not dash.no_update:
-                return center, zoom, dash.no_update, marker_layer
+                if tab_filtro == "veiculos":
+                    return center, zoom, dash.no_update, marker_layer, force_cmd
+                return center, zoom, bounds, marker_layer, force_cmd
 
             if "bounds" in command:
-                return dash.no_update, dash.no_update, command["bounds"], marker_layer
+                return dash.no_update, dash.no_update, command["bounds"], marker_layer, force_cmd
 
-            return dash.no_update, dash.no_update, dash.no_update, marker_layer
+            return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
 
-        return dash.no_update, dash.no_update, dash.no_update, marker_layer
+        return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
 
 
 # ==============================================================================
