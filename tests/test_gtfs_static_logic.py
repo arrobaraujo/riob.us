@@ -75,6 +75,31 @@ def _write_gtfs_zip(base_dir, include_routes=True, include_trips=True):
             zf.writestr(name, content)
 
 
+def _write_gtfs_zip_with_zero_padded_route(base_dir):
+    gtfs_dir = os.path.join(base_dir, "gtfs")
+    os.makedirs(gtfs_dir, exist_ok=True)
+    gtfs_zip_path = os.path.join(gtfs_dir, "gtfs.zip")
+
+    files = {
+        "routes.txt": "route_id,route_short_name\nR1,0415\n",
+        "trips.txt": "trip_id,route_id,shape_id\nT1,R1,S1\n",
+        "shapes.txt": (
+            "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+            "S1,-22.90,-43.20,1\n"
+            "S1,-22.91,-43.21,2\n"
+        ),
+        "stops.txt": (
+            "stop_id,stop_name,stop_lat,stop_lon\n"
+            "P1,Parada 1,-22.90,-43.20\n"
+        ),
+        "stop_times.txt": "trip_id,stop_id\nT1,P1\n",
+    }
+
+    with zipfile.ZipFile(gtfs_zip_path, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+
+
 def _write_gtfs_zip_stops_without_optional_columns(base_dir):
     gtfs_dir = os.path.join(base_dir, "gtfs")
     os.makedirs(gtfs_dir, exist_ok=True)
@@ -183,6 +208,21 @@ class GtfsStaticLogicTests(unittest.TestCase):
                 os.chdir(old_cwd)
 
         self.assertIsNone(out)
+
+    def test_recarregar_gtfs_sob_demanda_matches_zero_padded_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_gtfs_zip_with_zero_padded_route(tmp)
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                out = recarregar_gtfs_estatico_sob_demanda_service(["415"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertIsNotNone(out)
+        self.assertIn("0415", out["line_to_shape_ids"])
+        self.assertIn("0415", out["line_to_shape_coords"])
+        self.assertIn("0415", out["line_to_stop_ids"])
 
     def test_carregar_dados_estaticos_service_stops_without_optional_columns(
         self

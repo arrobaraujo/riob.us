@@ -132,6 +132,33 @@ class AppGtfsWrappersTests(unittest.TestCase):
 
         mocked_service.assert_not_called()
 
+    def test_recarregar_gtfs_wrapper_retries_when_only_stops_exist(self):
+        self.app.line_to_shape_coords = {}
+        self.app.line_to_stops_points = {
+            "415": [{"lat": -22.9, "lon": -43.2}]
+        }
+
+        with patch.object(
+            self.app,
+            "recarregar_gtfs_estatico_sob_demanda_service",
+            return_value={
+                "gtfs": {},
+                "line_to_shape_ids": {
+                    "415": ["S1"]
+                },
+                "line_to_stop_ids": {},
+                "line_to_shape_coords": {
+                    "415": [[[-22.9, -43.2], [-22.91, -43.21]]]
+                },
+                "line_to_stops_points": {},
+                "line_to_bounds": {},
+            },
+        ) as mocked_service:
+            self.app._recarregar_gtfs_estatico_sob_demanda(["415"])
+
+        mocked_service.assert_called_once()
+        self.assertIn("415", self.app.line_to_shape_coords)
+
     def test_atualizar_gps_preserva_cache_quando_fetch_vem_vazio(self):
         cache_anterior = pd.DataFrame(
             [{

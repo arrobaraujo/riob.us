@@ -13,6 +13,46 @@ GTFS_STATIC_CACHE_PATH = "gtfs/gtfs_static_cache.pkl"
 GTFS_STATIC_CACHE_VERSION = 1
 
 
+def _normalize_line_key(value):
+    """Normaliza identificador de linha para matching resiliente.
+
+    Ex.: "0415" e "415" passam a casar.
+    """
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return str(int(text))
+    return text.upper()
+
+
+def _resolve_requested_route_short_names(requested_lines, all_route_names):
+    """Resolve linhas solicitadas para route_short_name existentes no GTFS."""
+    requested = [str(v).strip() for v in (requested_lines or []) if str(v).strip()]
+    if not requested:
+        return set()
+
+    all_names = [str(v).strip() for v in all_route_names if str(v).strip()]
+    all_name_set = set(all_names)
+
+    direct_hits = {ln for ln in requested if ln in all_name_set}
+    unresolved = [ln for ln in requested if ln not in direct_hits]
+    if not unresolved:
+        return direct_hits
+
+    gtfs_by_norm = {}
+    for route_name in all_names:
+        gtfs_by_norm.setdefault(_normalize_line_key(route_name), set()).add(route_name)
+
+    resolved = set(direct_hits)
+    for ln in unresolved:
+        normalized = _normalize_line_key(ln)
+        resolved.update(gtfs_by_norm.get(normalized, set()))
+    return resolved
+
+
 def _file_signature(path):
     try:
         stat = os.stat(path)
@@ -552,11 +592,20 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
         line_to_stops_points = {}
         line_to_bounds = {}
 
-        if "shape_id" in trips.columns:
-            # Filtro essencial: processa apenas as linhas solicitadas
-            trips_filtradas = trips[
-                trips["route_short_name"].isin(linhas_sel)
-            ]
+        trips_filtradas = trips
+        if "route_short_name" in trips.columns:
+            target_route_names = _resolve_requested_route_short_names(
+                linhas_sel,
+                trips["route_short_name"].dropna().astype(str).tolist(),
+            )
+            if target_route_names:
+                trips_filtradas = trips[
+                    trips["route_short_name"].isin(target_route_names)
+                ]
+            else:
+                trips_filtradas = trips.iloc[0:0]
+
+        if "shape_id" in trips_filtradas.columns:
             line_to_shape_ids = (
                 trips_filtradas.dropna(subset=["shape_id"])
                 .groupby("route_short_name")["shape_id"]
@@ -645,7 +694,7 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
             st = gtfs["stop_times"].dropna(
                 subset=["trip_id", "stop_id"]
             ).merge(
-                trips[["trip_id", "route_short_name"]],
+                trips_filtradas[["trip_id", "route_short_name"]],
                 on="trip_id", how="inner"
             )
             line_to_stop_ids = (

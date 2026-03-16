@@ -502,7 +502,6 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
             ln for ln in linhas_sel
             if (
                 ln not in line_to_shape_coords
-                and ln not in line_to_stops_points
                 and ln not in _linhas_sem_shapes
             )
         ]
@@ -524,6 +523,11 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
             f"ERRO gtfs_reload ({type(exc).__name__}): "
             f"{exc} ms={ms:.1f}"
         )
+        perf_log(
+            f"OBS gtfs_on_demand status=erro "
+            f"lines_req={len(linhas_sel)} lines_missing={len(missing)} "
+            f"ms={ms:.1f} err={type(exc).__name__}"
+        )
         return
     if not loaded:
         ms = (time.perf_counter() - t0) * 1000
@@ -531,7 +535,20 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
             f"GTFS on-demand: retorno vazio "
             f"ms={ms:.1f} lines={linhas_sel[:5]}"
         )
+        perf_log(
+            f"OBS gtfs_on_demand status=vazio "
+            f"lines_req={len(linhas_sel)} lines_missing={len(missing)} "
+            f"ms={ms:.1f}"
+        )
         return
+
+    loaded_shape_coords = loaded.get("line_to_shape_coords", {}) or {}
+    loaded_stops_points = loaded.get("line_to_stops_points", {}) or {}
+    loaded_shape_lines = sorted(str(k) for k in loaded_shape_coords.keys())
+    loaded_stop_lines = sorted(str(k) for k in loaded_stops_points.keys())
+    loaded_segments = sum(
+        len(v) for v in loaded_shape_coords.values() if isinstance(v, list)
+    )
 
     with _gtfs_data_lock:
         # Mescla DataFrames no dicionário gtfs
@@ -558,16 +575,34 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
 
         # Atualiza cache de linhas sem shapes
         for ln in missing:
-            if (
-                ln not in line_to_shape_coords
-                and ln not in line_to_stops_points
-            ):
+            if ln not in line_to_shape_coords:
                 _linhas_sem_shapes[ln] = time.time()
+
+        missing_with_shape = [ln for ln in missing if ln in line_to_shape_coords]
+        missing_with_stops_only = [
+            ln for ln in missing
+            if ln in line_to_stops_points and ln not in line_to_shape_coords
+        ]
+        still_missing_shape = [ln for ln in missing if ln not in line_to_shape_coords]
 
     with _map_static_cache_lock:
         _map_static_cache.clear()
 
     _gtfs_load_event.set()
+    ms = (time.perf_counter() - t0) * 1000
+    perf_log(
+        f"OBS gtfs_on_demand status=ok "
+        f"lines_req={len(linhas_sel)} lines_missing={len(missing)} "
+        f"loaded_shape_lines={len(loaded_shape_lines)} "
+        f"loaded_stop_lines={len(loaded_stop_lines)} "
+        f"loaded_segments={loaded_segments} "
+        f"resolved_with_shape={len(missing_with_shape)} "
+        f"resolved_with_stops_only={len(missing_with_stops_only)} "
+        f"still_missing_shape={len(still_missing_shape)} "
+        f"lines_loaded_sample={loaded_shape_lines[:5]} "
+        f"lines_still_missing_sample={still_missing_shape[:5]} "
+        f"ms={ms:.1f}"
+    )
 
 
 # Shapes/stops em background — não bloqueia o servidor nem o dropdown
