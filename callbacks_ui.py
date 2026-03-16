@@ -7,7 +7,8 @@ from dash import Input, Output, State
 
 def register_ui_callbacks(app, get_last_update_ts):
     def _bounds_to_box(bounds):
-        if not bounds or not isinstance(bounds, (list, tuple)) or len(bounds) < 2:
+        if not bounds or not isinstance(bounds, (list, tuple)) or \
+                len(bounds) < 2:
             return None
         try:
             sw = bounds[0]
@@ -33,7 +34,12 @@ def register_ui_callbacks(app, get_last_update_ts):
         """Mantém estado da aba ativa e texto de ajuda do filtro."""
         tab = tab_value or "linhas"
         if tab == "veiculos":
-            return tab, "Pesquise pelo número do veículo ou linha.", [], dash.no_update
+            return (
+                tab,
+                "Pesquise pelo número do veículo ou linha.",
+                [],
+                dash.no_update
+            )
         return "linhas", "Pesquise pelo número da linha.", dash.no_update, []
 
     @app.callback(
@@ -45,12 +51,14 @@ def register_ui_callbacks(app, get_last_update_ts):
     )
     def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
         """Sincroniza seleção de linhas com debounce de 500ms."""
-        trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
+        ctx = dash.callback_context
+        trigger = ctx.triggered[0]["prop_id"].split(".")[0] \
+            if ctx.triggered else None
         if trigger == "dropdown-linhas":
             return dash.no_update, False
         if trigger == "intervalo-linhas-debounce":
             return linhas_sel or [], True
-        # Chamada inicial: popula o store com a seleção atual (normalmente vazia)
+        # Chamada inicial: popula o store com a seleção atual
         return linhas_sel or [], True
 
     @app.callback(
@@ -58,7 +66,9 @@ def register_ui_callbacks(app, get_last_update_ts):
         Input("dropdown-veiculos", "value"),
     )
     def sincronizar_veiculos(veiculos_sel):
-        """Sincroniza seleção de veículos sem debounce para resposta imediata."""
+        """
+        Sincroniza seleção de veículos sem debounce para resposta imediata.
+        """
         return [str(v) for v in (veiculos_sel or []) if str(v).strip()]
 
     @app.callback(
@@ -70,8 +80,13 @@ def register_ui_callbacks(app, get_last_update_ts):
         prevent_initial_call=True,
     )
     def agendar_recenter_veiculos(veiculos_sel, tab_filtro, _tick):
-        """Agenda um segundo comando de recenter curto para evitar corrida no primeiro ciclo."""
-        trigger = dash.callback_context.triggered[0]["prop_id"].split(".")[0] if dash.callback_context.triggered else None
+        """
+        Agenda um segundo comando de recenter curto para evitar
+        corrida no primeiro ciclo.
+        """
+        ctx = dash.callback_context
+        trigger = ctx.triggered[0]["prop_id"].split(".")[0] \
+            if ctx.triggered else None
         if trigger in ("store-veiculos-debounce", "store-tab-filtro"):
             if tab_filtro == "veiculos" and len(veiculos_sel or []) > 0:
                 return False, dash.no_update
@@ -87,13 +102,22 @@ def register_ui_callbacks(app, get_last_update_ts):
         State("dropdown-veiculos", "value"),
     )
     def atualizar_opcoes_veiculos(opcoes, search_value, veiculos_sel):
-        """Busca server-side: por padrão os 150 mais recentes; com texto filtra todos."""
+        """
+        Busca server-side: por padrão os 150 mais recentes;
+        com texto filtra todos.
+        """
         options = opcoes or []
-        selected_set = set(str(v) for v in (veiculos_sel or []) if str(v).strip())
+        selected_set = set(
+            str(v) for v in (veiculos_sel or []) if str(v).strip()
+        )
 
         # Veículos selecionados têm prioridade — sempre aparecem no topo
-        selected_opts = [o for o in options if str(o.get("value", "")) in selected_set]
-        unselected_opts = [o for o in options if str(o.get("value", "")) not in selected_set]
+        selected_opts = [
+            o for o in options if str(o.get("value", "")) in selected_set
+        ]
+        unselected_opts = [
+            o for o in options if str(o.get("value", "")) not in selected_set
+        ]
 
         search = (search_value or "").strip().lower()
         if len(search) >= 2:
@@ -101,7 +125,10 @@ def register_ui_callbacks(app, get_last_update_ts):
             # Filtra garantindo que todos os termos digitados apareçam no label
             matched = [
                 o for o in unselected_opts
-                if all(term in str(o.get("label", "")).lower() for term in search_terms)
+                if all(
+                    term in str(o.get("label", "")).lower()
+                    for term in search_terms
+                )
             ]
             return selected_opts + matched[:200]
 
@@ -118,7 +145,10 @@ def register_ui_callbacks(app, get_last_update_ts):
         tempo_texto = ""
         if last_ts:
             try:
-                dt = last_ts if isinstance(last_ts, datetime) else datetime.fromisoformat(str(last_ts))
+                if isinstance(last_ts, datetime):
+                    dt = last_ts
+                else:
+                    dt = datetime.fromisoformat(str(last_ts))
                 tempo_texto = dt.strftime("%H:%M:%S")
             except Exception:
                 tempo_texto = ""

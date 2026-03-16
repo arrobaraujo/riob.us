@@ -4,7 +4,9 @@ import unittest
 
 import pandas as pd
 
-from map_layers_logic import construir_camadas_estaticas, construir_camadas_veiculos
+from map_layers_logic import (
+    construir_camadas_estaticas, construir_camadas_veiculos
+)
 
 
 class MapLayersLogicTests(unittest.TestCase):
@@ -45,7 +47,10 @@ class MapLayersLogicTests(unittest.TestCase):
             map_static_cache=cache,
             map_static_cache_max_items=16,
             linha_publica_fn=lambda x: x,
-            stop_sign_icon={"iconUrl": "x", "iconSize": [1, 1], "iconAnchor": [0, 0], "popupAnchor": [0, 0]},
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
             limit_list_for_render_fn=lambda values, _limit: values,
             max_stops_per_render=100,
         )
@@ -63,7 +68,10 @@ class MapLayersLogicTests(unittest.TestCase):
             map_static_cache=cache,
             map_static_cache_max_items=16,
             linha_publica_fn=lambda x: x,
-            stop_sign_icon={"iconUrl": "x", "iconSize": [1, 1], "iconAnchor": [0, 0], "popupAnchor": [0, 0]},
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
             limit_list_for_render_fn=lambda values, _limit: values,
             max_stops_per_render=100,
         )
@@ -74,8 +82,14 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(stops2), 1)
 
     def test_construir_camadas_veiculos_modo_leve(self):
-        sppo_df = pd.DataFrame([{"lat": -22.9, "lng": -43.2, "linha": "100", "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"}])
-        brt_df = pd.DataFrame([{"lat": -22.91, "lng": -43.21, "linha": "200", "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"}])
+        sppo_df = pd.DataFrame([{
+            "lat": -22.9, "lng": -43.2, "linha": "100",
+            "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"
+        }])
+        brt_df = pd.DataFrame([{
+            "lat": -22.91, "lng": -43.21, "linha": "200",
+            "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"
+        }])
 
         onibus, brt = construir_camadas_veiculos(
             sppo_df=sppo_df,
@@ -83,7 +97,9 @@ class MapLayersLogicTests(unittest.TestCase):
             cores={"100": "#111", "200": "#222"},
             linhas_render=["100", "200"],
             lightweight_marker_threshold=1,
-            build_geojson_cluster_layer_fn=lambda df, layer_id: [layer_id, len(df)],
+            build_geojson_cluster_layer_fn=(
+                lambda df, lid: [lid, len(df)]
+            ),
             group_vehicle_markers_fn=lambda markers: [markers],
             make_vehicle_icon_fn=lambda bearing, cor: ["url", [1, 1], [0, 0]],
             linha_publica_fn=lambda x: x,
@@ -94,8 +110,14 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(brt[0], "geojson-brt")
 
     def test_construir_camadas_veiculos_cache_hit(self):
-        sppo_df = pd.DataFrame([{"lat": -22.9, "lng": -43.2, "linha": "100", "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"}])
-        brt_df = pd.DataFrame([{"lat": -22.91, "lng": -43.21, "linha": "200", "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"}])
+        sppo_df = pd.DataFrame([{
+            "lat": -22.9, "lng": -43.2, "linha": "100",
+            "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"
+        }])
+        brt_df = pd.DataFrame([{
+            "lat": -22.91, "lng": -43.21, "linha": "200",
+            "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"
+        }])
 
         lock = threading.Lock()
         cache = {}
@@ -159,7 +181,10 @@ class MapLayersLogicTests(unittest.TestCase):
             map_static_cache=cache,
             map_static_cache_max_items=3,
             linha_publica_fn=lambda x: x,
-            stop_sign_icon={"iconUrl": "x", "iconSize": [1, 1], "iconAnchor": [0, 0], "popupAnchor": [0, 0]},
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
             limit_list_for_render_fn=lambda values, _limit: values,
             max_stops_per_render=100,
         )
@@ -189,7 +214,10 @@ class MapLayersLogicTests(unittest.TestCase):
             map_static_cache=cache,
             map_static_cache_max_items=16,
             linha_publica_fn=lambda x: x,
-            stop_sign_icon={"iconUrl": "x", "iconSize": [1, 1], "iconAnchor": [0, 0], "popupAnchor": [0, 0]},
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
             limit_list_for_render_fn=lambda values, _limit: values,
             max_stops_per_render=100,
         )
@@ -217,15 +245,24 @@ class MapLayersLogicTests(unittest.TestCase):
             },
             line_to_stops_points={
                 "100": [
-                    {"lat": -22.90, "lon": -43.20, "stop_name": "A", "stop_code": "1", "stop_desc": "", "platform_code": ""},
-                    {"lat": -22.10, "lon": -44.10, "stop_name": "B", "stop_code": "2", "stop_desc": "", "platform_code": ""},
+                    {
+                        "lat": -22.90, "lon": -43.20, "stop_name": "A",
+                        "stop_code": "1", "stop_desc": "", "platform_code": ""
+                    },
+                    {
+                        "lat": -22.10, "lon": -44.10, "stop_name": "B",
+                        "stop_code": "2", "stop_desc": "", "platform_code": ""
+                    },
                 ]
             },
             map_static_cache_lock=lock,
             map_static_cache=cache,
             map_static_cache_max_items=16,
             linha_publica_fn=lambda x: x,
-            stop_sign_icon={"iconUrl": "x", "iconSize": [1, 1], "iconAnchor": [0, 0], "popupAnchor": [0, 0]},
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
             limit_list_for_render_fn=lambda values, _limit: values,
             max_stops_per_render=100,
             viewport_bounds=[[-22.95, -43.30], [-22.85, -43.10]],
@@ -235,8 +272,14 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(stops), 1)
 
     def test_construir_camadas_veiculos_expira_cache_por_ttl(self):
-        sppo_df = pd.DataFrame([{"lat": -22.9, "lng": -43.2, "linha": "100", "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"}])
-        brt_df = pd.DataFrame([{"lat": -22.91, "lng": -43.21, "linha": "200", "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"}])
+        sppo_df = pd.DataFrame([{
+            "lat": -22.9, "lng": -43.2, "linha": "100",
+            "ordem": "A", "tipo": "SPPO", "datahora": "10:00:00"
+        }])
+        brt_df = pd.DataFrame([{
+            "lat": -22.91, "lng": -43.21, "linha": "200",
+            "ordem": "B", "tipo": "BRT", "datahora": "10:00:00"
+        }])
 
         lock = threading.Lock()
         cache = {}
@@ -286,8 +329,12 @@ class MapLayersLogicTests(unittest.TestCase):
 
     def test_construir_camadas_veiculos_fallback_fingerprint(self):
         # Sem colunas da assinatura leve -> fallback para fingerprint forte.
-        sppo_df = pd.DataFrame([{"lat": -22.9, "lng": -43.2, "ordem": "A", "tipo": "SPPO"}])
-        brt_df = pd.DataFrame([{"lat": -22.91, "lng": -43.21, "ordem": "B", "tipo": "BRT"}])
+        sppo_df = pd.DataFrame([{
+            "lat": -22.9, "lng": -43.2, "ordem": "A", "tipo": "SPPO"
+        }])
+        brt_df = pd.DataFrame([{
+            "lat": -22.91, "lng": -43.21, "ordem": "B", "tipo": "BRT"
+        }])
 
         lock = threading.Lock()
         cache = {}
@@ -298,7 +345,9 @@ class MapLayersLogicTests(unittest.TestCase):
             cores={},
             linhas_render=[],
             lightweight_marker_threshold=0,
-            build_geojson_cluster_layer_fn=lambda df, layer_id: [layer_id, len(df)],
+            build_geojson_cluster_layer_fn=(
+                lambda df, lid: [lid, len(df)]
+            ),
             group_vehicle_markers_fn=lambda markers: markers,
             make_vehicle_icon_fn=lambda bearing, cor: ["url", [1, 1], [0, 0]],
             linha_publica_fn=lambda x: x,
@@ -314,7 +363,9 @@ class MapLayersLogicTests(unittest.TestCase):
             cores={},
             linhas_render=[],
             lightweight_marker_threshold=0,
-            build_geojson_cluster_layer_fn=lambda df, layer_id: [layer_id, len(df)],
+            build_geojson_cluster_layer_fn=(
+                lambda df, lid: [lid, len(df)]
+            ),
             group_vehicle_markers_fn=lambda markers: markers,
             make_vehicle_icon_fn=lambda bearing, cor: ["url", [1, 1], [0, 0]],
             linha_publica_fn=lambda x: x,

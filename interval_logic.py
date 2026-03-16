@@ -7,7 +7,7 @@ def compute_poll_interval_ms(
     lines_active_ms=30000,
     vehicles_active_ms=20000,
 ):
-    """Compute GPS polling interval based on user activity and data freshness."""
+    """Compute GPS interval based on activity and data freshness."""
     tab = tab_filtro or "linhas"
     linhas_count = len(linhas_sel or [])
     veiculos_count = len(veiculos_sel or [])

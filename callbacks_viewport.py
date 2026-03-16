@@ -2,7 +2,10 @@ import dash
 from dash import Input, Output
 
 
-def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_viewport, normalize_map_center):
+def register_viewport_callbacks(
+    app, map_supports_viewport,
+    resolver_comando_viewport, normalize_map_center
+):
     app.clientside_callback(
         """
         function(cmd) {
@@ -12,15 +15,24 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
             try {
                 var map = window.__gps_leaflet_map || null;
                 if (!map) {
-                    return {ok: false, reason: 'leaflet_map_not_captured', ts: Date.now(), token: cmd.token || null};
+                    return {
+                        ok: false,
+                        reason: 'leaflet_map_not_captured',
+                        ts: Date.now(),
+                        token: cmd.token || null
+                    };
                 }
 
                 if (Array.isArray(cmd.center) && cmd.center.length >= 2) {
-                    var z = (typeof cmd.zoom === 'number') ? cmd.zoom : map.getZoom();
-                    map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
+                    var curZ = map.getZoom();
+                    var z = (typeof cmd.zoom === 'number') ? cmd.zoom : curZ;
+                    map.setView([cmd.center[0], cmd.center[1]], z, {
+                        animate: false
+                    });
                     setTimeout(function () {
                         try {
-                            map.setView([cmd.center[0], cmd.center[1]], z, {animate: false});
+                            var c = cmd.center;
+                            map.setView([c[0], c[1]], z, {animate: false});
                         } catch (e2) {
                             // sem-op
                         }
@@ -30,7 +42,12 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
                 map.invalidateSize(false);
                 return {ok: true, ts: Date.now(), token: cmd.token || null};
             } catch (e) {
-                return {ok: false, reason: String(e), ts: Date.now(), token: cmd.token || null};
+                return {
+                    ok: false,
+                    reason: String(e),
+                    ts: Date.now(),
+                    token: cmd.token || null
+                };
             }
         }
         """,
@@ -61,7 +78,8 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
 
                 navigator.geolocation.getCurrentPosition(
                     function(pos1) {
-                        var acc1 = Number(pos1 && pos1.coords ? pos1.coords.accuracy : NaN);
+                        var c1 = pos1 && pos1.coords ? pos1.coords : null;
+                        var acc1 = Number(c1 ? c1.accuracy : NaN);
                         if (!isNaN(acc1) && acc1 <= 120) {
                             resolve(toPayload(pos1));
                             return;
@@ -69,8 +87,13 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
 
                         navigator.geolocation.getCurrentPosition(
                             function(pos2) {
-                                var acc2 = Number(pos2 && pos2.coords ? pos2.coords.accuracy : NaN);
-                                if (!isNaN(acc2) && (isNaN(acc1) || acc2 <= acc1)) {
+                                var c2 = (
+                                    pos2 && pos2.coords ? pos2.coords : null
+                                );
+                                var acc2 = Number(c2 ? c2.accuracy : NaN);
+                                if (!isNaN(acc2) && (
+                                    isNaN(acc1) || acc2 <= acc1
+                                )) {
                                     resolve(toPayload(pos2));
                                 } else {
                                     resolve(toPayload(pos1));
@@ -79,14 +102,23 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
                             function() {
                                 resolve(toPayload(pos1));
                             },
-                            {enableHighAccuracy: true, timeout: 12000, maximumAge: 0}
+                            },
+                            {
+                                enableHighAccuracy: true,
+                                timeout: 12000,
+                                maximumAge: 0
+                            }
                         );
                     },
                     function(err) {
                         alert("Erro ao obter localização: " + err.message);
                         resolve(window.dash_clientside.no_update);
                     },
-                    {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
                 );
             });
         }
@@ -110,9 +142,13 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
             Input("store-veiculos-recenter-token", "data"),
             prevent_initial_call=True,
         )
-        def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
+        def controlar_viewport_mapa(
+            data_loc, gps_ts, tab_filtro,
+            linhas_sel, linhas_sel_debounce,
+            veiculos_sel, veiculos_recenter_token
+        ):
             command, marker_layer = resolver_comando_viewport(
-                data_localizacao,
+                data_loc,
                 gps_ts,
                 tab_filtro,
                 linhas_sel,
@@ -122,7 +158,10 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
             )
             if command is dash.no_update:
                 return dash.no_update, marker_layer, dash.no_update
-            force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
+            force_cmd = (
+                command.get("force_view", dash.no_update)
+                if isinstance(command, dict) else dash.no_update
+            )
             if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
                 return dash.no_update, marker_layer, force_cmd
             return command, marker_layer, force_cmd
@@ -142,9 +181,13 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
             Input("store-veiculos-recenter-token", "data"),
             prevent_initial_call=True,
         )
-        def controlar_viewport_mapa(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
+        def controlar_viewport_mapa(
+            data_loc, gps_ts, tab_filtro,
+            linhas_sel, linhas_sel_debounce,
+            veiculos_sel, veiculos_recenter_token
+        ):
             command, marker_layer = resolver_comando_viewport(
-                data_localizacao,
+                data_loc,
                 gps_ts,
                 tab_filtro,
                 linhas_sel,
@@ -154,13 +197,26 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
             )
 
             if command is dash.no_update:
-                return dash.no_update, dash.no_update, dash.no_update, marker_layer, dash.no_update
+                return (
+                    dash.no_update, dash.no_update, dash.no_update,
+                    marker_layer, dash.no_update
+                )
 
-            force_cmd = command.get("force_view", dash.no_update) if isinstance(command, dict) else dash.no_update
+            force_cmd = (
+                command.get("force_view", dash.no_update)
+                if isinstance(command, dict) else dash.no_update
+            )
 
             if isinstance(command, dict):
-                if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
-                    return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
+                is_veic_force = (
+                    tab_filtro == "veiculos"
+                    and force_cmd is not dash.no_update
+                )
+                if is_veic_force:
+                    return (
+                        dash.no_update, dash.no_update, dash.no_update,
+                        marker_layer, force_cmd
+                    )
 
                 center = command.get("center", dash.no_update)
                 zoom = command.get("zoom", dash.no_update)
@@ -171,12 +227,24 @@ def register_viewport_callbacks(app, map_supports_viewport, resolver_comando_vie
 
                 if center is not dash.no_update or zoom is not dash.no_update:
                     if tab_filtro == "veiculos":
-                        return center, zoom, dash.no_update, marker_layer, force_cmd
+                        return (
+                            center, zoom, dash.no_update,
+                            marker_layer, force_cmd
+                        )
                     return center, zoom, bounds, marker_layer, force_cmd
 
                 if "bounds" in command:
-                    return dash.no_update, dash.no_update, command["bounds"], marker_layer, force_cmd
+                    return (
+                        dash.no_update, dash.no_update, command["bounds"],
+                        marker_layer, force_cmd
+                    )
 
-                return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
+                return (
+                    dash.no_update, dash.no_update, dash.no_update,
+                    marker_layer, force_cmd
+                )
 
-            return dash.no_update, dash.no_update, dash.no_update, marker_layer, force_cmd
+            return (
+                dash.no_update, dash.no_update, dash.no_update,
+                marker_layer, force_cmd
+            )

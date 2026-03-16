@@ -22,11 +22,12 @@ def _file_signature(path):
 
 
 def _build_source_signature():
+    garagens_base = "garagens/Garagens_de_operadores_SPPO"
     return {
         "gtfs_zip": _file_signature("gtfs/gtfs.zip"),
-        "garagens_shp": _file_signature("garagens/Garagens_de_operadores_SPPO.shp"),
-        "garagens_dbf": _file_signature("garagens/Garagens_de_operadores_SPPO.dbf"),
-        "garagens_shx": _file_signature("garagens/Garagens_de_operadores_SPPO.shx"),
+        "garagens_shp": _file_signature(f"{garagens_base}.shp"),
+        "garagens_dbf": _file_signature(f"{garagens_base}.dbf"),
+        "garagens_shx": _file_signature(f"{garagens_base}.shx"),
     }
 
 
@@ -48,11 +49,16 @@ def _load_cached_result(source_signature):
         rio_polygon = payload.get("rio_polygon")
         garagens_polygon = payload.get("garagens_polygon")
         try:
-            payload["rio_polygon_prepared"] = prep(rio_polygon) if rio_polygon is not None else None
+            prep_rio = prep(rio_polygon) if rio_polygon is not None else None
+            payload["rio_polygon_prepared"] = prep_rio
         except Exception:
             payload["rio_polygon_prepared"] = None
         try:
-            payload["garagens_polygon_prepared"] = prep(garagens_polygon) if garagens_polygon is not None else None
+            prep_gar = (
+                prep(garagens_polygon)
+                if garagens_polygon is not None else None
+            )
+            payload["garagens_polygon_prepared"] = prep_gar
         except Exception:
             payload["garagens_polygon_prepared"] = None
         return payload
@@ -63,7 +69,8 @@ def _load_cached_result(source_signature):
 def _save_cached_result(source_signature, payload):
     try:
         payload_to_cache = dict(payload)
-        # Objetos prepared do shapely não são serializáveis; recompomos no load.
+        # Objetos prepared do shapely não são serializáveis;
+        # recompomos no load.
         payload_to_cache["rio_polygon_prepared"] = None
         payload_to_cache["garagens_polygon_prepared"] = None
         os.makedirs(os.path.dirname(GTFS_STATIC_CACHE_PATH), exist_ok=True)
@@ -117,7 +124,10 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
             if feat.get("geometry")
         ]
         if geometrias:
-            rio_polygon = geometrias[0] if len(geometrias) == 1 else MultiPolygon(geometrias)
+            if len(geometrias) == 1:
+                rio_polygon = geometrias[0]
+            else:
+                rio_polygon = MultiPolygon(geometrias)
             result["rio_polygon"] = rio_polygon
             try:
                 result["rio_polygon_prepared"] = prep(rio_polygon)
@@ -126,12 +136,17 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         else:
             print("AVISO: GeoJSON do IBGE sem geometrias.")
     except requests.RequestException as e:
-        print(f"ERRO ao carregar limites do Rio (API): {type(e).__name__} - {e}")
+        print(
+            f"ERRO ao carregar limites do Rio (API): "
+            f"{type(e).__name__} - {e}"
+        )
     except Exception as e:
         print(f"ERRO ao carregar limites do Rio: {type(e).__name__} - {e}")
 
     try:
-        garagens_gdf = gpd.read_file("garagens/Garagens_de_operadores_SPPO.shp")
+        garagens_gdf = gpd.read_file(
+            "garagens/Garagens_de_operadores_SPPO.shp"
+        )
         garagens_gdf = garagens_gdf.to_crs("EPSG:4326")
         garagens_polygon = garagens_gdf.geometry.union_all()
         result["garagens_polygon"] = garagens_polygon
@@ -140,7 +155,8 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         except Exception:
             result["garagens_polygon_prepared"] = None
     except FileNotFoundError:
-        print("ERRO: Arquivo Garagens_de_operadores_SPPO.shp não encontrado")
+        msg = "ERRO: Arquivo Garagens_de_operadores_SPPO.shp não encontrado"
+        print(msg)
     except Exception as e:
         print(f"ERRO ao carregar garagens: {type(e).__name__} - {e}")
 
@@ -156,7 +172,12 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
             target_files = {
                 "routes": {"usecols": ["route_id", "route_short_name"]},
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
-                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
+                "shapes": {
+                    "usecols": [
+                        "shape_id", "shape_pt_lat",
+                        "shape_pt_lon", "shape_pt_sequence"
+                    ]
+                },
                 "stops": {
                     "usecols": [
                         "stop_id",
@@ -202,7 +223,11 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                                     },
                                     low_memory=False,
                                 )
-                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                            cols_to_check = [
+                                "stop_name", "stop_code",
+                                "stop_desc", "platform_code"
+                            ]
+                            for col in cols_to_check:
                                 if col not in gtfs[key].columns:
                                     gtfs[key][col] = ""
                         except Exception as e2:
@@ -216,21 +241,38 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         if "shapes" in gtfs and not gtfs["shapes"].empty:
             try:
                 df = gtfs["shapes"].copy()
-                df["shape_pt_lat"] = pd.to_numeric(df["shape_pt_lat"], errors="coerce")
-                df["shape_pt_lon"] = pd.to_numeric(df["shape_pt_lon"], errors="coerce")
-                df["shape_pt_sequence"] = pd.to_numeric(df["shape_pt_sequence"], errors="coerce")
-                df = df.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
+                df["shape_pt_lat"] = pd.to_numeric(
+                    df["shape_pt_lat"], errors="coerce"
+                )
+                df["shape_pt_lon"] = pd.to_numeric(
+                    df["shape_pt_lon"], errors="coerce"
+                )
+                df["shape_pt_sequence"] = pd.to_numeric(
+                    df["shape_pt_sequence"], errors="coerce"
+                )
+                df = df.dropna(
+                    subset=[
+                        "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"
+                    ]
+                )
                 df = df.sort_values(["shape_id", "shape_pt_sequence"])
 
                 lines = []
                 for shape_id, grp in df.groupby("shape_id"):
-                    coords = list(zip(grp["shape_pt_lon"], grp["shape_pt_lat"]))
+                    coords = list(
+                        zip(grp["shape_pt_lon"], grp["shape_pt_lat"])
+                    )
                     if len(coords) < 2:
                         continue
-                    lines.append({"shape_id": shape_id, "geometry": LineString(coords)})
+                    lines.append({
+                        "shape_id": shape_id,
+                        "geometry": LineString(coords)
+                    })
 
                 if lines:
-                    shapes_gtfs = gpd.GeoDataFrame(lines, geometry="geometry", crs="EPSG:4326")
+                    shapes_gtfs = gpd.GeoDataFrame(
+                        lines, geometry="geometry", crs="EPSG:4326"
+                    )
             except Exception as e:
                 print(f"  ERRO ao processar shapes: {type(e).__name__} - {e}")
         else:
@@ -239,17 +281,26 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         if "stops" in gtfs and not gtfs["stops"].empty:
             try:
                 df = gtfs["stops"].copy()
-                df["stop_lat"] = pd.to_numeric(df["stop_lat"], errors="coerce")
-                df["stop_lon"] = pd.to_numeric(df["stop_lon"], errors="coerce")
+                df["stop_lat"] = pd.to_numeric(
+                    df["stop_lat"], errors="coerce"
+                )
+                df["stop_lon"] = pd.to_numeric(
+                    df["stop_lon"], errors="coerce"
+                )
                 df = df.dropna(subset=["stop_lat", "stop_lon"])
-                for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                cols_to_chk = [
+                    "stop_name", "stop_code",
+                    "stop_desc", "platform_code"
+                ]
+                for col in cols_to_chk:
                     if col not in df.columns:
                         df[col] = ""
 
                 if len(df) > 0:
+                    pts = gpd.points_from_xy(df["stop_lon"], df["stop_lat"])
                     stops_gtfs = gpd.GeoDataFrame(
                         df,
-                        geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
+                        geometry=pts,
                         crs="EPSG:4326",
                     )
             except Exception as e:
@@ -259,10 +310,12 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
 
         if all(k in gtfs for k in ["routes", "trips"]):
             try:
-                rotas = gtfs["routes"].dropna(subset=["route_id", "route_short_name"])
-                trips = gtfs["trips"].dropna(subset=["trip_id", "route_id"]).merge(
-                    rotas, on="route_id", how="inner"
+                rotas = gtfs["routes"].dropna(
+                    subset=["route_id", "route_short_name"]
                 )
+                trips = gtfs["trips"].dropna(
+                    subset=["trip_id", "route_id"]
+                ).merge(rotas, on="route_id", how="inner")
 
                 if "shape_id" in trips.columns:
                     line_to_shape_ids = (
@@ -274,8 +327,11 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                     )
 
                 if "stop_times" in gtfs and not gtfs["stop_times"].empty:
-                    st = gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
-                        trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
+                    st = gtfs["stop_times"].dropna(
+                        subset=["trip_id", "stop_id"]
+                    ).merge(
+                        trips[["trip_id", "route_short_name"]],
+                        on="trip_id", how="inner"
                     )
                     line_to_stop_ids = (
                         st.groupby("route_short_name")["stop_id"]
@@ -304,18 +360,38 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                                     coords_linha.append(coords)
                                     lats = [c[0] for c in coords]
                                     lons = [c[1] for c in coords]
-                                    seg_min_lat, seg_max_lat = min(lats), max(lats)
-                                    seg_min_lon, seg_max_lon = min(lons), max(lons)
-                                    min_lat = seg_min_lat if min_lat is None else min(min_lat, seg_min_lat)
-                                    min_lon = seg_min_lon if min_lon is None else min(min_lon, seg_min_lon)
-                                    max_lat = seg_max_lat if max_lat is None else max(max_lat, seg_max_lat)
-                                    max_lon = seg_max_lon if max_lon is None else max(max_lon, seg_max_lon)
+                                    seg_min_lat = min(lats)
+                                    seg_max_lat = max(lats)
+                                    seg_min_lon = min(lons)
+                                    seg_max_lon = max(lons)
+                                    min_lat = (
+                                        seg_min_lat if min_lat is None
+                                        else min(min_lat, seg_min_lat)
+                                    )
+                                    min_lon = (
+                                        seg_min_lon if min_lon is None
+                                        else min(min_lon, seg_min_lon)
+                                    )
+                                    max_lat = (
+                                        seg_max_lat if max_lat is None
+                                        else max(max_lat, seg_max_lat)
+                                    )
+                                    max_lon = (
+                                        seg_max_lon if max_lon is None
+                                        else max(max_lon, seg_max_lon)
+                                    )
                             except Exception:
                                 continue
                         if coords_linha:
                             line_to_shape_coords[linha_id] = coords_linha
-                            if None not in (min_lat, min_lon, max_lat, max_lon):
-                                line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
+                            is_bound_ok = all(
+                                x is not None
+                                for x in (min_lat, min_lon, max_lat, max_lon)
+                            )
+                            if is_bound_ok:
+                                line_to_bounds[linha_id] = [
+                                    [min_lat, min_lon], [max_lat, max_lon]
+                                ]
 
                 if not stops_gtfs.empty and line_to_stop_ids:
                     stops_lookup = stops_gtfs.set_index("stop_id")
@@ -327,11 +403,20 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                             try:
                                 stop_row = stops_lookup.loc[stop_id]
                                 stop_name = ""
-                                if "stop_name" in stop_row and pd.notna(stop_row["stop_name"]):
+                                if (
+                                    "stop_name" in stop_row
+                                    and pd.notna(stop_row["stop_name"])
+                                ):
                                     stop_name = str(stop_row["stop_name"])
-                                stop_code = str(stop_row.get("stop_code", "") or "")
-                                stop_desc = str(stop_row.get("stop_desc", "") or "")
-                                platform_code = str(stop_row.get("platform_code", "") or "")
+                                stop_code = str(
+                                    stop_row.get("stop_code", "") or ""
+                                )
+                                stop_desc = str(
+                                    stop_row.get("stop_desc", "") or ""
+                                )
+                                platform_code = str(
+                                    stop_row.get("platform_code", "") or ""
+                                )
                                 pontos_linha.append(
                                     {
                                         "lat": float(stop_row["stop_lat"]),
@@ -347,11 +432,20 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                         if pontos_linha:
                             line_to_stops_points[linha_id] = pontos_linha
             except Exception as e:
-                print(f"ERRO ao montar índices GTFS por linha: {type(e).__name__} - {e}")
+                print(
+                    f"ERRO ao montar índices GTFS por linha: "
+                    f"{type(e).__name__} - {e}"
+                )
 
         result["gtfs"] = gtfs
-        result["shapes_gtfs"] = shapes_gtfs if shapes_gtfs is not None else empty_shapes_gdf_fn()
-        result["stops_gtfs"] = stops_gtfs if stops_gtfs is not None else empty_stops_gdf_fn()
+        fallback_shapes = empty_shapes_gdf_fn()
+        result["shapes_gtfs"] = (
+            shapes_gtfs if shapes_gtfs is not None else fallback_shapes
+        )
+        fallback_stops = empty_stops_gdf_fn()
+        result["stops_gtfs"] = (
+            stops_gtfs if stops_gtfs is not None else fallback_stops
+        )
         result["line_to_shape_ids"] = line_to_shape_ids
         result["line_to_stop_ids"] = line_to_stop_ids
         result["line_to_shape_coords"] = line_to_shape_coords
@@ -386,7 +480,12 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
             target_files = {
                 "routes": {"usecols": ["route_id", "route_short_name"]},
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
-                "shapes": {"usecols": ["shape_id", "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]},
+                "shapes": {
+                    "usecols": [
+                        "shape_id", "shape_pt_lat",
+                        "shape_pt_lon", "shape_pt_sequence"
+                    ]
+                },
                 "stops": {
                     "usecols": [
                         "stop_id",
@@ -430,7 +529,11 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
                                     },
                                     low_memory=False,
                                 )
-                            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+                            cols_to_chk = [
+                                "stop_name", "stop_code",
+                                "stop_desc", "platform_code"
+                            ]
+                            for col in cols_to_chk:
                                 if col not in gtfs[key].columns:
                                     gtfs[key][col] = ""
 
@@ -450,32 +553,64 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
         line_to_bounds = {}
 
         if "shape_id" in trips.columns:
+            # Filtro essencial: processa apenas as linhas solicitadas
+            trips_filtradas = trips[
+                trips["route_short_name"].isin(linhas_sel)
+            ]
             line_to_shape_ids = (
-                trips.dropna(subset=["shape_id"])
+                trips_filtradas.dropna(subset=["shape_id"])
                 .groupby("route_short_name")["shape_id"]
                 .unique()
                 .apply(list)
                 .to_dict()
             )
+        
+        # Coleta shape_ids que realmente precisamos processar
+        needed_shape_ids = set()
+        for sids in line_to_shape_ids.values():
+            needed_shape_ids.update(sids)
 
         shapes_by_id = {}
         shape_bounds_by_id = {}
         if "shapes" in gtfs and not gtfs["shapes"].empty:
             df_shapes = gtfs["shapes"].copy()
-            df_shapes["shape_pt_lat"] = pd.to_numeric(df_shapes["shape_pt_lat"], errors="coerce")
-            df_shapes["shape_pt_lon"] = pd.to_numeric(df_shapes["shape_pt_lon"], errors="coerce")
-            df_shapes["shape_pt_sequence"] = pd.to_numeric(df_shapes["shape_pt_sequence"], errors="coerce")
-            df_shapes = df_shapes.dropna(subset=["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"])
-            df_shapes = df_shapes.sort_values(["shape_id", "shape_pt_sequence"])
+            # Filtra shapes antes de converter/ordenar
+            if needed_shape_ids:
+                df_shapes = df_shapes[
+                    df_shapes["shape_id"].isin(needed_shape_ids)
+                ]
+            
+            if not df_shapes.empty:
+                df_shapes["shape_pt_lat"] = pd.to_numeric(
+                    df_shapes["shape_pt_lat"], errors="coerce"
+                )
+                df_shapes["shape_pt_lon"] = pd.to_numeric(
+                    df_shapes["shape_pt_lon"], errors="coerce"
+                )
+                df_shapes["shape_pt_sequence"] = pd.to_numeric(
+                    df_shapes["shape_pt_sequence"], errors="coerce"
+                )
+                df_shapes = df_shapes.dropna(
+                    subset=[
+                        "shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"
+                    ]
+                )
+                df_shapes = df_shapes.sort_values(
+                    ["shape_id", "shape_pt_sequence"]
+                )
 
-            for shape_id, grp in df_shapes.groupby("shape_id"):
-                coords = grp[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
-                if len(coords) < 2:
-                    continue
-                shapes_by_id[shape_id] = coords
-                lats = [c[0] for c in coords]
-                lons = [c[1] for c in coords]
-                shape_bounds_by_id[shape_id] = [min(lats), min(lons), max(lats), max(lons)]
+                for shape_id, grp in df_shapes.groupby("shape_id"):
+                    coords = grp[
+                        ["shape_pt_lat", "shape_pt_lon"]
+                    ].values.tolist()
+                    if len(coords) < 2:
+                        continue
+                    shapes_by_id[shape_id] = coords
+                    lats = [c[0] for c in coords]
+                    lons = [c[1] for c in coords]
+                    shape_bounds_by_id[shape_id] = [
+                        min(lats), min(lons), max(lats), max(lons)
+                    ]
 
         if shapes_by_id and line_to_shape_ids:
             for linha_id, shape_ids in line_to_shape_ids.items():
@@ -499,11 +634,19 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
                 if coords_linha:
                     line_to_shape_coords[linha_id] = coords_linha
                     if None not in (min_lat, min_lon, max_lat, max_lon):
-                        line_to_bounds[linha_id] = [[min_lat, min_lon], [max_lat, max_lon]]
+                        line_to_bounds[linha_id] = [
+                            [min_lat, min_lon], [max_lat, max_lon]
+                        ]
 
-        if "stop_times" in gtfs and "stops" in gtfs and not gtfs["stop_times"].empty:
-            st = gtfs["stop_times"].dropna(subset=["trip_id", "stop_id"]).merge(
-                trips[["trip_id", "route_short_name"]], on="trip_id", how="inner"
+        if (
+            "stop_times" in gtfs and "stops" in gtfs
+            and not gtfs["stop_times"].empty
+        ):
+            st = gtfs["stop_times"].dropna(
+                subset=["trip_id", "stop_id"]
+            ).merge(
+                trips[["trip_id", "route_short_name"]],
+                on="trip_id", how="inner"
             )
             line_to_stop_ids = (
                 st.groupby("route_short_name")["stop_id"]
@@ -513,13 +656,24 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
             )
 
             stops_df = gtfs["stops"].copy()
-            for col in ["stop_name", "stop_code", "stop_desc", "platform_code"]:
+            stop_cols = [
+                "stop_name", "stop_code", "stop_desc", "platform_code"
+            ]
+            for col in stop_cols:
                 if col not in stops_df.columns:
                     stops_df[col] = ""
-            stops_df["stop_lat"] = pd.to_numeric(stops_df["stop_lat"], errors="coerce")
-            stops_df["stop_lon"] = pd.to_numeric(stops_df["stop_lon"], errors="coerce")
-            stops_df = stops_df.dropna(subset=["stop_lat", "stop_lon", "stop_id"])
-            stops_lookup = stops_df.drop_duplicates(subset=["stop_id"]).set_index("stop_id")
+            stops_df["stop_lat"] = pd.to_numeric(
+                stops_df["stop_lat"], errors="coerce"
+            )
+            stops_df["stop_lon"] = pd.to_numeric(
+                stops_df["stop_lon"], errors="coerce"
+            )
+            stops_df = stops_df.dropna(
+                subset=["stop_lat", "stop_lon", "stop_id"]
+            )
+            stops_lookup = stops_df.drop_duplicates(
+                subset=["stop_id"]
+            ).set_index("stop_id")
 
             for linha_id, stop_ids in line_to_stop_ids.items():
                 pontos_linha = []
@@ -531,10 +685,18 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
                         {
                             "lat": float(stop_row["stop_lat"]),
                             "lon": float(stop_row["stop_lon"]),
-                            "stop_name": str(stop_row.get("stop_name", "") or ""),
-                            "stop_code": str(stop_row.get("stop_code", "") or ""),
-                            "stop_desc": str(stop_row.get("stop_desc", "") or ""),
-                            "platform_code": str(stop_row.get("platform_code", "") or ""),
+                            "stop_name": str(stop_row.get(
+                                "stop_name", ""
+                            ) or ""),
+                            "stop_code": str(stop_row.get(
+                                "stop_code", ""
+                            ) or ""),
+                            "stop_desc": str(stop_row.get(
+                                "stop_desc", ""
+                            ) or ""),
+                            "platform_code": str(stop_row.get(
+                                "platform_code", ""
+                            ) or ""),
                         }
                     )
                 if pontos_linha:

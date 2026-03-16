@@ -1,6 +1,33 @@
+# Virtual Environments
 venv/
 .venv/
+env/
+scripts/
+
+# Python caching
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration
 .env
+.flaskenv
+
+# Project specific
 gtfs/gtfs_static_cache.pkl
+*.log
+flake8_final_check_*.txt
+pytest_results.txt
+err_map_data.txt
+err_viewport.txt
+pytest_map_data.txt
+
+# Ide / system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -11,8 +11,8 @@ class PerfLoggingTests(unittest.TestCase):
             self.assertTrue(perf_logging_enabled())
 
     def test_perf_logging_enabled_false_values(self):
-        for value in ["0", "false", "False", "off", "no"]:
-            with patch.dict(os.environ, {"PERF_LOG_ENABLED": value}, clear=True):
+        for val in ["0", "false", "False", "off", "no"]:
+            with patch.dict(os.environ, {"PERF_LOG_ENABLED": val}, clear=True):
                 self.assertFalse(perf_logging_enabled())
 
     def test_perf_log_respects_flag(self):

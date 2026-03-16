@@ -8,7 +8,9 @@ from typing import Dict, Any, Union, List
 from math_helpers import haversine, bearing_between
 
 
-def processar_dados_gps(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+def processar_dados_gps(
+    df: pd.DataFrame, config: Dict[str, Any]
+) -> pd.DataFrame:
     """Processa DataFrame GPS de acordo com configuração de mapeamento.
 
     Args:
@@ -64,7 +66,10 @@ def processar_dados_gps(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFram
             df[vel_col] = pd.to_numeric(df[vel_col], errors="coerce")
 
         # Selecionar colunas finais
-        colunas = ["ordem", ts_col, lat_col, lon_col, config["linha_col"], config["velocidade_col"]]
+        colunas = [
+            "ordem", ts_col, lat_col, lon_col,
+            config["linha_col"], config["velocidade_col"]
+        ]
         if config["sentido_col"]:
             colunas.append(config["sentido_col"])
 
@@ -96,8 +101,8 @@ def processar_dados_gps(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFram
 
 
 def calcular_bearing_df(
-    df: pd.DataFrame, 
-    hist_list: Union[Dict[str, Any], List[Dict[str, Any]]], 
+    df: pd.DataFrame,
+    hist_list: Union[Dict[str, Any], List[Dict[str, Any]]],
     dist_min: float = 20.0
 ) -> pd.DataFrame:
     """Adiciona coluna 'direcao' ao DataFrame.
@@ -111,7 +116,10 @@ def calcular_bearing_df(
         return df
 
     # Aceita histórico no formato novo (dict) e no legado (lista de dicts)
-    hist_map = hist_list if isinstance(hist_list, dict) else {r["ordem"]: r for r in hist_list}
+    if isinstance(hist_list, dict):
+        hist_map = hist_list
+    else:
+        hist_map = {r["ordem"]: r for r in hist_list}
     if not hist_map:
         return df
 
@@ -121,9 +129,13 @@ def calcular_bearing_df(
     if "bearing" not in hist_df.columns:
         hist_df["bearing"] = hist_df.get("ultimo_bearing")
     hist_df["ordem"] = hist_df.index
-    hist_df = hist_df.rename(columns={"lat": "lat_prev", "lng": "lng_prev", "datahora": "datahora_prev"})
+    hist_df = hist_df.rename(columns={
+        "lat": "lat_prev",
+        "lng": "lng_prev",
+        "datahora": "datahora_prev"
+    })
 
-    # Junta apenas veículos presentes no histórico para reduzir custo de iteração.
+    # Junta apenas veículos presentes no histórico para custo reduzido.
     cand = df.reset_index().merge(
         hist_df[["ordem", "lat_prev", "lng_prev", "datahora_prev", "bearing"]],
         on="ordem",
@@ -132,13 +144,22 @@ def calcular_bearing_df(
     if cand.empty:
         return df
 
-    cand["datahora_prev"] = pd.to_datetime(cand["datahora_prev"], errors="coerce")
-    cand["datahora"] = pd.to_datetime(cand["datahora"], errors="coerce")
-    cand = cand.dropna(subset=["datahora", "datahora_prev", "lat_prev", "lng_prev", "lat", "lng"])
+    cand["datahora_prev"] = pd.to_datetime(
+        cand["datahora_prev"], errors="coerce"
+    )
+    cand["datahora"] = pd.to_datetime(
+        cand["datahora"], errors="coerce"
+    )
+    cols_to_drop = [
+        "datahora", "datahora_prev", "lat_prev", "lng_prev", "lat", "lng"
+    ]
+    cand = cand.dropna(subset=cols_to_drop)
     if cand.empty:
         return df
 
-    time_diff_min = (cand["datahora"] - cand["datahora_prev"]).abs().dt.total_seconds().div(60)
+    time_diff_min = (
+        cand["datahora"] - cand["datahora_prev"]
+    ).abs().dt.total_seconds().div(60)
     cand = cand[time_diff_min < 10]
     if cand.empty:
         return df
@@ -147,22 +168,32 @@ def calcular_bearing_df(
         dist = haversine(row.lat_prev, row.lng_prev, row.lat, row.lng)
         if dist >= dist_min:
             df.at[row.index, "direcao"] = round(
-                bearing_between(row.lat_prev, row.lng_prev, row.lat, row.lng), 0
+                bearing_between(
+                    row.lat_prev, row.lng_prev, row.lat, row.lng
+                ), 0
             )
-        elif row.bearing is not None and not (isinstance(row.bearing, float) and math.isnan(row.bearing)):
+        elif row.bearing is not None and not (
+            isinstance(row.bearing, float) and math.isnan(row.bearing)
+        ):
             df.at[row.index, "direcao"] = row.bearing
 
     return df
 
 
-def atualizar_historico(hist_dict: Dict[str, Any], df: pd.DataFrame) -> Dict[str, Any]:
+def atualizar_historico(
+    hist_dict: Dict[str, Any], df: pd.DataFrame
+) -> Dict[str, Any]:
     """Mantém apenas a posição mais recente por veículo no histórico.
     Formato: {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
     """
     ts_now = time.time()
     for row in df.itertuples(index=False):
         bearing = getattr(row, "direcao", None)
-        if bearing is not None and isinstance(bearing, float) and math.isnan(bearing):
+        if (
+            bearing is not None and
+            isinstance(bearing, float) and
+            math.isnan(bearing)
+        ):
             bearing = None
 
         ordem = str(getattr(row, "ordem", "")).strip()
@@ -180,8 +211,12 @@ def atualizar_historico(hist_dict: Dict[str, Any], df: pd.DataFrame) -> Dict[str
     return hist_dict
 
 
-def limpar_historico_antigo(hist_dict: Dict[str, Any], max_age_seconds: int = 300, tipo: str = "SPPO") -> None:
-    """Remove veículos do histórico que não foram atualizados há mais de max_age_seconds."""
+def limpar_historico_antigo(
+    hist_dict: Dict[str, Any],
+    max_age_seconds: int = 300,
+    tipo: str = "SPPO"
+) -> None:
+    """Remove veículos antigos do histórico."""
     agora = time.time()
     ordens_remover = []
     for ordem, dados in hist_dict.items():

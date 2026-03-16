@@ -27,7 +27,8 @@ class _FakeSession:
 
 class PipelineSmokeTests(unittest.TestCase):
     def test_fetch_split_and_vehicle_layers_pipeline(self):
-        agora = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+        hoje_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        agora = hoje_utc - timedelta(hours=3)
         base_payload_sppo = [
             {
                 "ordem": "A1",
@@ -71,7 +72,11 @@ class PipelineSmokeTests(unittest.TestCase):
             filtrar_pontos_fora_municipio_fn=lambda df: df,
             garagens_polygon=None,
             garagens_polygon_prepared=None,
-            build_point_mask_fn=lambda *args, **kwargs: pd.Series([False] * len(args[0]), index=args[0].index),
+            build_point_mask_fn=(
+                lambda *args, **kwargs: pd.Series(
+                    [False] * len(args[0]), index=args[0].index
+                )
+            ),
         )
 
         sppo_df, brt_df = split_gps_por_tipo(dados)
@@ -82,7 +87,9 @@ class PipelineSmokeTests(unittest.TestCase):
             cores={"100": "#111111", "200": "#222222"},
             linhas_render=["100", "200"],
             lightweight_marker_threshold=0,
-            build_geojson_cluster_layer_fn=lambda df, layer_id: [layer_id, len(df)],
+            build_geojson_cluster_layer_fn=(
+                lambda df, lid: [lid, len(df)]
+            ),
             group_vehicle_markers_fn=lambda markers: markers,
             make_vehicle_icon_fn=lambda bearing, cor: ["url", [1, 1], [0, 0]],
             linha_publica_fn=lambda x: x,

@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -9,7 +9,11 @@ BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
     "Accept": "application/json, text/plain, */*",
     "Referer": "https://www.data.rio/",
 }
@@ -19,10 +23,13 @@ def sanitize_selection(values):
     return [str(v) for v in (values or []) if str(v).strip()]
 
 
-def _fetch_sppo(http_session_sppo, inicio, agora, fmt, headers, selected_lines):
+def _fetch_sppo(
+    http_session_sppo, inicio, agora, fmt, headers, selected_lines
+):
     url_sppo = (
-        f"https://dados.mobilidade.rio/gps/sppo"
-        f"?dataInicial={inicio.strftime(fmt)}&dataFinal={agora.strftime(fmt)}"
+        "https://dados.mobilidade.rio/gps/sppo"
+        f"?dataInicial={inicio.strftime(fmt)}"
+        f"&dataFinal={agora.strftime(fmt)}"
     )
     try:
         resp = http_session_sppo.get(url_sppo, headers=headers, timeout=20)
@@ -32,7 +39,10 @@ def _fetch_sppo(http_session_sppo, inicio, agora, fmt, headers, selected_lines):
         if not isinstance(data, list) or not data:
             return pd.DataFrame()
         if selected_lines:
-            data = [r for r in data if str(r.get("linha", "")) in selected_lines]
+            data = [
+                r for r in data
+                if str(r.get("linha", "")) in selected_lines
+            ]
         return pd.DataFrame(data) if data else pd.DataFrame()
     except requests.Timeout:
         print("ERRO API SPPO: Timeout na requisição")
@@ -47,12 +57,16 @@ def _fetch_sppo(http_session_sppo, inicio, agora, fmt, headers, selected_lines):
 
 def _fetch_brt(http_session_brt, headers, selected_lines):
     try:
-        resp = http_session_brt.get("https://dados.mobilidade.rio/gps/brt", headers=headers, timeout=20)
+        url_brt = "https://dados.mobilidade.rio/gps/brt"
+        resp = http_session_brt.get(url_brt, headers=headers, timeout=20)
         if resp.status_code != 200:
             return pd.DataFrame()
         veiculos = resp.json().get("veiculos") or []
         if selected_lines:
-            veiculos = [r for r in veiculos if str(r.get("linha", "")) in selected_lines]
+            veiculos = [
+                r for r in veiculos
+                if str(r.get("linha", "")) in selected_lines
+            ]
         return pd.DataFrame(veiculos) if veiculos else pd.DataFrame()
     except requests.Timeout:
         print("ERRO API BRT: Timeout na requisição")
@@ -91,8 +105,13 @@ def fetch_gps_data_service(
     selected_vehicles = set(veiculos_sel)
 
     with ThreadPoolExecutor(max_workers=2) as ex:
-        fut_sppo = ex.submit(_fetch_sppo, http_session_sppo, inicio, agora, fmt, DEFAULT_HEADERS, selected_lines)
-        fut_brt = ex.submit(_fetch_brt, http_session_brt, DEFAULT_HEADERS, selected_lines)
+        fut_sppo = ex.submit(
+            _fetch_sppo, http_session_sppo, inicio, agora,
+            fmt, DEFAULT_HEADERS, selected_lines
+        )
+        fut_brt = ex.submit(
+            _fetch_brt, http_session_brt, DEFAULT_HEADERS, selected_lines
+        )
         sppo_df = fut_sppo.result()
         brt_df = fut_brt.result()
 
@@ -111,7 +130,9 @@ def fetch_gps_data_service(
         return pd.DataFrame()
 
     dados = dados.dropna(subset=["latitude", "longitude"])
-    dados = dados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
+    dados = dados.sort_values(
+        "datahora", ascending=False
+    ).drop_duplicates("ordem")
     dados = dados[dados["datahora"] >= inicio]
 
     if modo == "linhas" and linhas_short:
@@ -144,6 +165,9 @@ def fetch_gps_data_service(
     dados["lng"] = dados["longitude"].astype(float)
     dados = dados.reset_index(drop=True)
 
-    colunas_uteis = ["ordem", "lat", "lng", "linha", "velocidade", "tipo", "sentido", "datahora"]
+    colunas_uteis = [
+        "ordem", "lat", "lng", "linha", "velocidade",
+        "tipo", "sentido", "datahora"
+    ]
     colunas_uteis = [c for c in colunas_uteis if c in dados.columns]
     return dados[colunas_uteis]

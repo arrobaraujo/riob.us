@@ -2,8 +2,11 @@ import geopandas as gpd
 import pandas as pd
 
 
-def build_point_mask(df, lon_col, lat_col, polygon, prepared_polygon=None, predicate="covered_by"):
-    """Return a boolean mask for rows where points satisfy the predicate against polygon.
+def build_point_mask(
+    df, lon_col, lat_col, polygon, prepared_polygon=None,
+    predicate="covered_by"
+):
+    """Boolean mask for rows satisfying the predicate against polygon.
 
     Supported predicates:
     - "covered_by": point is inside polygon or on boundary.
@@ -14,7 +17,10 @@ def build_point_mask(df, lon_col, lat_col, polygon, prepared_polygon=None, predi
 
     lon = pd.to_numeric(df[lon_col], errors="coerce")
     lat = pd.to_numeric(df[lat_col], errors="coerce")
-    valid = lon.notna() & lat.notna() & lat.between(-90, 90) & lon.between(-180, 180)
+    valid = (
+        lon.notna() & lat.notna() &
+        lat.between(-90, 90) & lon.between(-180, 180)
+    )
 
     # Stage 1: bbox prefilter before expensive geometric predicate.
     try:

@@ -159,9 +159,12 @@ APP_INDEX_STRING = """
         </style>
     </head>
     <body>
-        <div id="boot-loader" aria-live="polite" aria-label="Carregando aplicação">
+        <div id="boot-loader" aria-live="polite"
+             aria-label="Carregando aplicação">
             <div class="boot-card">
-                <p class="boot-title">Consulta de ônibus - Rio de Janeiro</p>
+                <p class="boot-title">
+                    Consulta de ônibus - Rio de Janeiro
+                </p>
                 <div class="boot-spinner"></div>
                 <p class="boot-subtitle">Carregando mapa e dados...</p>
             </div>
@@ -203,9 +206,12 @@ APP_INDEX_STRING = """
                 });
 
                 function patchLeafletMapCapture() {
-                    if (!window.L || !window.L.Map || window.__gps_map_capture_patched) return;
-                    var originalInit = window.L.Map.prototype.initialize;
-                    window.L.Map.prototype.initialize = function () {
+                    var l = window.L;
+                    if (!l || !l.Map || window.__gps_map_capture_patched) {
+                        return;
+                    }
+                    var originalInit = l.Map.prototype.initialize;
+                    l.Map.prototype.initialize = function () {
                         var out = originalInit.apply(this, arguments);
                         window.__gps_leaflet_map = this;
                         return out;
@@ -235,11 +241,25 @@ APP_INDEX_STRING = """
 
 
 def build_app_layout(linhas_short, linha_exibicao, app_build_id):
+    dropdown_opts = [
+        {"label": linha_exibicao(ln), "value": ln}
+        for ln in linhas_short
+    ]
     app_layout = html.Div(
         [
             dcc.Interval(id="intervalo", interval=45_000, n_intervals=0),
-            dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
-            dcc.Interval(id="intervalo-veiculos-recenter", interval=300, n_intervals=0, disabled=True),
+            dcc.Interval(
+                id="intervalo-linhas-debounce",
+                interval=500,
+                n_intervals=0,
+                disabled=True
+            ),
+            dcc.Interval(
+                id="intervalo-veiculos-recenter",
+                interval=300,
+                n_intervals=0,
+                disabled=True
+            ),
             dcc.Store(id="store-hist-sppo", data={}),
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
@@ -258,7 +278,10 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-zoom-atual", data=11),
             html.Div(id="error-banner-container"),
             html.Div(
-                html.H4("🚍 Consulta de ônibus - Rio de Janeiro 🚍", className="header-titulo"),
+                html.H4(
+                    "🚍 Consulta de ônibus - Rio de Janeiro 🚍",
+                    className="header-titulo"
+                ),
                 className="header",
             ),
             html.Div(
@@ -271,70 +294,179 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                 mobile_breakpoint=0,
                                 parent_className="tabs-filtro-parent",
                                 className="tabs-filtro-container",
-                                style={"height": "32px", "width": "100%", "display": "flex", "flexWrap": "nowrap"},
+                                style={
+                                    "height": "32px", "width": "100%",
+                                    "display": "flex", "flexWrap": "nowrap"
+                                },
                                 children=[
                                     dcc.Tab(
                                         label="Linhas",
                                         value="linhas",
                                         className="tabs-filtro-item",
-                                        selected_className="tabs-filtro-item tabs-filtro-item--selected",
-                                        style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px"},
-                                        selected_style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px", "fontWeight": "700"},
+                                        selected_className=(
+                                            "tabs-filtro-item "
+                                            "tabs-filtro-item--selected"
+                                        ),
+                                        style={
+                                            "display": "inline-flex",
+                                            "flex": "1 1 50%",
+                                            "justifyContent": "center",
+                                            "alignItems": "center",
+                                            "padding": "4px 12px",
+                                            "height": "32px",
+                                            "lineHeight": "20px",
+                                            "fontSize": "12px"
+                                        },
+                                        selected_style={
+                                            "display": "inline-flex",
+                                            "flex": "1 1 50%",
+                                            "justifyContent": "center",
+                                            "alignItems": "center",
+                                            "padding": "4px 12px",
+                                            "height": "32px",
+                                            "lineHeight": "20px",
+                                            "fontSize": "12px",
+                                            "fontWeight": "700"
+                                        },
                                         children=html.Div(
                                             [
-                                                html.Label("Linhas:", className="label"),
+                                                html.Label(
+                                                    "Linhas:",
+                                                    className="label"
+                                                ),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-linhas",
-                                                        options=[{"label": linha_exibicao(ln), "value": ln} for ln in linhas_short],
+                                                        options=dropdown_opts,
                                                         multi=True,
-                                                        placeholder="Selecione uma ou mais linhas...",
+                                                        placeholder=(
+                                                            "Selecione "
+                                                            "linhas..."
+                                                        ),
                                                         className="dropdown",
                                                     ),
-                                                    className="dropdown-wrapper",
+                                                    className=(
+                                                        "dropdown-wrapper"
+                                                    ),
                                                 ),
                                             ],
-                                            style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
+                                            style={
+                                                "paddingTop": "4px",
+                                                "display": "flex",
+                                                "flexDirection": "column",
+                                                "alignItems": "center",
+                                                "width": "100%"
+                                            },
                                         ),
                                     ),
                                     dcc.Tab(
                                         label="Veículos",
                                         value="veiculos",
                                         className="tabs-filtro-item",
-                                        selected_className="tabs-filtro-item tabs-filtro-item--selected",
-                                        style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px"},
-                                        selected_style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px", "fontWeight": "700"},
+                                        selected_className=(
+                                            "tabs-filtro-item "
+                                            "tabs-filtro-item--selected"
+                                        ),
+                                        style={
+                                            "display": "inline-flex",
+                                            "flex": "1 1 50%",
+                                            "justifyContent": "center",
+                                            "alignItems": "center",
+                                            "padding": "4px 12px",
+                                            "height": "32px",
+                                            "lineHeight": "20px",
+                                            "fontSize": "12px"
+                                        },
+                                        selected_style={
+                                            "display": "inline-flex",
+                                            "flex": "1 1 50%",
+                                            "justifyContent": "center",
+                                            "alignItems": "center",
+                                            "padding": "4px 12px",
+                                            "height": "32px",
+                                            "lineHeight": "20px",
+                                            "fontSize": "12px",
+                                            "fontWeight": "700"
+                                        },
                                         children=html.Div(
                                             [
-                                                html.Label("Veículos:", className="label"),
+                                                html.Label(
+                                                    "Veículos:",
+                                                    className="label"
+                                                ),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-veiculos",
                                                         options=[],
                                                         multi=True,
-                                                        placeholder="Selecione um ou mais veículos...",
+                                                        placeholder=(
+                                                            "Selecione um "
+                                                            "ou mais "
+                                                            "veículos..."
+                                                        ),
                                                         className="dropdown",
                                                     ),
-                                                    className="dropdown-wrapper",
+                                                    className=(
+                                                        "dropdown-wrapper"
+                                                    ),
                                                 ),
                                             ],
-                                            style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
+                                            style={
+                                                "paddingTop": "4px",
+                                                "display": "flex",
+                                                "flexDirection": "column",
+                                                "alignItems": "center",
+                                                "width": "100%"
+                                            },
                                         ),
                                     ),
                                 ],
                             ),
-                            html.Div(id="texto-ajuda-tab", style={"fontSize": "11px", "color": "#5a6573", "textAlign": "center", "marginTop": "2px"}),
+                            html.Div(
+                                id="texto-ajuda-tab",
+                                style={
+                                    "fontSize": "11px", "color": "#5a6573",
+                                    "textAlign": "center", "marginTop": "2px"
+                                }
+                            ),
                         ],
-                        style={"display": "flex", "flexDirection": "column", "alignItems": "center", "width": "min(460px, 94vw)"},
+                        style={
+                            "display": "flex", "flexDirection": "column",
+                            "alignItems": "center", "width": "min(460px, 94vw)"
+                        },
                     ),
                     html.Div(
                         [
-                            html.Button("Atualizar 🔄️", id="btn-atualizar", n_clicks=0, className="botao-atualizar"),
-                            html.P("Última atualização:", className="texto-atualizacao"),
-                            html.Span(id="span-update-time", style={"marginLeft": "4px", "fontSize": "12px", "color": "#6c757d"}, children=""),
-                            html.Span(id="span-update-icon", style={"marginLeft": "4px", "fontSize": "14px"}, children=""),
+                            html.Button(
+                                "Atualizar 🔄️", id="btn-atualizar",
+                                n_clicks=0, className="botao-atualizar"
+                            ),
+                            html.P(
+                                "Última atualização:",
+                                className="texto-atualizacao"
+                            ),
+                            html.Span(
+                                id="span-update-time",
+                                style={
+                                    "marginLeft": "4px", "fontSize": "12px",
+                                    "color": "#6c757d"
+                                },
+                                children=""
+                            ),
+                            html.Span(
+                                id="span-update-icon",
+                                style={
+                                    "marginLeft": "4px", "fontSize": "14px"
+                                },
+                                children=""
+                            ),
                         ],
-                        style={"display": "flex", "alignItems": "center", "justifyContent": "center", "flexWrap": "wrap", "gap": "6px", "width": "min(460px, 94vw)", "margin": "0 auto", "textAlign": "center"},
+                        style={
+                            "display": "flex", "alignItems": "center",
+                            "justifyContent": "center", "flexWrap": "wrap",
+                            "gap": "6px", "width": "min(460px, 94vw)",
+                            "margin": "0 auto", "textAlign": "center"
+                        },
                     ),
                 ],
                 className="controles",
@@ -350,40 +482,101 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                             dl.LayersControl(
                                 [
                                     dl.BaseLayer(
-                                        dl.TileLayer(url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", attribution="© OpenStreetMap contributors"),
+                                        dl.TileLayer(
+                                            url=(
+                                                "https://{s}.tile"
+                                                ".openstreetmap.org"
+                                                "/{z}/{x}/{y}.png"
+                                            ),
+                                            attribution=(
+                                                "© OpenStreetMap contributors"
+                                            )
+                                        ),
                                         name="OSM",
                                         checked=False,
                                     ),
                                     dl.BaseLayer(
-                                        dl.TileLayer(url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", attribution="Esri"),
+                                        dl.TileLayer(
+                                            url=(
+                                                "https://server"
+                                                ".arcgisonline.com"
+                                                "/ArcGIS/rest/services"
+                                                "/World_Street_Map"
+                                                "/MapServer/tile/"
+                                                "{z}/{y}/{x}"
+                                            ),
+                                            attribution="Esri"
+                                        ),
                                         name="ESRI Padrão",
                                         checked=True,
                                     ),
                                     dl.BaseLayer(
-                                        dl.TileLayer(url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", attribution="Esri"),
+                                        dl.TileLayer(
+                                            url=(
+                                                "https://server"
+                                                ".arcgisonline.com"
+                                                "/ArcGIS/rest/services"
+                                                "/Canvas/World_Light_Gra"
+                                                "y_Base/MapServer"
+                                                "/tile/{z}/{y}/{x}"
+                                            ),
+                                            attribution="Esri"
+                                        ),
                                         name="ESRI P&B",
                                         checked=False,
                                     ),
-                                    dl.Overlay(dl.LayerGroup(id="layer-itinerarios"), name="Itinerários", checked=True),
-                                    dl.Overlay(dl.LayerGroup(id="layer-paradas"), name="Paradas", checked=False),
-                                    dl.Overlay(dl.LayerGroup(id="layer-onibus"), name="Ônibus", checked=True),
-                                    dl.Overlay(dl.LayerGroup(id="layer-brt"), name="BRT", checked=True),
-                                    dl.Overlay(dl.LayerGroup(id="layer-localizacao"), name="Minha posição", checked=True),
+                                    dl.Overlay(
+                                        dl.LayerGroup(id="layer-itinerarios"),
+                                        name="Itinerários", checked=True
+                                    ),
+                                    dl.Overlay(
+                                        dl.LayerGroup(id="layer-paradas"),
+                                        name="Paradas", checked=False
+                                    ),
+                                    dl.Overlay(
+                                        dl.LayerGroup(id="layer-onibus"),
+                                        name="Ônibus", checked=True
+                                    ),
+                                    dl.Overlay(
+                                        dl.LayerGroup(id="layer-brt"),
+                                        name="BRT", checked=True
+                                    ),
+                                    dl.Overlay(
+                                        dl.LayerGroup(id="layer-localizacao"),
+                                        name="Minha posição", checked=True
+                                    ),
                                 ],
                                 position="topright",
                             ),
                         ],
                     ),
                     html.Div(
-                        html.Button("📍", id="btn-localizar", n_clicks=0, title="Ir para minha localização", className="botao-localizacao",
-                                **{"aria-label": "Ir para minha localização"}),
+                        html.Button(
+                            "📍", id="btn-localizar", n_clicks=0,
+                            title="Ir para minha localização",
+                            className="botao-localizacao",
+                            **{"aria-label": "Ir para minha localização"}
+                        ),
                         className="botao-localizacao-container",
                     ),
-                    html.Div(id="legenda", className="legenda-container", role="complementary", **{"aria-label": "Legenda do mapa"}),
-                    html.Div(id="map-loading-overlay", className="map-loading-overlay", style={"display": "none"},
-                             children=[html.Div(className="map-loading-spinner")]),
+                    html.Div(
+                        id="legenda", className="legenda-container",
+                        role="complementary",
+                        **{"aria-label": "Legenda do mapa"}
+                    ),
+                    html.Div(
+                        id="map-loading-overlay",
+                        className="map-loading-overlay",
+                        style={"display": "none"},
+                        children=[
+                            html.Div(className="map-loading-spinner")
+                        ]
+                    ),
                 ],
-                style={"position": "relative", "flex": "1 1 auto", "minHeight": 0},
+                style={
+                    "position": "relative", "flex": "1 1 auto",
+                    "minHeight": 0
+                },
             ),
         ],
         style={
@@ -398,16 +591,23 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
         },
     )
 
-    # Injetamos o script do service worker diretamente no final do componente Raiz/HTML
-    # Isso garante que registrará o SW em clientes que suportem.
+    # Injetamos o script do service worker diretamente no final do componente
+    # Raiz/HTML. Isso garante que registrará o SW em clientes que suportem.
     app_layout.children.append(
         html.Script('''
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/assets/sw.js').then(function(registration) {
-                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                    navigator.serviceWorker.register(
+                        '/assets/sw.js'
+                    ).then(function(reg) {
+                        console.log(
+                            'SW registration successful '
+                            + 'with scope: ', reg.scope
+                        );
                     }, function(err) {
-                        console.log('ServiceWorker registration failed: ', err);
+                        console.log(
+                            'SW registration failed: ', err
+                        );
                     });
                 });
             }

@@ -14,7 +14,9 @@ def montar_opcoes_veiculos(dados, veiculo_exibicao_fn):
 
     return [
         {
-            "label": veiculo_exibicao_fn(row["ordem"], row.get("linha", ""), row.get("tipo", "")),
+            "label": veiculo_exibicao_fn(
+                row["ordem"], row.get("linha", ""), row.get("tipo", "")
+            ),
             "value": str(row["ordem"]),
         }
         for _, row in base_opcoes.iterrows()
@@ -40,35 +42,72 @@ def split_gps_por_tipo(dados):
 def construir_secao_icones(cache_or_generate_svg_fn):
     icone_seta = cache_or_generate_svg_fn("#888", float("nan"))
     icone_circulo = cache_or_generate_svg_fn("#888", 0)
+    label_style = {"fontSize": "clamp(9px, 1vw, 11px)"}
+    img_style = {
+        "width": "clamp(14px, 1.4vw, 18px)",
+        "height": "clamp(14px, 1.4vw, 18px)",
+        "flexShrink": 0
+    }
     return html.Div(
         [
-            html.B("Ícones:", style={"display": "block", "marginBottom": "4px", "fontSize": "10px"}),
-            html.Div(
-                [
-                    html.Img(src=icone_seta[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
-                    html.Span("Parado/Não atualizado", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
-                ],
-                style={"display": "flex", "alignItems": "center", "gap": "5px", "marginBottom": "3px"},
+            html.B(
+                "Ícones:",
+                style={
+                    "display": "block",
+                    "marginBottom": "4px",
+                    "fontSize": "10px"
+                }
             ),
             html.Div(
                 [
-                    html.Img(src=icone_circulo[0], style={"width": "clamp(14px, 1.4vw, 18px)", "height": "clamp(14px, 1.4vw, 18px)", "flexShrink": 0}),
-                    html.Span("Em movimento", style={"fontSize": "clamp(9px, 1vw, 11px)"}),
+                    html.Img(src=icone_seta[0], style=img_style),
+                    html.Span("Parado/Não atualizado", style=label_style),
                 ],
-                style={"display": "flex", "alignItems": "center", "gap": "5px"},
+                style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "gap": "5px",
+                    "marginBottom": "3px"
+                },
+            ),
+            html.Div(
+                [
+                    html.Img(src=icone_circulo[0], style=img_style),
+                    html.Span("Em movimento", style=label_style),
+                ],
+                style={
+                    "display": "flex", "alignItems": "center", "gap": "5px"
+                },
             ),
         ],
-        style={"marginTop": "7px", "paddingTop": "6px", "borderTop": "1px solid #dee2e6"},
+        style={
+            "marginTop": "7px",
+            "paddingTop": "6px",
+            "borderTop": "1px solid #dee2e6"
+        },
     )
 
 
 def construir_legenda_vazia(modo, fetch_ok, secao_icones):
     titulo = "Veículos no mapa:" if modo == "veiculos" else "Linhas no mapa:"
-    texto_vazio = "Sem dados novos no momento" if not fetch_ok else "Nenhum dado disponível no momento"
+    if not fetch_ok:
+        texto_vazio = "Sem dados novos no momento"
+    else:
+        texto_vazio = "Nenhum dado disponível no momento"
     return html.Div(
         [
-            html.B(titulo, style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-            html.Span(texto_vazio, style={"color": "#888", "fontStyle": "italic"}),
+            html.B(
+                titulo,
+                style={
+                    "display": "block",
+                    "marginBottom": "3px",
+                    "fontSize": "clamp(10px, 1.1vw, 13px)"
+                }
+            ),
+            html.Span(
+                texto_vazio,
+                style={"color": "#888", "fontStyle": "italic"}
+            ),
             secao_icones,
         ],
         className="caixa-legenda",
@@ -76,11 +115,22 @@ def construir_legenda_vazia(modo, fetch_ok, secao_icones):
     )
 
 
-def construir_legenda_sem_veiculos(secao_icones, mensagem="Nenhum veículo selecionado"):
+def construir_legenda_sem_veiculos(
+    secao_icones, mensagem="Nenhum veículo selecionado"
+):
     return html.Div(
         [
-            html.B("Veículos no mapa:", style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-            html.Span(mensagem, style={"color": "#888", "fontStyle": "italic"}),
+            html.B(
+                "Veículos no mapa:",
+                style={
+                    "display": "block",
+                    "marginBottom": "3px",
+                    "fontSize": "clamp(10px, 1.1vw, 13px)"
+                }
+            ),
+            html.Span(
+                mensagem, style={"color": "#888", "fontStyle": "italic"}
+            ),
             secao_icones,
         ],
         className="caixa-legenda",
@@ -99,15 +149,24 @@ def linhas_ativas_por_veiculos(dados_filtrados, linhas_short):
     )
 
 
-def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibicao_fn, secao_icones):
+def construir_legenda_veiculos(
+    dados_filtrados, cores, linhas_dict,
+    linha_exibicao_fn, secao_icones
+):
     itens = []
-    base_legenda = dados_filtrados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
+    base_legenda = (
+        dados_filtrados.sort_values("datahora", ascending=False)
+        .drop_duplicates("ordem")
+    )
     for row in base_legenda.itertuples(index=False):
         linha_val = str(getattr(row, "linha", "") or "")
         ordem_val = str(getattr(row, "ordem", "") or "")
         tipo_val = str(getattr(row, "tipo", "") or "")
         nome_long = linhas_dict.get(linha_val, "")
-        linha_label = linha_exibicao_fn(linha_val) if linha_val else "Sem linha"
+        if linha_val:
+            linha_label = linha_exibicao_fn(linha_val)
+        else:
+            linha_label = "Sem linha"
         cor = cores.get(linha_val, "#9aa3ad")
         itens.append(
             html.Div(
@@ -129,7 +188,10 @@ def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibic
                             html.Br(),
                             html.Span(
                                 f"Linha {linha_label}",
-                                style={"color": "#4f5b68", "fontSize": "clamp(9px, 1vw, 11px)"},
+                                style={
+                                    "color": "#4f5b68",
+                                    "fontSize": "clamp(9px, 1vw, 11px)"
+                                },
                             ),
                         ]
                         + (
@@ -137,7 +199,10 @@ def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibic
                                 html.Br(),
                                 html.Span(
                                     nome_long,
-                                    style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"},
+                                    style={
+                                        "color": "#555",
+                                        "fontSize": "clamp(9px, 1vw, 11px)"
+                                    },
                                 ),
                             ]
                             if nome_long
@@ -147,27 +212,48 @@ def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibic
                             html.Br(),
                             html.Span(
                                 f"Fonte: {tipo_val}",
-                                style={"color": "#6a7583", "fontSize": "clamp(9px, 1vw, 11px)"},
+                                style={
+                                    "color": "#6a7583",
+                                    "fontSize": "clamp(9px, 1vw, 11px)"
+                                },
                             ),
                         ]
                     ),
                 ],
-                style={"display": "flex", "alignItems": "flex-start", "gap": "6px", "marginBottom": "4px"},
+                style={
+                    "display": "flex",
+                    "alignItems": "flex-start",
+                    "gap": "6px",
+                    "marginBottom": "4px"
+                },
             )
         )
 
     return html.Div(
         [
-            html.B("Veículos no mapa:", style={"display": "block", "marginBottom": "4px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
+            html.B(
+                "Veículos no mapa:",
+                style={
+                    "display": "block",
+                    "marginBottom": "4px",
+                    "fontSize": "clamp(10px, 1.1vw, 13px)"
+                }
+            ),
             *itens,
             secao_icones,
         ],
         className="caixa-legenda",
-        style={"minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(215px, 32vw, 320px)"},
+        style={
+            "minWidth": "clamp(135px, 18vw, 180px)",
+            "maxWidth": "clamp(215px, 32vw, 320px)"
+        },
     )
 
 
-def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_fn, secao_icones):
+def construir_legenda_linhas(
+    linhas_render, cores, linhas_dict,
+    linha_exibicao_fn, secao_icones
+):
     itens = []
     for ln in linhas_render:
         cor = cores.get(ln, "#888888")
@@ -194,7 +280,10 @@ def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_f
                                 html.Br(),
                                 html.Span(
                                     nome_long,
-                                    style={"color": "#555", "fontSize": "clamp(9px, 1vw, 11px)"},
+                                    style={
+                                        "color": "#555",
+                                        "fontSize": "clamp(9px, 1vw, 11px)"
+                                    },
                                 ),
                             ]
                             if nome_long
@@ -202,16 +291,31 @@ def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_f
                         )
                     ),
                 ],
-                style={"display": "flex", "alignItems": "flex-start", "gap": "6px", "marginBottom": "4px"},
+                style={
+                    "display": "flex",
+                    "alignItems": "flex-start",
+                    "gap": "6px",
+                    "marginBottom": "4px"
+                },
             )
         )
 
     return html.Div(
         [
-            html.B("Linhas no mapa:", style={"display": "block", "marginBottom": "4px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
+            html.B(
+                "Linhas no mapa:",
+                style={
+                    "display": "block",
+                    "marginBottom": "4px",
+                    "fontSize": "clamp(10px, 1.1vw, 13px)"
+                }
+            ),
             *itens,
             secao_icones,
         ],
         className="caixa-legenda",
-        style={"minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(195px, 28vw, 280px)"},
+        style={
+            "minWidth": "clamp(135px, 18vw, 180px)",
+            "maxWidth": "clamp(195px, 28vw, 280px)"
+        },
     )

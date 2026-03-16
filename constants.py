@@ -57,6 +57,6 @@ MARKER_LIMITS_BY_ZOOM = [
     (14, 1300),
 ]
 
-# Modo leve para interação: reduz custo de renderização quando há muitos pontos.
+# Modo leve para interação: reduz custo de renderização com muitos pontos.
 LIGHTWEIGHT_MARKER_THRESHOLD = 220
 MAX_STOPS_PER_RENDER = 450

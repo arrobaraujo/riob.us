@@ -14,7 +14,10 @@ class GeoHelpersTests(unittest.TestCase):
                 {"longitude": -45.0, "latitude": -21.0},
             ]
         )
-        poly = Polygon([(-43.5, -23.2), (-43.0, -23.2), (-43.0, -22.6), (-43.5, -22.6), (-43.5, -23.2)])
+        poly = Polygon([
+            (-43.5, -23.2), (-43.0, -23.2), (-43.0, -22.6),
+            (-43.5, -22.6), (-43.5, -23.2)
+        ])
         mask = build_point_mask(
             df,
             lon_col="longitude",
@@ -32,7 +35,10 @@ class GeoHelpersTests(unittest.TestCase):
                 {"longitude": -43.0, "latitude": -22.9},
             ]
         )
-        poly = Polygon([(-43.5, -23.2), (-43.0, -23.2), (-43.0, -22.6), (-43.5, -22.6), (-43.5, -23.2)])
+        poly = Polygon([
+            (-43.5, -23.2), (-43.0, -23.2), (-43.0, -22.6),
+            (-43.5, -22.6), (-43.5, -23.2)
+        ])
         mask = build_point_mask(
             df,
             lon_col="longitude",

@@ -41,12 +41,15 @@ class GpsDataLogicTests(unittest.TestCase):
             filtrar_pontos_fora_municipio_fn=lambda df: df,
             garagens_polygon=None,
             garagens_polygon_prepared=None,
-            build_point_mask_fn=lambda *args, **kwargs: pd.Series([], dtype=bool),
+            build_point_mask_fn=(
+                lambda *args, **kwargs: pd.Series([], dtype=bool)
+            ),
         )
         self.assertTrue(out.empty)
 
     def test_fetch_service_filtra_e_projeta_colunas(self):
-        agora = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+        hoje_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        agora = hoje_utc - timedelta(hours=3)
 
         sppo_payload = [
             {
@@ -91,12 +94,20 @@ class GpsDataLogicTests(unittest.TestCase):
             filtrar_pontos_fora_municipio_fn=lambda df: df,
             garagens_polygon=None,
             garagens_polygon_prepared=None,
-            build_point_mask_fn=lambda *args, **kwargs: pd.Series([False] * len(args[0]), index=args[0].index),
+            build_point_mask_fn=(
+                lambda *args, **kwargs: pd.Series(
+                    [False] * len(args[0]), index=args[0].index
+                )
+            ),
         )
 
         self.assertEqual(len(out), 1)
         self.assertEqual(out.iloc[0]["ordem"], "A1")
-        self.assertEqual(list(out.columns), ["ordem", "lat", "lng", "linha", "velocidade", "tipo", "sentido", "datahora"])
+        cols = [
+            "ordem", "lat", "lng", "linha", "velocidade",
+            "tipo", "sentido", "datahora"
+        ]
+        self.assertEqual(list(out.columns), cols)
 
 
 if __name__ == "__main__":

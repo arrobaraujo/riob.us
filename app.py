@@ -1,50 +1,30 @@
 import math
 import os
 import time
-from collections import deque
 import zipfile
 import warnings
 import threading
-from datetime import datetime, timedelta, timezone
+import pickle
+from collections import deque
+from datetime import datetime
 from zoneinfo import ZoneInfo
-
-BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 import dash
 import dash_leaflet as dl
 import geopandas as gpd
 import pandas as pd
 import requests
+import redis
+import sentry_sdk
 from dash import Input, Output, html
 from dash.exceptions import CallbackException
 from flask import request
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-
-import redis
-import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
-
-sentry_dsn = os.getenv("SENTRY_DSN")
-if sentry_dsn:
-    sentry_sdk.init(
-        dsn=sentry_dsn,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.5
-    )
-
-REDIS_URL = os.getenv("REDIS_URL")
-if REDIS_URL:
-    try:
-        redis_client = redis.from_url(REDIS_URL)
-        redis_client.ping()
-        print("Redis conectado com sucesso!")
-    except Exception as e:
-        print(f"Aviso: Falha ao conectar no Redis ({e}). Usando fallback de RAM.")
-        redis_client = None
-else:
-    redis_client = None
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from callbacks_ui import register_ui_callbacks
 from callbacks_viewport import register_viewport_callbacks
@@ -76,13 +56,14 @@ from map_data_logic import (
     montar_opcoes_veiculos,
     split_gps_por_tipo,
 )
-from map_layers_logic import construir_camadas_estaticas, construir_camadas_veiculos
-from math_helpers import haversine, bearing_between
+from map_layers_logic import (
+    construir_camadas_estaticas,
+    construir_camadas_veiculos
+)
 from perf_logging import perf_log
 from svg_icons import (
     cache_or_generate_svg as _cache_or_generate_svg,
     gerar_svg_usuario as _gerar_svg_usuario,
-    gerar_svg_parada as _gerar_svg_parada,
     make_vehicle_icon,
     STOP_SIGN_ICON,
     get_svg_cache_lock as _get_svg_cache_lock,
@@ -95,9 +76,8 @@ from viewport_logic import (
     resolver_comando_viewport as viewport_logic_resolver_comando_viewport,
     normalize_map_center as viewport_logic_normalize_map_center,
 )
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
+BRT_TZ = ZoneInfo("America/Sao_Paulo")
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
@@ -105,75 +85,122 @@ warnings.filterwarnings("ignore")
 # ==============================================================================
 
 # Cache GPS server-side — evita trafegar dados pesados para o browser
-_gps_lock  = threading.Lock()
+_gps_lock = threading.Lock()
 _gps_cache = pd.DataFrame()   # último fetch processado
 _last_update_ts = None  # timestamp da última atualização bem-sucedida
 _last_fetch_had_data = True
 _status_lock = threading.Lock()  # protege _last_update_ts
 _gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 
-import pickle
+# ==============================================================================
+# Sentry & Redis
+# ==============================================================================
+
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=0.5
+    )
+
+REDIS_URL = os.getenv("REDIS_URL")
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL)
+        redis_client.ping()
+        print("Redis conectado com sucesso!")
+    except Exception as e:
+        print(f"Aviso: Falha ao conectar no Redis ({e}). Fallback RAM.")
+        redis_client = None
+else:
+    redis_client = None
+
 
 class RedisDict:
-    """Um wrapper simples para fazer o Redis se comportar parcialmente como um dict em memória."""
+    """Um wrapper simples para Redis."""
     def __init__(self, client, prefix):
         self.client = client
         self.prefix = prefix
-        
+
     def _key(self, k):
         return f"{self.prefix}:{hash(k)}"
-        
+
     def get(self, k, default=None):
-        if not self.client: return default
+        if not self.client:
+            return default
         try:
             v = self.client.get(self._key(k))
-            if v: return pickle.loads(v)
-        except Exception: pass
+            if v:
+                return pickle.loads(v)
+        except Exception:
+            pass
         return default
-        
+
     def __setitem__(self, k, v):
-        if not self.client: return
+        if not self.client:
+            return
         try:
             self.client.set(self._key(k), pickle.dumps(v))
-        except Exception: pass
-        
+        except Exception:
+            pass
+
     def pop(self, k, default=None):
-        if not self.client: return default
+        if not self.client:
+            return default
         try:
             self.client.delete(self._key(k))
-        except Exception: pass
+        except Exception:
+            pass
         return default
-        
+
     def clear(self):
-        if not self.client: return
+        if not self.client:
+            return
         try:
             for key in self.client.scan_iter(f"{self.prefix}:*"):
                 self.client.delete(key)
-        except Exception: pass
-        
+        except Exception:
+            pass
+
     def __len__(self):
-        return 0  # LRU pruning desativado no modo Redis. Deixa o Redis gerenciar com maxmemory/TTL.
-        
+        # LRU pruning desativado no modo Redis.
+        # Deixa o Redis gerenciar com maxmemory/TTL.
+        return 0
+
     def items(self):
         return []
 
-# Se o Redis falhar, caímos magicamente em dicionários locais pra não travar o app.
-_map_static_cache = RedisDict(redis_client, "map_static") if redis_client else {}
-_vehicle_layers_cache = RedisDict(redis_client, "map_vehicles") if redis_client else {}
+
+# Se o Redis falhar, caímos em dicionários locais pra não travar o app.
+_map_static_cache = (
+    RedisDict(redis_client, "map_static") if redis_client else {}
+)
+_vehicle_layers_cache = (
+    RedisDict(redis_client, "map_vehicles") if redis_client else {}
+)
 
 # Cache das camadas estáticas (itinerários/paradas) por conjunto de linhas
 _map_static_cache_lock = threading.Lock()
 _MAP_STATIC_CACHE_MAX_ITEMS = 64
-_MAP_STATIC_CACHE_TTL_SECONDS = int(os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900"))
+_MAP_STATIC_CACHE_TTL_SECONDS = int(
+    os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900")
+)
 
 # Cache das camadas dinâmicas de veículos por fingerprint do snapshot.
 _vehicle_layers_cache_lock = threading.Lock()
 _VEHICLE_LAYERS_CACHE_MAX_ITEMS = 96
-_VEHICLE_LAYERS_CACHE_TTL_SECONDS = int(os.getenv("VEHICLE_LAYERS_CACHE_TTL_SECONDS", "120"))
+_VEHICLE_LAYERS_CACHE_TTL_SECONDS = int(
+    os.getenv("VEHICLE_LAYERS_CACHE_TTL_SECONDS", "120")
+)
 
 _POLL_INTERVAL_IDLE_MS = int(os.getenv("POLL_INTERVAL_IDLE_MS", "90000"))
-_POLL_INTERVAL_LINES_ACTIVE_MS = int(os.getenv("POLL_INTERVAL_LINES_ACTIVE_MS", "30000"))
-_POLL_INTERVAL_VEHICLES_ACTIVE_MS = int(os.getenv("POLL_INTERVAL_VEHICLES_ACTIVE_MS", "20000"))
+_POLL_INTERVAL_LINES_ACTIVE_MS = int(
+    os.getenv("POLL_INTERVAL_LINES_ACTIVE_MS", "30000")
+)
+_POLL_INTERVAL_VEHICLES_ACTIVE_MS = int(
+    os.getenv("POLL_INTERVAL_VEHICLES_ACTIVE_MS", "20000")
+)
 
 # Janela curta de métricas para p95 operacional.
 _perf_metrics_lock = threading.Lock()
@@ -193,27 +220,31 @@ _gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
 _gtfs_load_event.clear()
 
 
-# ===== OTIMIZAÇÃO: Histórico estruturado por tipo + timestamp para limpeza automática =====
+# ===== OTIMIZAÇÃO: Histórico estruturado por tipo + timestamp =====
 _hist_lock = threading.Lock()
-_hist_sppo_bygps = {}  # {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
+# {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
+_hist_sppo_bygps = {}
 _hist_brt_bygps = {}   # Mesmo para BRT
-_HIST_MAX_AGE_SECONDS = 300  # 5 minutos — remove histórico antigo automaticamente
-rio_polygon      = None
+_HIST_MAX_AGE_SECONDS = 300  # 5 minutos — remove histórico antigo
+rio_polygon = None
 garagens_polygon = None
 _rio_polygon_prepared = None
 _garagens_polygon_prepared = None
-gtfs             = {}
-shapes_gtfs      = None
-stops_gtfs       = None
+gtfs = {}
+shapes_gtfs = None
+stops_gtfs = None
 line_to_shape_ids = {}
-line_to_stop_ids  = {}
+line_to_stop_ids = {}
 line_to_shape_coords = {}  # {linha: [coords_list]}
-line_to_stops_points = {}  # {linha: [{lat, lon, stop_name, stop_code, stop_desc, platform_code}]}
+# {linha: [{lat, lon, stop_name, stop_code, stop_desc, platform_code}]}
+line_to_stops_points = {}
 line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
-linhas_dict      = {}
-linhas_short     = []
-linha_cor_fixa   = {}
-lecd_public_map  = {}  # {LECDxxx: numero_publico}
+linhas_dict = {}
+linhas_short = []
+linha_cor_fixa = {}
+lecd_public_map = {}  # {LECDxxx: numero_publico}
+_linhas_sem_shapes = set()  # Cache de linhas sem dados no GTFS
+_linhas_sem_shapes.clear()  # Força retry em reinicialização
 
 
 def _build_retry_session():
@@ -227,7 +258,9 @@ def _build_retry_session():
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
     )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
+    adapter = HTTPAdapter(
+        max_retries=retry, pool_connections=8, pool_maxsize=8
+    )
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -238,7 +271,11 @@ _http_session_sppo = _build_retry_session()
 _http_session_brt = _build_retry_session()
 
 # Versao de build para invalidacao de cache do frontend apos deploy.
-APP_BUILD_ID = os.getenv("APP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "dev"
+APP_BUILD_ID = (
+    os.getenv("APP_BUILD_ID")
+    or os.getenv("RENDER_GIT_COMMIT")
+    or "dev"
+)
 
 
 def _perf_record(metric_name, value_ms):
@@ -258,12 +295,19 @@ def _perf_p95(metric_name):
 
 
 def _empty_shapes_gdf():
-    return gpd.GeoDataFrame({"shape_id": [], "geometry": []}, geometry="geometry", crs="EPSG:4326")
+    return gpd.GeoDataFrame(
+        {"shape_id": [], "geometry": []},
+        geometry="geometry",
+        crs="EPSG:4326"
+    )
 
 
 def _empty_stops_gdf():
     return gpd.GeoDataFrame(
-        {"stop_id": [], "stop_name": [], "stop_lat": [], "stop_lon": [], "geometry": []},
+        {
+            "stop_id": [], "stop_name": [],
+            "stop_lat": [], "stop_lon": [], "geometry": []
+        },
         geometry="geometry",
         crs="EPSG:4326",
     )
@@ -277,13 +321,17 @@ def _normalizar_linha(valor):
 
 
 def linha_publica(valor_linha):
-    """Retorna o identificador público da linha (quando houver mapeamento LECD)."""
+    """Retorna o identificador público da linha
+    (quando houver mapeamento LECD).
+    """
     ln = _normalizar_linha(valor_linha)
     return lecd_public_map.get(ln, ln)
 
 
 def linha_exibicao(valor_linha):
-    """Rótulo de exibição para listagens: publico (LECD) quando houver mapeamento."""
+    """Rótulo de exibição para listagens:
+    publico (LECD) quando houver mapeamento.
+    """
     ln = _normalizar_linha(valor_linha)
     pub = linha_publica(ln)
     if ln and pub and ln != pub:
@@ -315,7 +363,7 @@ def _carregar_dicionario_lecd():
     try:
         df = pd.read_csv("gtfs/dicionario_lecd.csv", dtype=str)
         if not {"LECD", "servico"}.issubset(df.columns):
-            print("AVISO: dicionario_lecd.csv sem colunas esperadas (LECD, servico)")
+            print("AVISO: dicionario_lecd.csv sem colunas esperadas")
             lecd_public_map = {}
             return
 
@@ -329,25 +377,39 @@ def _carregar_dicionario_lecd():
 
         lecd_public_map = mapping
     except FileNotFoundError:
-        print("AVISO: gtfs/dicionario_lecd.csv não encontrado; usando códigos originais")
+        msg = (
+            "AVISO: gtfs/dicionario_lecd.csv não encontrado; "
+            "usando códigos originais"
+        )
+        print(msg)
         lecd_public_map = {}
     except Exception as e:
-        print(f"ERRO ao carregar dicionário LECD: {type(e).__name__} - {e}")
+        msg = f"ERRO ao carregar dicionário LECD: {type(e).__name__} - {e}"
+        print(msg)
         lecd_public_map = {}
 
 
-# --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ----------------
+# --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ---
 # Isso garante que o dropdown já tem opções quando o app abre.
 _carregar_dicionario_lecd()
 try:
     with zipfile.ZipFile("gtfs/gtfs.zip") as _z:
-        _names = [n for n in _z.namelist() if n.endswith("routes.txt")]
+        _names = [
+            n for n in _z.namelist()
+            if n.endswith("routes.txt")
+        ]
         if _names:
             with _z.open(_names[0]) as _f:
                 _routes_df = pd.read_csv(_f, dtype=str)
-            if {"route_short_name", "route_long_name"}.issubset(_routes_df.columns):
-                linhas_dict  = dict(zip(_routes_df["route_short_name"], _routes_df["route_long_name"]))
-                linhas_short = sorted(_routes_df["route_short_name"].dropna().unique().tolist())
+            _cols = {"route_short_name", "route_long_name"}
+            if _cols.issubset(_routes_df.columns):
+                linhas_dict = dict(zip(
+                    _routes_df["route_short_name"],
+                    _routes_df["route_long_name"]
+                ))
+                linhas_short = sorted(
+                    _routes_df["route_short_name"].dropna().unique().tolist()
+                )
                 linha_cor_fixa = {
                     ln: PALETA_CORES[i % len(PALETA_CORES)]
                     for i, ln in enumerate(linhas_short)
@@ -392,17 +454,17 @@ def _carregar_dados_estaticos():
 
     # Sinaliza que o GTFS foi carregado (mesmo que parcialmente)
     _gtfs_load_event.set()
-    perf_log(f"PERF gtfs_static_load total_ms={(time.perf_counter() - t0) * 1000:.1f}")
+    ms = (time.perf_counter() - t0) * 1000
+    perf_log(f"PERF gtfs_static_load total_ms={ms:.1f}")
 
 
 def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
-    """Recarrega estruturas estaticas do GTFS se faltarem dados de shapes/paradas no runtime.
+    """Recarrega estruturas estaticas do GTFS se faltarem dados de
+    shapes/paradas no runtime.
 
-    Este fallback e util em ambientes onde o carregamento em background pode falhar no startup.
+    Este fallback e util em ambientes onde o carregamento em
+    background pode falhar no startup.
     """
-    global gtfs, line_to_shape_ids, line_to_stop_ids
-    global line_to_shape_coords, line_to_stops_points, line_to_bounds
-
     linhas_sel = [str(ln) for ln in (linhas_sel or [])]
     if not linhas_sel:
         return
@@ -410,22 +472,49 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
     with _gtfs_data_lock:
         missing = [
             ln for ln in linhas_sel
-            if ln not in line_to_shape_coords and ln not in line_to_stops_points
+            if (
+                ln not in line_to_shape_coords
+                and ln not in line_to_stops_points
+                and ln not in _linhas_sem_shapes
+            )
         ]
     if not missing:
         return
 
+    t0 = time.perf_counter()
     loaded = recarregar_gtfs_estatico_sob_demanda_service(linhas_sel)
     if not loaded:
+        # Registra falha se nada foi retornado
+        ms = (time.perf_counter() - t0) * 1000
+        perf_log(f"PERF gtfs_reload_fail ms={ms:.1f} lines={linhas_sel}")
         return
 
     with _gtfs_data_lock:
-        gtfs = loaded["gtfs"]
-        line_to_shape_ids = loaded["line_to_shape_ids"]
-        line_to_stop_ids = loaded["line_to_stop_ids"]
-        line_to_shape_coords = loaded["line_to_shape_coords"]
-        line_to_stops_points = loaded["line_to_stops_points"]
-        line_to_bounds = loaded["line_to_bounds"]
+        # Mescla DataFrames no dicionário gtfs
+        if "gtfs" in loaded and isinstance(loaded["gtfs"], dict):
+            for k, df_new in loaded["gtfs"].items():
+                if k not in gtfs or gtfs[k] is None or gtfs[k].empty:
+                    gtfs[k] = df_new
+                else:
+                    # Evita duplicatas se o reloader retornou tudo de novo.
+                    # Como recarregar_gtfs_estatico_sob_demanda_service lê o
+                    # arquivo inteiro do zip, substituir é mais seguro.
+                    gtfs[k] = df_new
+
+        # Mescla dicionários de mapeamento (o ponto crítico)
+        line_to_shape_ids.update(loaded.get("line_to_shape_ids", {}))
+        line_to_stop_ids.update(loaded.get("line_to_stop_ids", {}))
+        line_to_shape_coords.update(loaded.get("line_to_shape_coords", {}))
+        line_to_stops_points.update(loaded.get("line_to_stops_points", {}))
+        line_to_bounds.update(loaded.get("line_to_bounds", {}))
+
+        # Atualiza cache de linhas sem shapes
+        for ln in missing:
+            if (
+                ln not in line_to_shape_coords
+                and ln not in line_to_stops_points
+            ):
+                _linhas_sem_shapes.add(ln)
 
     with _map_static_cache_lock:
         _map_static_cache.clear()
@@ -442,15 +531,15 @@ threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 # ==============================================================================
 
 def get_linha_cores(linhas_sel):
-    """Mapeia cada linha selecionada para uma cor fixa (estável)."""
+    """Mapeia cada linha selecionada para uma cor distinta.
+
+    Atribui cores pela posição na seleção atual, garantindo
+    que até 10 linhas simultâneas tenham cores sempre
+    diferentes entre si.
+    """
     cores = {}
-    for ln in (linhas_sel or []):
-        if ln in linha_cor_fixa:
-            cores[ln] = linha_cor_fixa[ln]
-        else:
-            # Fallback estável para linhas fora do routes.txt
-            idx = sum(ord(ch) for ch in str(ln)) % len(PALETA_CORES)
-            cores[ln] = PALETA_CORES[idx]
+    for i, ln in enumerate(linhas_sel or []):
+        cores[ln] = PALETA_CORES[i % len(PALETA_CORES)]
     return cores
 
 
@@ -486,7 +575,9 @@ def _limit_list_for_render(values, limit):
 
 
 def _build_geojson_cluster_layer(df, layer_id):
-    """Cria uma unica camada GeoJSON clusterizada para reduzir custo de renderizacao."""
+    """Cria uma unica camada GeoJSON clusterizada para reduzir
+    custo de renderizacao.
+    """
     if df is None or df.empty:
         return []
 
@@ -501,7 +592,10 @@ def _build_geojson_cluster_layer(df, layer_id):
                 "type": "Feature",
                 "geometry": {
                     "type": "Point",
-                    "coordinates": [float(row_dict["lng"]), float(row_dict["lat"])],
+                    "coordinates": [
+                        float(row_dict["lng"]),
+                        float(row_dict["lat"])
+                    ],
                 },
                 "properties": {"tooltip": tooltip},
             }
@@ -512,13 +606,13 @@ def _build_geojson_cluster_layer(df, layer_id):
             id=layer_id,
             data={"type": "FeatureCollection", "features": features},
             cluster=True,
-            zoomToBounds=False,
+            zoomToBounds=False
         )
     ]
 
 
 def _group_vehicle_markers(markers):
-    """Agrupa marcadores com cluster quando disponível; fallback para LayerGroup."""
+    """Agrupa marcadores com cluster (se disponível); fallback para Group."""
     if not markers:
         return []
 
@@ -526,13 +620,14 @@ def _group_vehicle_markers(markers):
     if cluster_cls is not None:
         return [cluster_cls(children=markers)]
 
-    # Compatibilidade com versões do dash-leaflet sem MarkerClusterGroup.
+    # Compatibilidade com dash-leaflet sem MarkerClusterGroup.
     return [dl.LayerGroup(children=markers)]
 
 
-
 def _filtrar_pontos_fora_municipio(df):
-    """Mantém apenas pontos dentro do município (quando polígono estiver disponível)."""
+    """Mantém apenas pontos dentro do município
+    (quando polígono estiver disponível).
+    """
     if df.empty or rio_polygon is None:
         return df
 
@@ -574,14 +669,18 @@ def fetch_gps_data(linhas_sel=None, veiculos_sel=None, modo="linhas"):
 # Layout do App
 # ==============================================================================
 
-app    = dash.Dash(
+app = dash.Dash(
     __name__,
     title="🚍 Consulta de ônibus - Rio de Janeiro 🚍",
-    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
+    meta_tags=[{
+        "name": "viewport",
+        "content": "width=device-width, initial-scale=1"
+    }],
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
-# Otimização Enterprise: Compressão de Respostas (Gzip/Brotli) para reduzir tráfego JSON/GeoJSON
+# Otimização Enterprise: Compressão de Respostas (Gzip/Brotli)
+# para reduzir tráfego JSON/GeoJSON
 Compress(server)
 
 # Otimização Enterprise: Rate Limiting para rotas públicas
@@ -599,10 +698,12 @@ app.index_string = APP_INDEX_STRING
 
 @server.after_request
 def _disable_cache_for_dash_endpoints(response):
-    """Evita cache do layout/dependencies para reduzir mismatch de callbacks apos deploy."""
+    """Evita cache do layout para reduzir mismatch apos deploy."""
     path = request.path or ""
     if path in ("/", "/_dash-layout", "/_dash-dependencies"):
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
@@ -610,20 +711,21 @@ def _disable_cache_for_dash_endpoints(response):
 
 @server.errorhandler(CallbackException)
 def _handle_callback_exception(exc):
-    """Neutraliza requests de frontend antigo (layout/dependencies em cache) sem stacktrace ruidoso."""
+    """Neutraliza requests de frontend antigo sem stacktrace ruidoso."""
     msg = str(exc)
     if "Inputs do not match callback definition" in msg:
         payload = request.get_json(silent=True) or {}
         output = payload.get("output")
-        outputs = payload.get("outputs")
         changed = payload.get("changedPropIds")
         inputs = payload.get("inputs") or []
         states = payload.get("state") or []
 
-        print(
+        log_msg = (
             "AVISO: Callback com Inputs incompatíveis "
-            f"(output={output}, changed={changed}, inputs={len(inputs)}, states={len(states)})."
+            f"(output={output}, changed={changed}, "
+            f"inputs={len(inputs)}, states={len(states)})."
         )
+        print(log_msg)
         return ("", 204)
     raise exc
 
@@ -671,6 +773,7 @@ def _health_check():
 
     return _json.dumps(status), 200, {"Content-Type": "application/json"}
 
+
 app.layout = build_app_layout(
     linhas_short=linhas_short,
     linha_exibicao=linha_exibicao,
@@ -709,8 +812,8 @@ app.clientside_callback(
     """,
     Output("store-build-sync", "data"),
     Input("store-build-id", "data"),
-    prevent_initial_call=False,
 )
+
 
 def _get_last_update_ts():
     with _status_lock:
@@ -742,13 +845,13 @@ def ajustar_intervalo_polling(tab_filtro, linhas_sel, veiculos_sel):
 
 
 @app.callback(
-    Output("store-gps-ts",    "data"),
+    Output("store-gps-ts", "data"),
     Output("store-hist-sppo", "data"),
     Output("store-hist-brt", "data"),
     Output("store-veiculos-opcoes", "data"),
     Output("store-fetch-error", "data"),
-    Input("intervalo",        "n_intervals"),
-    Input("btn-atualizar",    "n_clicks"),
+    Input("intervalo", "n_intervals"),
+    Input("btn-atualizar", "n_clicks"),
     Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
@@ -760,7 +863,8 @@ def ajustar_intervalo_polling(tab_filtro, linhas_sel, veiculos_sel):
 )
 def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     """Busca GPS, armazena no cache server-side e retorna só timestamp."""
-    global _gps_cache, _last_update_ts, _last_fetch_had_data, _hist_sppo_bygps, _hist_brt_bygps
+    global _gps_cache, _last_update_ts, _last_fetch_had_data
+    global _hist_sppo_bygps, _hist_brt_bygps
 
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
     linhas_sel = linhas_sel or []
@@ -768,7 +872,8 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
 
     t0 = time.perf_counter()
 
-    # Em modo veículos, carrega snapshot completo para alimentar o dropdown e o filtro no mapa.
+    # Em modo veículos, carrega snapshot completo para alimentar
+    # o dropdown e o filtro no mapa.
     dados = fetch_gps_data(
         linhas_sel=linhas_sel if modo == "linhas" else None,
         veiculos_sel=None,
@@ -788,7 +893,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     if len(dados) == 0:
         with _gps_lock:
             _gps_cache = pd.DataFrame()
-        # Sem linhas selecionadas em modo linhas → estado vazio esperado, não é erro de API
+        # Sem linhas em modo linhas -> vazio esperado, não é erro de API
         no_filter = (modo == "linhas" and not linhas_sel)
         if not no_filter:
             with _status_lock:
@@ -801,9 +906,11 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         _perf_record("atualizar_gps_total_ms", total_ms)
         perf_log(
             f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
-            f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n=0"
+            "n=0"
         )
-        error_msg = None if no_filter else "⚠️ Sem dados das APIs de GPS no momento"
+        error_msg = (
+            None if no_filter else "⚠️ Sem dados das APIs de GPS no momento"
+        )
         return int(time.time()), {}, {}, [], error_msg
 
     # Em modo veículos, aplica filtro por seleção após montar opções.
@@ -847,9 +954,11 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     _perf_record("atualizar_gps_total_ms", total_ms)
     perf_log(
         f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
-        f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n={len(dados_final)}"
+        f"fetch_ms={fetch_ms:.1f} "
+        f"p95_total={_perf_p95('atualizar_gps_total_ms'):.1f} "
+        f"n={len(dados_final)}"
     )
-    # Mantemos stores legados vazios para compatibilidade com clientes em cache.
+    # Mantemos stores legados vazios para compatibilidade com clientes.
     return int(time.time()), {}, {}, opcoes_veiculos, None
 
 
@@ -878,20 +987,20 @@ def _filtrar_df_por_viewport(df, bounds):
     lat = pd.to_numeric(df["lat"], errors="coerce")
     lng = pd.to_numeric(df["lng"], errors="coerce")
     mask = (
-        lat.between(box["min_lat"], box["max_lat"]) &
-        lng.between(box["min_lon"], box["max_lon"])
+        lat.between(box["min_lat"], box["max_lat"])
+        & lng.between(box["min_lon"], box["max_lon"])
     )
     return df[mask]
 
 
 @app.callback(
     Output("layer-itinerarios", "children"),
-    Output("layer-paradas",     "children"),
-    Output("layer-onibus",      "children"),
-    Output("layer-brt",         "children"),
-    Output("legenda",           "children"),
-    Input("store-gps-ts",       "data"),
-    Input("store-tab-filtro",   "data"),
+    Output("layer-paradas", "children"),
+    Output("layer-onibus", "children"),
+    Output("layer-brt", "children"),
+    Output("legenda", "children"),
+    Input("store-gps-ts", "data"),
+    Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
     Input("mapa", "bounds"),
@@ -905,15 +1014,12 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
     veiculos_sel = veiculos_sel or []
     selected_lines = set(str(ln) for ln in linhas_sel)
     selected_vehicles = set(str(v) for v in veiculos_sel)
-    
     # Lê do cache server-side PRIMEIRO
     with _gps_lock:
         dados = _gps_cache
     with _status_lock:
         fetch_ok = _last_fetch_had_data
-    
-
-    # --- Legenda --------------------------------------------------------------
+    # --- Legenda ---
     secao_icones = construir_secao_icones(_cache_or_generate_svg)
 
     if dados.empty:
@@ -929,7 +1035,9 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
             legenda = construir_legenda_sem_veiculos(secao_icones)
             return [], [], [], [], legenda
 
-        dados_filtrados = dados[dados["ordem"].astype(str).isin(selected_vehicles)].copy()
+        dados_filtrados = dados[
+            dados["ordem"].astype(str).isin(selected_vehicles)
+        ].copy()
         # Não filtra por viewport em modo veículos: o veículo selecionado deve
         # aparecer sempre, mesmo que o mapa esteja centralizado em outro ponto.
         if dados_filtrados.empty:
@@ -938,7 +1046,9 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
                 mensagem="Veículo não encontrado nos dados recentes",
             )
             return [], [], [], [], legenda
-        linhas_gtfs_ativas = linhas_ativas_por_veiculos(dados_filtrados, linhas_short)
+        linhas_gtfs_ativas = linhas_ativas_por_veiculos(
+            dados_filtrados, linhas_short
+        )
         linhas_render = linhas_gtfs_ativas
         cores = get_linha_cores(linhas_render)
 
@@ -953,8 +1063,18 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
         if not linhas_sel:
             legenda = html.Div(
                 [
-                    html.B("Linhas no mapa:", style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
-                    html.Span("Nenhuma linha selecionada", style={"color": "#888", "fontStyle": "italic"}),
+                    html.B(
+                        "Linhas no mapa:",
+                        style={
+                            "display": "block",
+                            "marginBottom": "3px",
+                            "fontSize": "clamp(10px, 1.1vw, 13px)"
+                        }
+                    ),
+                    html.Span(
+                        "Nenhuma linha selecionada",
+                        style={"color": "#888", "fontStyle": "italic"}
+                    ),
                     secao_icones,
                 ],
                 className="caixa-legenda",
@@ -971,7 +1091,9 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
             linha_exibicao_fn=linha_exibicao,
             secao_icones=secao_icones,
         )
-        dados_filtrados = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
+        dados_filtrados = dados[
+            dados["linha"].astype(str).isin(selected_lines)
+        ].copy()
 
     sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
     # Viewport filter só em modo linhas (grandes volumes); em modo veículos os
@@ -992,7 +1114,9 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
         linhas_render=linhas_render,
         cores=cores,
         gtfs_load_event=_gtfs_load_event,
-        recarregar_gtfs_estatico_sob_demanda=_recarregar_gtfs_estatico_sob_demanda,
+        recarregar_gtfs_estatico_sob_demanda=(
+            _recarregar_gtfs_estatico_sob_demanda
+        ),
         gtfs_data_lock=_gtfs_data_lock,
         line_to_shape_coords=line_to_shape_coords,
         line_to_stops_points=line_to_stops_points,
@@ -1045,19 +1169,27 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
 
     perf_log(
         f"PERF atualizar_mapa modo={modo} total_ms={total_ms:.1f} "
-        f"split_ms={split_ms:.1f} static_ms={static_ms:.1f} vehicles_ms={vehicles_ms:.1f} "
-        f"p95_total_ms={_perf_p95('atualizar_mapa_total_ms'):.1f} "
-        f"cache_hit={cache_meta.get('hit')} cache_hit_rate={hit_rate:.1f}% "
-        f"cache_fp={cache_meta.get('fingerprint_mode')} cache_evictions={int(cache_meta.get('evictions') or 0)}"
+        f"split_ms={split_ms:.1f} static_ms={static_ms:.1f} "
+        f"vehicles_ms={vehicles_ms:.1f} "
+        f"p95_total={_perf_p95('atualizar_mapa_total_ms'):.1f} "
+        f"cache_hit={cache_meta.get('hit')} "
+        f"cache_hit_rate={hit_rate:.1f}% "
+        f"cache_fp={cache_meta.get('fingerprint_mode')} "
+        f"evictions={int(cache_meta.get('evictions') or 0)}"
     )
 
-    return shapes_layers, paradas_layers, onibus_children, brt_children, legenda
+    return (
+        shapes_layers, paradas_layers,
+        onibus_children, brt_children, legenda
+    )
 
 
 def _calcular_viewport_linhas(linhas_sel):
     return viewport_logic_calcular_viewport_linhas(
         linhas_sel=linhas_sel,
-        recarregar_gtfs_estatico_sob_demanda=_recarregar_gtfs_estatico_sob_demanda,
+        recarregar_gtfs_estatico_sob_demanda=(
+            _recarregar_gtfs_estatico_sob_demanda
+        ),
         gtfs_load_event=_gtfs_load_event,
         gtfs_data_lock=_gtfs_data_lock,
         line_to_bounds=line_to_bounds,
@@ -1069,7 +1201,9 @@ def _calcular_viewport_linhas(linhas_sel):
 def _calcular_viewport_veiculos(veiculos_sel):
     def _get_gps_snapshot():
         with _gps_lock:
-            return _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+            if _gps_cache.empty:
+                return pd.DataFrame()
+            return _gps_cache.copy()
 
     return viewport_logic_calcular_viewport_veiculos(
         veiculos_sel=veiculos_sel,
@@ -1081,10 +1215,16 @@ def _calcular_viewport_veiculos(veiculos_sel):
     )
 
 
-def _resolver_comando_viewport(data_localizacao, gps_ts, tab_filtro, linhas_sel, linhas_sel_debounce, veiculos_sel, veiculos_recenter_token):
+def _resolver_comando_viewport(
+    data_localizacao, gps_ts, tab_filtro, linhas_sel,
+    linhas_sel_debounce, veiculos_sel, veiculos_recenter_token
+):
     def _get_gps_snapshot():
         with _gps_lock:
-            return _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+            return (
+                _gps_cache.copy() if not _gps_cache.empty
+                else pd.DataFrame()
+            )
 
     return viewport_logic_resolver_comando_viewport(
         data_localizacao=data_localizacao,

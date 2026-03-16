@@ -30,15 +30,23 @@ def _collect_text(node):
 
 class MapDataLogicTests(unittest.TestCase):
     def test_montar_opcoes_veiculos(self):
-        dados = pd.DataFrame(
-            [
-                {"ordem": "1", "linha": "100", "tipo": "SPPO", "datahora": "2026-01-01 10:00:00"},
-                {"ordem": "1", "linha": "100", "tipo": "SPPO", "datahora": "2026-01-01 09:59:00"},
-                {"ordem": "2", "linha": "200", "tipo": "BRT", "datahora": "2026-01-01 09:58:00"},
-            ]
-        )
+        v1 = {
+            "ordem": "1", "linha": "100", "tipo": "SPPO",
+            "datahora": "2026-01-01 10:00:00"
+        }
+        v2 = {
+            "ordem": "1", "linha": "100", "tipo": "SPPO",
+            "datahora": "2026-01-01 09:59:00"
+        }
+        v3 = {
+            "ordem": "2", "linha": "200", "tipo": "BRT",
+            "datahora": "2026-01-01 09:58:00"
+        }
+        dados = pd.DataFrame([v1, v2, v3])
 
-        opcoes = montar_opcoes_veiculos(dados, lambda ordem, linha, tipo: f"{ordem}-{linha}-{tipo}")
+        def f(ordem, linha, tipo):
+            return f"{ordem}-{linha}-{tipo}"
+        opcoes = montar_opcoes_veiculos(dados, f)
         self.assertEqual(len(opcoes), 2)
         self.assertEqual(opcoes[0]["value"], "1")
 
@@ -95,7 +103,10 @@ class MapDataLogicTests(unittest.TestCase):
     def test_construir_legenda_veiculos(self):
         dados = pd.DataFrame(
             [
-                {"ordem": "A1", "linha": "100", "tipo": "SPPO", "datahora": "2026-01-01 10:00:00"},
+                {
+                    "ordem": "A1", "linha": "100", "tipo": "SPPO",
+                    "datahora": "2026-01-01 10:00:00"
+                },
             ]
         )
         legenda = construir_legenda_veiculos(

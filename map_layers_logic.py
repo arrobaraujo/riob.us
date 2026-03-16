@@ -7,7 +7,12 @@ import time
 def _dataframe_fingerprint_strong(df):
     if df is None or df.empty:
         return (0, 0)
-    cols = [c for c in ["ordem", "lat", "lng", "datahora", "linha", "tipo", "direcao", "sentido"] if c in df.columns]
+    cols = [
+        c for c in [
+            "ordem", "lat", "lng", "datahora",
+            "linha", "tipo", "direcao", "sentido"
+        ] if c in df.columns
+    ]
     if not cols:
         return (len(df), 0)
     try:
@@ -31,8 +36,10 @@ def _dataframe_fingerprint_light(df):
         last_ordem = str(df.iloc[-1].get("ordem", "") or "")
         last_ts = str(df["datahora"].max())
         # Assinatura leve para evitar hash completo em cada ciclo.
-        lat_mean = int(pd.to_numeric(df["lat"], errors="coerce").fillna(0).mean() * 10000)
-        lng_mean = int(pd.to_numeric(df["lng"], errors="coerce").fillna(0).mean() * 10000)
+        df_lat_num = pd.to_numeric(df["lat"], errors="coerce").fillna(0)
+        df_lng_num = pd.to_numeric(df["lng"], errors="coerce").fillna(0)
+        lat_mean = int(df_lat_num.mean() * 10000)
+        lng_mean = int(df_lng_num.mean() * 10000)
         return (n, last_ts, f"{first_ordem}|{last_ordem}", lat_mean, lng_mean)
     except Exception:
         return None
@@ -123,7 +130,11 @@ def construir_camadas_estaticas(
         shape_coords_snapshot = dict(line_to_shape_coords)
         stops_points_snapshot = dict(line_to_stops_points)
 
-    cache_key = (modo,) + tuple(sorted(str(ln) for ln in linhas_render))
+    cache_key = (
+        modo,
+        tuple(sorted(str(ln) for ln in linhas_render)),
+        tuple(sorted(cores.items())),
+    )
     now = time.time()
     with map_static_cache_lock:
         cached_layers = _cache_get(
@@ -140,7 +151,8 @@ def construir_camadas_estaticas(
     paradas_layers = []
 
     def _normalize_bounds(bounds):
-        if not bounds or not isinstance(bounds, (list, tuple)) or len(bounds) < 2:
+        if not bounds or not isinstance(bounds, (list, tuple)) or \
+                len(bounds) < 2:
             return None
         try:
             sw = bounds[0]
@@ -190,7 +202,8 @@ def construir_camadas_estaticas(
                     dl.Polyline(
                         positions=coords,
                         color=cor,
-                        weight=4,
+                        weight=5,
+                        opacity=0.8,
                         className="itinerario-polyline",
                         children=dl.Tooltip(f"Linha {linha_label}"),
                     )
@@ -222,15 +235,29 @@ def construir_camadas_estaticas(
                         lon = float(stop_lon)
                     except Exception:
                         continue
-                    if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
+                    if not (min_lat <= lat <= max_lat
+                            and min_lon <= lon <= max_lon):
                         continue
 
+                style_m2 = {"margin": "2px 0"}
                 popup_parada = html.Div(
                     [
-                        html.P(f"Nome: {_texto_stop_valor(stop_name)}", style={"margin": "2px 0"}),
-                        html.P(f"Código: {_texto_stop_valor(stop_code)}", style={"margin": "2px 0"}),
-                        html.P(f"Descrição: {_texto_stop_valor(stop_desc)}", style={"margin": "2px 0"}),
-                        html.P(f"Plataforma: {_texto_stop_valor(platform_code)}", style={"margin": "2px 0"}),
+                        html.P(
+                            f"Nome: {_texto_stop_valor(stop_name)}",
+                            style=style_m2
+                        ),
+                        html.P(
+                            f"Código: {_texto_stop_valor(stop_code)}",
+                            style=style_m2
+                        ),
+                        html.P(
+                            f"Descrição: {_texto_stop_valor(stop_desc)}",
+                            style=style_m2
+                        ),
+                        html.P(
+                            f"Plataforma: {_texto_stop_valor(platform_code)}",
+                            style=style_m2
+                        ),
                     ]
                 )
                 paradas_layers.append(
@@ -241,9 +268,14 @@ def construir_camadas_estaticas(
                     )
                 )
 
-        paradas_layers = limit_list_for_render_fn(paradas_layers, max_stops_per_render)
+        paradas_layers = limit_list_for_render_fn(
+            paradas_layers, max_stops_per_render
+        )
     except Exception as e:
-        print(f"ERRO ao montar camadas estáticas por linha: {type(e).__name__} - {e}")
+        print(
+            f"ERRO ao montar camadas estáticas por linha: "
+            f"{type(e).__name__} - {e}"
+        )
 
     with map_static_cache_lock:
         _cache_set(
@@ -278,7 +310,6 @@ def construir_camadas_veiculos(
         """Texto exibido ao passar o mouse sobre o ícone do veículo."""
         ordem = row.get('ordem', '')
         linha = linha_publica_fn(row.get('linha', ''))
-        tipo = row.get('tipo', '')
         return dl.Tooltip(
             f"🚍 {ordem}  •  Linha: {linha}",
             permanent=False,
@@ -292,19 +323,36 @@ def construir_camadas_veiculos(
             vel = 0
         hora = str(row.get("datahora", ""))
         hora = hora[-8:] if len(hora) >= 8 else hora
+        style_m2 = {"margin": "2px 0"}
         items = [
-            html.P(f"Número do veículo: {row.get('ordem', '')}", style={"margin": "2px 0"}),
-            html.P(f"Serviço: {linha_publica_fn(row.get('linha', ''))}", style={"margin": "2px 0"}),
-            html.P(f"Vista: {linhas_dict.get(row.get('linha', ''), '')}", style={"margin": "2px 0"}),
-            html.P(f"Fonte: {row.get('tipo', '')}", style={"margin": "2px 0"}),
-            html.P(f"Velocidade: {vel} km/h", style={"margin": "2px 0"}),
+            html.P(
+                f"Número do veículo: {row.get('ordem', '')}",
+                style=style_m2
+            ),
+            html.P(
+                f"Serviço: {linha_publica_fn(row.get('linha', ''))}",
+                style=style_m2
+            ),
+            html.P(
+                f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
+                style=style_m2
+            ),
+            html.P(
+                f"Fonte: {row.get('tipo', '')}",
+                style=style_m2
+            ),
+            html.P(
+                f"Velocidade: {vel} km/h",
+                style=style_m2
+            ),
         ]
         if extra:
-            items.append(html.P(extra, style={"margin": "2px 0"}))
-        items.append(html.P(f"Hora: {hora}", style={"margin": "2px 0"}))
+            items.append(html.P(extra, style=style_m2))
+        items.append(html.P(f"Hora: {hora}", style=style_m2))
         return [_tooltip(row), dl.Popup(html.Div(items))]
 
-    lightweight_mode = (len(sppo_df) + len(brt_df)) > lightweight_marker_threshold
+    num_total = len(sppo_df) + len(brt_df)
+    lightweight_mode = num_total > lightweight_marker_threshold
 
     cache_meta = {
         "hit": False,
@@ -313,7 +361,8 @@ def construir_camadas_veiculos(
     }
     cache_key = None
     now = time.time()
-    if vehicle_layers_cache_lock is not None and vehicle_layers_cache is not None:
+    if vehicle_layers_cache_lock is not None and \
+            vehicle_layers_cache is not None:
         fp_mode_sppo, fp_sppo = _build_fingerprint(sppo_df)
         fp_mode_brt, fp_brt = _build_fingerprint(brt_df)
         cache_meta["fingerprint_mode"] = f"{fp_mode_sppo}+{fp_mode_brt}"
@@ -337,8 +386,12 @@ def construir_camadas_veiculos(
             return list(cached[0]), list(cached[1])
 
     if lightweight_mode:
-        onibus_children = build_geojson_cluster_layer_fn(sppo_df, "geojson-sppo")
-        brt_children = build_geojson_cluster_layer_fn(brt_df, "geojson-brt")
+        onibus_children = build_geojson_cluster_layer_fn(
+            sppo_df, "geojson-sppo"
+        )
+        brt_children = build_geojson_cluster_layer_fn(
+            brt_df, "geojson-brt"
+        )
         if cache_key is not None:
             with vehicle_layers_cache_lock:
                 cache_meta["evictions"] = _cache_set(
@@ -355,15 +408,22 @@ def construir_camadas_veiculos(
     onibus_layers = []
     for row in sppo_df.itertuples(index=False):
         row_dict = row._asdict()
-        cor = cores.get(str(row_dict.get("linha", "")), "#1a6faf") if linhas_render else "#1a6faf"
+        cor = "#1a6faf"
+        if linhas_render:
+            cor = cores.get(str(row_dict.get("linha", "")), "#1a6faf")
         try:
             bearing = float(row_dict.get("direcao", float("nan")))
         except Exception:
             bearing = float("nan")
+
+        icon_data = make_vehicle_icon_fn(bearing, cor)
+        icon_dict = dict(zip(
+            ["iconUrl", "iconSize", "iconAnchor"], icon_data
+        ))
         onibus_layers.append(
             dl.Marker(
                 position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon_fn(bearing, cor))),
+                icon=icon_dict,
                 children=_popup(row_dict),
             )
         )
@@ -371,16 +431,26 @@ def construir_camadas_veiculos(
     brt_layers = []
     for row in brt_df.itertuples(index=False):
         row_dict = row._asdict()
-        cor = cores.get(str(row_dict.get("linha", "")), "#e67e00") if linhas_render else "#e67e00"
+        cor = "#e67e00"
+        if linhas_render:
+            cor = cores.get(str(row_dict.get("linha", "")), "#e67e00")
         try:
             bearing = float(row_dict.get("direcao", float("nan")))
         except Exception:
             bearing = float("nan")
+
+        icon_data = make_vehicle_icon_fn(bearing, cor)
+        icon_dict = dict(zip(
+            ["iconUrl", "iconSize", "iconAnchor"], icon_data
+        ))
         brt_layers.append(
             dl.Marker(
                 position=[float(row_dict["lat"]), float(row_dict["lng"])],
-                icon=dict(zip(["iconUrl", "iconSize", "iconAnchor"], make_vehicle_icon_fn(bearing, cor))),
-                children=_popup(row_dict, extra=f"Sentido: {row_dict.get('sentido', '')}"),
+                icon=icon_dict,
+                children=_popup(
+                    row_dict,
+                    extra=f"Sentido: {row_dict.get('sentido', '')}"
+                ),
             )
         )
 

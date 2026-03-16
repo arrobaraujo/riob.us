@@ -15,7 +15,8 @@ def calcular_viewport_linhas(
     line_to_shape_coords,
     request,
 ):
-    """Calcula viewport (center, zoom, bounds) para linhas selecionadas com proteção contra outliers."""
+    """Calcula viewport (center, zoom, bounds) para linhas
+    selecionadas com proteção contra outliers."""
     if not linhas_sel:
         return None, None, None
 
@@ -44,9 +45,11 @@ def calcular_viewport_linhas(
             missing_bounds.append(linha_id)
             continue
         sw, ne = b
-        if not (RIO_LAT_MIN <= sw[0] <= RIO_LAT_MAX and RIO_LAT_MIN <= ne[0] <= RIO_LAT_MAX):
+        if not (RIO_LAT_MIN <= sw[0] <= RIO_LAT_MAX and
+                RIO_LAT_MIN <= ne[0] <= RIO_LAT_MAX):
             continue
-        if not (RIO_LON_MIN <= sw[1] <= RIO_LON_MAX and RIO_LON_MIN <= ne[1] <= RIO_LON_MAX):
+        if not (RIO_LON_MIN <= sw[1] <= RIO_LON_MAX and
+                RIO_LON_MIN <= ne[1] <= RIO_LON_MAX):
             continue
         min_lat = sw[0] if min_lat is None else min(min_lat, sw[0])
         min_lon = sw[1] if min_lon is None else min(min_lon, sw[1])
@@ -67,15 +70,21 @@ def calcular_viewport_linhas(
 
                 seg_min_lat, seg_max_lat = min(lats), max(lats)
                 seg_min_lon, seg_max_lon = min(lons), max(lons)
-                if not (RIO_LAT_MIN <= seg_min_lat <= RIO_LAT_MAX and RIO_LAT_MIN <= seg_max_lat <= RIO_LAT_MAX):
+                if not (RIO_LAT_MIN <= seg_min_lat <= RIO_LAT_MAX and
+                        RIO_LAT_MIN <= seg_max_lat <= RIO_LAT_MAX):
                     continue
-                if not (RIO_LON_MIN <= seg_min_lon <= RIO_LON_MAX and RIO_LON_MIN <= seg_max_lon <= RIO_LON_MAX):
+                if not (RIO_LON_MIN <= seg_min_lon <= RIO_LON_MAX and
+                        RIO_LON_MIN <= seg_max_lon <= RIO_LON_MAX):
                     continue
 
-                min_lat = seg_min_lat if min_lat is None else min(min_lat, seg_min_lat)
-                min_lon = seg_min_lon if min_lon is None else min(min_lon, seg_min_lon)
-                max_lat = seg_max_lat if max_lat is None else max(max_lat, seg_max_lat)
-                max_lon = seg_max_lon if max_lon is None else max(max_lon, seg_max_lon)
+                min_lat = seg_min_lat if min_lat is None else \
+                    min(min_lat, seg_min_lat)
+                min_lon = seg_min_lon if min_lon is None else \
+                    min(min_lon, seg_min_lon)
+                max_lat = seg_max_lat if max_lat is None else \
+                    max(max_lat, seg_max_lat)
+                max_lon = seg_max_lon if max_lon is None else \
+                    max(max_lon, seg_max_lon)
 
     if None in (min_lat, min_lon, max_lat, max_lon):
         return None, None, None
@@ -89,9 +98,15 @@ def calcular_viewport_linhas(
     max_lat += lat_pad
     min_lon -= lon_pad
     max_lon += lon_pad
-    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
+    bounds = [
+        [round(min_lat, 6), round(min_lon, 6)],
+        [round(max_lat, 6), round(max_lon, 6)]
+    ]
 
-    center = [round((min_lat + max_lat) / 2, 6), round((min_lon + max_lon) / 2, 6)]
+    center = [
+        round((min_lat + max_lat) / 2, 6),
+        round((min_lon + max_lon) / 2, 6)
+    ]
 
     lat_span = max(0.0001, abs(max_lat - min_lat))
     lon_span = max(0.0001, abs(max_lon - min_lon))
@@ -99,7 +114,10 @@ def calcular_viewport_linhas(
     zoom_lon = math.log2(360.0 / lon_span)
 
     user_agent = (request.headers.get("User-Agent", "") or "").lower()
-    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
+    is_mobile = any(
+        token in user_agent
+        for token in ["mobile", "android", "iphone", "ipad"]
+    )
     min_zoom = 13 if is_mobile else (14 if len(linhas_sel) == 1 else 13)
     zoom_base = math.floor(min(zoom_lat, zoom_lon))
     zoom = int(max(min_zoom, min(17, zoom_base + 2)))
@@ -115,7 +133,10 @@ def calcular_viewport_veiculos(
     build_point_mask,
     request,
 ):
-    """Calcula viewport para veículos selecionados usando heurística similar à aba de linhas."""
+    """
+    Calcula viewport para veículos selecionados usando heurística
+    similar à aba de linhas.
+    """
     if not veiculos_sel:
         return None, None, None
 
@@ -123,7 +144,10 @@ def calcular_viewport_veiculos(
     if gps_snapshot.empty:
         return None, None, None
 
-    filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_sel))]
+    sel_set = set(str(v) for v in veiculos_sel)
+    filtrado = gps_snapshot[
+        gps_snapshot["ordem"].astype(str).isin(sel_set)
+    ]
     if filtrado.empty:
         return None, None, None
 
@@ -189,7 +213,10 @@ def calcular_viewport_veiculos(
     min_lon -= lon_pad
     max_lon += lon_pad
 
-    bounds = [[round(min_lat, 6), round(min_lon, 6)], [round(max_lat, 6), round(max_lon, 6)]]
+    bounds = [
+        [round(min_lat, 6), round(min_lon, 6)],
+        [round(max_lat, 6), round(max_lon, 6)]
+    ]
 
     center = [
         round((min_lat + max_lat) / 2.0, 6),
@@ -202,10 +229,14 @@ def calcular_viewport_veiculos(
     zoom_lon = math.log2(360.0 / lon_span)
 
     user_agent = (request.headers.get("User-Agent", "") or "").lower()
-    is_mobile = any(token in user_agent for token in ["mobile", "android", "iphone", "ipad"])
+    is_mobile = any(
+        token in user_agent
+        for token in ["mobile", "android", "iphone", "ipad"]
+    )
     min_zoom = 14 if is_mobile else (15 if len(filtrado) == 1 else 13)
     max_zoom = 16
-    zoom = int(max(min_zoom, min(max_zoom, math.floor(min(zoom_lat, zoom_lon)))))
+    zoom_val = math.floor(min(zoom_lat, zoom_lon))
+    zoom = int(max(min_zoom, min(max_zoom, zoom_val)))
 
     return center, zoom, bounds
 
@@ -224,16 +255,41 @@ def resolver_comando_viewport(
     get_gps_snapshot,
     map_supports_viewport,
 ):
-    """Resolve comando de viewport (dict com center/zoom ou bounds) e camada de localização."""
-    triggered_props = [item.get("prop_id", "") for item in (dash.callback_context.triggered or [])]
-    trigger = triggered_props[0].split(".")[0] if triggered_props else None
-    has_location_trigger = any(prop.startswith("store-localizacao.") for prop in triggered_props)
-    has_gps_trigger = any(prop.startswith("store-gps-ts.") for prop in triggered_props)
-    has_dropdown_trigger = any(prop.startswith("dropdown-linhas.") for prop in triggered_props)
-    has_debounce_trigger = any(prop.startswith("store-linhas-debounce.") for prop in triggered_props)
-    has_veiculos_store_trigger = any(prop.startswith("store-veiculos-debounce.") for prop in triggered_props)
-    has_veiculos_recenter_trigger = any(prop.startswith("store-veiculos-recenter-token.") for prop in triggered_props)
-    has_tab_trigger = any(prop.startswith("tabs-filtro.") or prop.startswith("store-tab-filtro.") for prop in triggered_props)
+    """
+    Resolve comando de viewport (dict com center/zoom ou bounds)
+    e camada de localização.
+    """
+    ctx = dash.callback_context
+    triggered_props = [
+        item.get("prop_id", "")
+        for item in (ctx.triggered or [])
+    ]
+    trigger = triggered_props[0].split(".")[0] \
+        if triggered_props else None
+    has_location_trigger = any(
+        prop.startswith("store-localizacao.") for prop in triggered_props
+    )
+    has_gps_trigger = any(
+        prop.startswith("store-gps-ts.") for prop in triggered_props
+    )
+    has_dropdown_trigger = any(
+        prop.startswith("dropdown-linhas.") for prop in triggered_props
+    )
+    has_debounce_trigger = any(
+        prop.startswith("store-linhas-debounce.") for prop in triggered_props
+    )
+    has_veiculos_store_trigger = any(
+        prop.startswith("store-veiculos-debounce.") for prop in triggered_props
+    )
+    has_veiculos_recenter_trigger = any(
+        prop.startswith("store-veiculos-recenter-token.")
+        for prop in triggered_props
+    )
+    has_tab_trigger = any(
+        prop.startswith("tabs-filtro.") or
+        prop.startswith("store-tab-filtro.")
+        for prop in triggered_props
+    )
     has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
     has_vehicles_selection_trigger = has_veiculos_store_trigger
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
@@ -256,14 +312,19 @@ def resolver_comando_viewport(
         icone_usuario = gerar_svg_usuario()
         marcador = dl.Marker(
             position=[lat, lon],
-            icon={"iconUrl": icone_usuario, "iconSize": [22, 22], "iconAnchor": [11, 11]},
+            icon={
+                "iconUrl": icone_usuario,
+                "iconSize": [22, 22],
+                "iconAnchor": [11, 11]
+            },
             children=dl.Tooltip("Você está aqui"),
         )
         return {"center": [lat, lon], "zoom": 15}, [marcador]
 
-    if (modo == "linhas" and (has_lines_trigger or trigger in ("dropdown-linhas", "store-linhas-debounce"))) or (
-        modo == "linhas" and has_tab_trigger
-    ):
+    if (modo == "linhas" and (
+        has_lines_trigger or
+        trigger in ("dropdown-linhas", "store-linhas-debounce")
+    )) or (modo == "linhas" and has_tab_trigger):
         if has_location_trigger and has_lines_trigger:
             return dash.no_update, dash.no_update
 
@@ -272,7 +333,9 @@ def resolver_comando_viewport(
             sel = set(str(x) for x in (linhas_ativas or []))
             gps_snapshot = get_gps_snapshot()
             if not gps_snapshot.empty and sel:
-                gps_snapshot = gps_snapshot[gps_snapshot["linha"].astype(str).isin(sel)]
+                gps_snapshot = gps_snapshot[
+                    gps_snapshot["linha"].astype(str).isin(sel)
+                ]
                 if not gps_snapshot.empty:
                     center = [
                         round(float(gps_snapshot["lat"].median()), 6),
@@ -300,9 +363,15 @@ def resolver_comando_viewport(
         try:
             gps_snapshot = get_gps_snapshot()
             if not gps_snapshot.empty and veiculos_ativos:
-                filtrado = gps_snapshot[gps_snapshot["ordem"].astype(str).isin(set(str(v) for v in veiculos_ativos))]
+                ordens = set(str(v) for v in veiculos_ativos)
+                filtrado = gps_snapshot[
+                    gps_snapshot["ordem"].astype(str).isin(ordens)
+                ]
                 if not filtrado.empty and "linha" in filtrado.columns:
-                    linhas_veiculos = sorted(set(str(v) for v in filtrado["linha"].dropna().astype(str).tolist() if str(v).strip()))
+                    linhas_veiculos = sorted(set(
+                        str(v) for v in filtrado["linha"]
+                        .dropna().astype(str).tolist() if str(v).strip()
+                    ))
         except Exception:
             linhas_veiculos = []
 
@@ -311,19 +380,27 @@ def resolver_comando_viewport(
             center, zoom, bounds = calcular_viewport_linhas_fn(linhas_veiculos)
 
         if center is None or zoom is None or bounds is None:
-            center, zoom, bounds = calcular_viewport_veiculos_fn(veiculos_ativos)
+            center, zoom, bounds = (
+                calcular_viewport_veiculos_fn(veiculos_ativos)
+            )
 
         if len(veiculos_ativos) == 1:
             try:
                 gps_snapshot = get_gps_snapshot()
                 if not gps_snapshot.empty:
-                    row = gps_snapshot[gps_snapshot["ordem"].astype(str) == str(veiculos_ativos[0])]
+                    v_id = str(veiculos_ativos[0])
+                    row = gps_snapshot[
+                        gps_snapshot["ordem"].astype(str) == v_id
+                    ]
                     if not row.empty:
                         lat = float(row.iloc[0]["lat"])
                         lng = float(row.iloc[0]["lng"])
                         center = [round(lat, 6), round(lng, 6)]
                         zoom = max(int(zoom or 17), 17)
-                        bounds = [[round(lat - 0.0008, 6), round(lng - 0.0008, 6)], [round(lat + 0.0008, 6), round(lng + 0.0008, 6)]]
+                        bounds = [
+                            [round(lat - 0.0008, 6), round(lng - 0.0008, 6)],
+                            [round(lat + 0.0008, 6), round(lng + 0.0008, 6)]
+                        ]
             except Exception:
                 pass
 
@@ -345,7 +422,10 @@ def resolver_comando_viewport(
 
 
 def normalize_map_center(center_value):
-    """Normaliza center para formato aceito pelo componente de mapa no fallback."""
+    """
+    Normaliza center para formato aceito pelo componente
+    de mapa no fallback.
+    """
     if center_value is dash.no_update or center_value is None:
         return center_value
     if isinstance(center_value, dict):
