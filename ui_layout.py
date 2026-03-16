@@ -116,6 +116,34 @@ APP_INDEX_STRING = """
                     min-height: 30px !important;
                     line-height: 18px !important;
                 }
+
+                .leaflet-tooltip {
+                    display: none !important;
+                }
+
+                .leaflet-popup {
+                    max-width: 220px !important;
+                }
+
+                .leaflet-popup-content-wrapper {
+                    max-width: 220px !important;
+                    border-radius: 10px !important;
+                }
+
+                .leaflet-popup-content {
+                    margin: 8px 10px !important;
+                    max-width: 200px !important;
+                    font-size: 11px !important;
+                    line-height: 1.35 !important;
+                    word-break: break-word;
+                    overflow-wrap: anywhere;
+                }
+
+                .leaflet-popup-content p {
+                    margin: 2px 0 !important;
+                    font-size: 11px !important;
+                    line-height: 1.3 !important;
+                }
             }
 
             ._dash-loading,
@@ -219,15 +247,101 @@ APP_INDEX_STRING = """
                     window.__gps_map_capture_patched = true;
                 }
 
+                function isMobileDevice() {
+                    try {
+                        if (window.matchMedia && (
+                            window.matchMedia('(max-width: 768px)').matches
+                        )) {
+                            return true;
+                        }
+                    } catch (e) {
+                        // sem-op
+                    }
+                    var touchPoints = Number(
+                        navigator.maxTouchPoints || 0
+                    );
+                    return touchPoints > 0;
+                }
+
+                function configureMobileMapBehavior() {
+                    var map = window.__gps_leaflet_map || null;
+                    if (!map || map.__gps_mobile_behavior_bound) {
+                        return;
+                    }
+
+                    if (!isMobileDevice()) {
+                        return;
+                    }
+
+                    try {
+                        var l = window.L;
+                        if (l && l.Popup && l.Popup.prototype &&
+                                l.Popup.prototype.options) {
+                            l.Popup.prototype.options.autoPan = false;
+                            l.Popup.prototype.options.keepInView = false;
+                        }
+                    } catch (e) {
+                        // sem-op
+                    }
+
+                    map.__gps_mobile_behavior_bound = true;
+                    map.__gps_last_open_popup = null;
+
+                    map.on('tooltipopen', function (evt) {
+                        try {
+                            if (evt && evt.tooltip && map.closeTooltip) {
+                                map.closeTooltip(evt.tooltip);
+                            }
+                        } catch (e) {
+                            // sem-op
+                        }
+                    });
+
+                    map.on('popupopen', function (evt) {
+                        try {
+                            var popup = evt ? evt.popup : null;
+                            var prev = map.__gps_last_open_popup;
+
+                            if (prev && popup && prev !== popup) {
+                                map.closePopup(prev);
+                            }
+
+                            map.__gps_last_open_popup = popup || null;
+                        } catch (e) {
+                            // sem-op
+                        }
+                    });
+
+                    map.on('popupclose', function (evt) {
+                        try {
+                            var popup = evt ? evt.popup : null;
+                            if (map.__gps_last_open_popup === popup) {
+                                map.__gps_last_open_popup = null;
+                            }
+                        } catch (e) {
+                            // sem-op
+                        }
+                    });
+                }
+
                 patchLeafletMapCapture();
                 var patchTry = 0;
                 var patchTimer = setInterval(function () {
                     patchTry += 1;
                     patchLeafletMapCapture();
-                    if (window.__gps_map_capture_patched || patchTry > 120) {
+                    configureMobileMapBehavior();
+                    var map = window.__gps_leaflet_map || null;
+                    var mobileReady = (
+                        !isMobileDevice() ||
+                        (map && map.__gps_mobile_behavior_bound)
+                    );
+                    if ((window.__gps_map_capture_patched && mobileReady) ||
+                            patchTry > 120) {
                         clearInterval(patchTimer);
                     }
                 }, 100);
+
+                configureMobileMapBehavior();
             })();
         </script>
         <footer>

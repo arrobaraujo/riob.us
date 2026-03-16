@@ -10,14 +10,14 @@ def _is_enabled():
 
 
 # Configure root logger once.
-_log_level = logging.DEBUG if _is_enabled() else logging.INFO
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    level=_log_level,
+    level=logging.INFO,
 )
 
 logger = logging.getLogger("gps_bus_rio")
+logger.setLevel(logging.INFO)
 
 
 def perf_logging_enabled():

@@ -341,10 +341,6 @@ def construir_camadas_veiculos(
                 style=style_m2
             ),
             html.P(
-                f"Fonte: {row.get('tipo', '')}",
-                style=style_m2
-            ),
-            html.P(
                 f"Velocidade: {vel} km/h",
                 style=style_m2
             ),
