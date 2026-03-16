@@ -939,8 +939,6 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
             _last_fetch_had_data = True
 
     if len(dados) == 0:
-        with _gps_lock:
-            _gps_cache = pd.DataFrame()
         # Sem linhas em modo linhas -> vazio esperado, não é erro de API
         no_filter = (modo == "linhas" and not linhas_sel)
         if not no_filter:
@@ -965,8 +963,6 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     if modo == "veiculos" and veiculos_sel:
         dados = filtrar_por_veiculos(dados, veiculos_sel)
         if dados.empty:
-            with _gps_lock:
-                _gps_cache = pd.DataFrame()
             return int(time.time()), {}, {}, opcoes_veiculos, None
 
     sppo_df, brt_df = split_gps_por_tipo(dados)

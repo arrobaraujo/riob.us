@@ -4,6 +4,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 
 def _import_app_module_safely():
     if "app" in sys.modules:
@@ -36,6 +38,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
         self.app.line_to_stops_points = {}
         self.app.line_to_bounds = {}
         self.app._linhas_sem_shapes = {}
+        self.app._gps_cache = pd.DataFrame()
 
     def test_carregar_dados_estaticos_wrapper_updates_globals(self):
         loaded = {
@@ -128,6 +131,69 @@ class AppGtfsWrappersTests(unittest.TestCase):
             self.app._recarregar_gtfs_estatico_sob_demanda(["300"])
 
         mocked_service.assert_not_called()
+
+    def test_atualizar_gps_preserva_cache_quando_fetch_vem_vazio(self):
+        cache_anterior = pd.DataFrame(
+            [{
+                "ordem": "A1",
+                "lat": -22.9,
+                "lng": -43.2,
+                "linha": "100",
+                "tipo": "SPPO",
+                "datahora": "2026-03-16 17:00:00",
+            }]
+        )
+        self.app._gps_cache = cache_anterior.copy()
+        self.app._last_fetch_had_data = True
+
+        with patch.object(
+            self.app,
+            "fetch_gps_data",
+            return_value=pd.DataFrame(),
+        ):
+            self.app.atualizar_gps(0, 0, "linhas", ["100"], [])
+
+        self.assertEqual(len(self.app._gps_cache), 1)
+        self.assertEqual(self.app._gps_cache.iloc[0]["ordem"], "A1")
+        self.assertFalse(self.app._last_fetch_had_data)
+
+    def test_atualizar_gps_preserva_cache_quando_filtro_veiculo_zera(self):
+        cache_anterior = pd.DataFrame(
+            [{
+                "ordem": "B1",
+                "lat": -22.91,
+                "lng": -43.21,
+                "linha": "200",
+                "tipo": "BRT",
+                "datahora": "2026-03-16 17:01:00",
+            }]
+        )
+        dados_fetch = pd.DataFrame(
+            [{
+                "ordem": "X1",
+                "lat": -22.95,
+                "lng": -43.25,
+                "linha": "300",
+                "tipo": "SPPO",
+                "datahora": "2026-03-16 17:02:00",
+            }]
+        )
+        self.app._gps_cache = cache_anterior.copy()
+
+        with patch.object(
+            self.app,
+            "fetch_gps_data",
+            return_value=dados_fetch,
+        ):
+            with patch.object(
+                self.app,
+                "montar_opcoes_veiculos",
+                return_value=[{"label": "X1", "value": "X1"}],
+            ):
+                self.app.atualizar_gps(0, 0, "veiculos", [], ["NAO_EXISTE"])
+
+        self.assertEqual(len(self.app._gps_cache), 1)
+        self.assertEqual(self.app._gps_cache.iloc[0]["ordem"], "B1")
 
 
 if __name__ == "__main__":
