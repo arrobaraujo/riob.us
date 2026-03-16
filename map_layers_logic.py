@@ -194,11 +194,13 @@ def construir_camadas_estaticas(
     try:
         for linha_id in linhas_render:
             cor = cores.get(linha_id, "#888888")
-            for coords in shape_coords_snapshot.get(linha_id, []):
+            coords_por_linha = shape_coords_snapshot.get(linha_id, [])
+            for segment_idx, coords in enumerate(coords_por_linha):
                 if not _coords_intersect_view(coords):
                     continue
                 shapes_layers.append(
                     dl.Polyline(
+                        id=f"shape-{linha_id}-{segment_idx}",
                         positions=coords,
                         color=cor,
                         weight=5,
@@ -207,7 +209,9 @@ def construir_camadas_estaticas(
                     )
                 )
 
-            for stop_item in stops_points_snapshot.get(linha_id, []):
+            for stop_idx, stop_item in enumerate(
+                stops_points_snapshot.get(linha_id, [])
+            ):
                 if isinstance(stop_item, dict):
                     stop_lat = stop_item.get("lat")
                     stop_lon = stop_item.get("lon")
@@ -260,6 +264,7 @@ def construir_camadas_estaticas(
                 )
                 paradas_layers.append(
                     dl.Marker(
+                        id=f"stop-{linha_id}-{stop_idx}",
                         position=[float(stop_lat), float(stop_lon)],
                         icon=stop_sign_icon,
                         children=dl.Popup(popup_parada),

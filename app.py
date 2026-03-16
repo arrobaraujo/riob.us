@@ -1222,8 +1222,30 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
         f"evictions={int(cache_meta.get('evictions') or 0)}"
     )
 
+    linhas_token = "-".join(str(ln) for ln in linhas_render[:4]) or "none"
+    layer_token = (
+        f"{modo}-{int(_ts or 0)}-{linhas_token}-"
+        f"{len(shapes_layers)}-{len(paradas_layers)}"
+    )
+    shapes_children = []
+    if shapes_layers:
+        shapes_children = [
+            dl.LayerGroup(
+                id=f"layer-itinerarios-inner-{layer_token}",
+                children=shapes_layers,
+            )
+        ]
+    paradas_children = []
+    if paradas_layers:
+        paradas_children = [
+            dl.LayerGroup(
+                id=f"layer-paradas-inner-{layer_token}",
+                children=paradas_layers,
+            )
+        ]
+
     return (
-        shapes_layers, paradas_layers,
+        shapes_children, paradas_children,
         onibus_children, brt_children, legenda
     )
 

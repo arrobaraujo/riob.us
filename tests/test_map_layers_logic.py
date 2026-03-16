@@ -80,6 +80,8 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(stops1), 1)
         self.assertEqual(len(shapes2), 1)
         self.assertEqual(len(stops2), 1)
+        self.assertEqual(shapes1[0].id, "shape-100-0")
+        self.assertEqual(stops1[0].id, "stop-100-0")
 
     def test_construir_camadas_veiculos_modo_leve(self):
         sppo_df = pd.DataFrame([{
@@ -275,6 +277,8 @@ class MapLayersLogicTests(unittest.TestCase):
 
         self.assertEqual(len(shapes), 1)
         self.assertEqual(len(stops), 1)
+        self.assertEqual(shapes[0].id, "shape-100-0")
+        self.assertEqual(stops[0].id, "stop-100-0")
 
     def test_construir_camadas_veiculos_expira_cache_por_ttl(self):
         sppo_df = pd.DataFrame([{
