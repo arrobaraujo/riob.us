@@ -1,0 +1,21 @@
+{
+  "name": "Consulta de Ônibus - Rio de Janeiro",
+  "short_name": "Ônibus RJ",
+  "description": "Rastreie ônibus SPPO e BRT em tempo real no mapa.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef2f7",
+  "theme_color": "#1f2a37",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}

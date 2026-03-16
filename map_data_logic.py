@@ -16,8 +16,6 @@ def montar_opcoes_veiculos(dados, veiculo_exibicao_fn):
         {
             "label": veiculo_exibicao_fn(row["ordem"], row.get("linha", ""), row.get("tipo", "")),
             "value": str(row["ordem"]),
-            "lat": float(row.get("lat")) if pd.notna(row.get("lat")) else None,
-            "lng": float(row.get("lng")) if pd.notna(row.get("lng")) else None,
         }
         for _, row in base_opcoes.iterrows()
         if str(row.get("ordem", "")).strip()
@@ -64,7 +62,7 @@ def construir_secao_icones(cache_or_generate_svg_fn):
     )
 
 
-def construir_legenda_vazia(modo, fetch_ok, secao_icones, caixa_legenda_style):
+def construir_legenda_vazia(modo, fetch_ok, secao_icones):
     titulo = "Veículos no mapa:" if modo == "veiculos" else "Linhas no mapa:"
     texto_vazio = "Sem dados novos no momento" if not fetch_ok else "Nenhum dado disponível no momento"
     return html.Div(
@@ -73,18 +71,20 @@ def construir_legenda_vazia(modo, fetch_ok, secao_icones, caixa_legenda_style):
             html.Span(texto_vazio, style={"color": "#888", "fontStyle": "italic"}),
             secao_icones,
         ],
-        style={**caixa_legenda_style, "minWidth": "clamp(135px, 18vw, 180px)"},
+        className="caixa-legenda",
+        style={"minWidth": "clamp(135px, 18vw, 180px)"},
     )
 
 
-def construir_legenda_sem_veiculos(secao_icones, caixa_legenda_style, mensagem="Nenhum veículo selecionado"):
+def construir_legenda_sem_veiculos(secao_icones, mensagem="Nenhum veículo selecionado"):
     return html.Div(
         [
             html.B("Veículos no mapa:", style={"display": "block", "marginBottom": "3px", "fontSize": "clamp(10px, 1.1vw, 13px)"}),
             html.Span(mensagem, style={"color": "#888", "fontStyle": "italic"}),
             secao_icones,
         ],
-        style={**caixa_legenda_style, "minWidth": "clamp(135px, 18vw, 180px)"},
+        className="caixa-legenda",
+        style={"minWidth": "clamp(135px, 18vw, 180px)"},
     )
 
 
@@ -99,7 +99,7 @@ def linhas_ativas_por_veiculos(dados_filtrados, linhas_short):
     )
 
 
-def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibicao_fn, secao_icones, caixa_legenda_style):
+def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibicao_fn, secao_icones):
     itens = []
     base_legenda = dados_filtrados.sort_values("datahora", ascending=False).drop_duplicates("ordem")
     for row in base_legenda.itertuples(index=False):
@@ -162,11 +162,12 @@ def construir_legenda_veiculos(dados_filtrados, cores, linhas_dict, linha_exibic
             *itens,
             secao_icones,
         ],
-        style={**caixa_legenda_style, "minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(215px, 32vw, 320px)"},
+        className="caixa-legenda",
+        style={"minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(215px, 32vw, 320px)"},
     )
 
 
-def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_fn, secao_icones, caixa_legenda_style):
+def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_fn, secao_icones):
     itens = []
     for ln in linhas_render:
         cor = cores.get(ln, "#888888")
@@ -211,5 +212,6 @@ def construir_legenda_linhas(linhas_render, cores, linhas_dict, linha_exibicao_f
             *itens,
             secao_icones,
         ],
-        style={**caixa_legenda_style, "minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(195px, 28vw, 280px)"},
+        className="caixa-legenda",
+        style={"minWidth": "clamp(135px, 18vw, 180px)", "maxWidth": "clamp(195px, 28vw, 280px)"},
     )

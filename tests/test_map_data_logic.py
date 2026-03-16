@@ -81,7 +81,6 @@ class MapDataLogicTests(unittest.TestCase):
             modo="linhas",
             fetch_ok=False,
             secao_icones=html.Div("icones"),
-            caixa_legenda_style={},
         )
         texto = _collect_text(legenda)
         self.assertIn("Sem dados novos no momento", texto)
@@ -89,7 +88,6 @@ class MapDataLogicTests(unittest.TestCase):
     def test_construir_legenda_sem_veiculos(self):
         legenda = construir_legenda_sem_veiculos(
             secao_icones=html.Div("icones"),
-            caixa_legenda_style={},
         )
         texto = _collect_text(legenda)
         self.assertIn("Nenhum veículo selecionado", texto)
@@ -106,7 +104,6 @@ class MapDataLogicTests(unittest.TestCase):
             linhas_dict={"100": "Linha Centro"},
             linha_exibicao_fn=lambda x: x,
             secao_icones=html.Div("icones"),
-            caixa_legenda_style={},
         )
         texto = _collect_text(legenda)
         self.assertIn("Veículo A1", texto)
@@ -119,7 +116,6 @@ class MapDataLogicTests(unittest.TestCase):
             linhas_dict={"100": "Linha Centro"},
             linha_exibicao_fn=lambda x: f"L{x}",
             secao_icones=html.Div("icones"),
-            caixa_legenda_style={},
         )
         texto = _collect_text(legenda)
         self.assertIn("L100", texto)

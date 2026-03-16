@@ -3,10 +3,12 @@ import os
 import time
 from collections import deque
 import zipfile
-import urllib.parse
 import warnings
 import threading
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 import dash
 import dash_leaflet as dl
@@ -16,10 +18,48 @@ import requests
 from dash import Input, Output, html
 from dash.exceptions import CallbackException
 from flask import request
+from flask_compress import Compress
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+import redis
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=0.5
+    )
+
+REDIS_URL = os.getenv("REDIS_URL")
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL)
+        redis_client.ping()
+        print("Redis conectado com sucesso!")
+    except Exception as e:
+        print(f"Aviso: Falha ao conectar no Redis ({e}). Usando fallback de RAM.")
+        redis_client = None
+else:
+    redis_client = None
+
 from callbacks_ui import register_ui_callbacks
 from callbacks_viewport import register_viewport_callbacks
+from constants import (
+    PALETA_CORES, GPS_CONFIG,
+    MARKER_LIMITS_BY_ZOOM, LIGHTWEIGHT_MARKER_THRESHOLD, MAX_STOPS_PER_RENDER,
+)
 from geo_helpers import build_point_mask
 from gps_data_logic import fetch_gps_data_service
+from gps_processing import (
+    processar_dados_gps as _processar_dados_gps,
+    calcular_bearing_df,
+    atualizar_historico,
+    limpar_historico_antigo as _limpar_historico_antigo,
+)
 from interval_logic import compute_poll_interval_ms
 from gtfs_static_logic import (
     carregar_dados_estaticos_service,
@@ -37,7 +77,17 @@ from map_data_logic import (
     split_gps_por_tipo,
 )
 from map_layers_logic import construir_camadas_estaticas, construir_camadas_veiculos
+from math_helpers import haversine, bearing_between
 from perf_logging import perf_log
+from svg_icons import (
+    cache_or_generate_svg as _cache_or_generate_svg,
+    gerar_svg_usuario as _gerar_svg_usuario,
+    gerar_svg_parada as _gerar_svg_parada,
+    make_vehicle_icon,
+    STOP_SIGN_ICON,
+    get_svg_cache_lock as _get_svg_cache_lock,
+    get_svg_cache as _get_svg_cache,
+)
 from ui_layout import APP_INDEX_STRING, build_app_layout
 from viewport_logic import (
     calcular_viewport_linhas as viewport_logic_calcular_viewport_linhas,
@@ -51,125 +101,6 @@ from urllib3.util.retry import Retry
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
-# Paleta de cores (10 cores com alto contraste)
-# ==============================================================================
-
-PALETA_CORES = [
-    "#E63946",  # Vermelho
-    "#FF00D9",  # Rosa
-    "#FFBE0B",  # Amarelo
-    "#4A47A3",  # Índigo
-    "#3CB44B",  # Verde
-    "#118AB2",  # Azul
-    "#00BCD4",  # Ciano Elétrico
-    "#8338EC",  # Roxo
-    "#455A64",  # Cinza Azulado
-    "#8B5E34",  # Marrom
-]
-
-# ==============================================================================
-# Estilos CSS Centralizados
-# ==============================================================================
-
-ESTILOS = {
-    "header": {
-        "padding": "clamp(6px, 1.4vw, 10px) clamp(10px, 2.2vw, 18px)",
-        "backgroundColor": "#1f2a37",
-        "color": "white",
-        "display": "flex",
-        "alignItems": "center",
-        "justifyContent": "center",
-        "borderBottom": "1px solid #16202b",
-        "boxShadow": "0 1px 4px rgba(0,0,0,.12)",
-    },
-    "header_titulo": {
-        "margin": 0,
-        "fontSize": "clamp(14px, 2.4vw, 19px)",
-        "fontWeight": "bold",
-        "letterSpacing": "0.2px",
-        "textAlign": "center",
-    },
-    "controles": {
-        "padding": "8px 14px",
-        "backgroundColor": "#f6f8fb",
-        "borderBottom": "1px solid #dee2e6",
-        "display": "flex",
-        "flexDirection": "column",
-        "alignItems": "center",
-        "gap": "6px",
-        "boxShadow": "0 2px 6px rgba(31,42,55,.06)",
-    },
-    "label": {
-        "fontWeight": "bold",
-        "marginBottom": "2px",
-        "textAlign": "center",
-    },
-    "dropdown_wrapper": {
-        "position": "relative",
-        "zIndex": 9999,
-    },
-    "dropdown": {
-        "width": "min(420px, 90vw)",
-    },
-    "botao_atualizar": {
-        "backgroundColor": "#1366d6",
-        "color": "white",
-        "border": "none",
-        "padding": "8px 18px",
-        "borderRadius": "6px",
-        "cursor": "pointer",
-        "fontWeight": "600",
-        "boxShadow": "0 1px 4px rgba(19,102,214,.25)",
-    },
-    "texto_atualizacao": {
-        "color": "#6c757d",
-        "fontSize": "12px",
-        "margin": "0 0 0 10px",
-    },
-    "caixa_legenda": {
-        "background": "rgba(255,255,255,.96)",
-        "padding": "7px 10px",
-        "borderRadius": "6px",
-        "boxShadow": "0 6px 16px rgba(31,42,55,.16)",
-        "border": "1px solid #e7ecf3",
-        "fontFamily": "'Segoe UI',sans-serif",
-        "fontSize": "clamp(9px, 1.1vw, 12px)",
-        "lineHeight": "1.4",
-        "maxHeight": "38vh",
-        "overflowY": "auto",
-        "overflowX": "hidden",
-    },
-    "botao_localizacao": {
-        "width": "34px",
-        "height": "34px",
-        "backgroundColor": "white",
-        "border": "1px solid rgba(31,42,55,0.24)",
-        "borderRadius": "6px",
-        "cursor": "pointer",
-        "fontSize": "16px",
-        "lineHeight": "1",
-        "boxShadow": "0 1px 5px rgba(0,0,0,.15)",
-        "padding": "0",
-        "display": "flex",
-        "alignItems": "center",
-        "justifyContent": "center",
-    },
-    "botao_localizacao_container": {
-        "position": "absolute",
-        "top": "clamp(76px, 12vh, 128px)",
-        "left": "10px",
-        "zIndex": 1000,
-    },
-    "legenda_container": {
-        "position": "absolute",
-        "bottom": "30px",
-        "left": "10px",
-        "zIndex": 10000,
-        "pointerEvents": "auto",
-    },
-}
-
-# ==============================================================================
 # Dados estáticos — inicializados vazios, carregados em thread paralela
 # ==============================================================================
 
@@ -181,15 +112,62 @@ _last_fetch_had_data = True
 _status_lock = threading.Lock()  # protege _last_update_ts
 _gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 
+import pickle
+
+class RedisDict:
+    """Um wrapper simples para fazer o Redis se comportar parcialmente como um dict em memória."""
+    def __init__(self, client, prefix):
+        self.client = client
+        self.prefix = prefix
+        
+    def _key(self, k):
+        return f"{self.prefix}:{hash(k)}"
+        
+    def get(self, k, default=None):
+        if not self.client: return default
+        try:
+            v = self.client.get(self._key(k))
+            if v: return pickle.loads(v)
+        except Exception: pass
+        return default
+        
+    def __setitem__(self, k, v):
+        if not self.client: return
+        try:
+            self.client.set(self._key(k), pickle.dumps(v))
+        except Exception: pass
+        
+    def pop(self, k, default=None):
+        if not self.client: return default
+        try:
+            self.client.delete(self._key(k))
+        except Exception: pass
+        return default
+        
+    def clear(self):
+        if not self.client: return
+        try:
+            for key in self.client.scan_iter(f"{self.prefix}:*"):
+                self.client.delete(key)
+        except Exception: pass
+        
+    def __len__(self):
+        return 0  # LRU pruning desativado no modo Redis. Deixa o Redis gerenciar com maxmemory/TTL.
+        
+    def items(self):
+        return []
+
+# Se o Redis falhar, caímos magicamente em dicionários locais pra não travar o app.
+_map_static_cache = RedisDict(redis_client, "map_static") if redis_client else {}
+_vehicle_layers_cache = RedisDict(redis_client, "map_vehicles") if redis_client else {}
+
 # Cache das camadas estáticas (itinerários/paradas) por conjunto de linhas
 _map_static_cache_lock = threading.Lock()
-_map_static_cache = {}
 _MAP_STATIC_CACHE_MAX_ITEMS = 64
 _MAP_STATIC_CACHE_TTL_SECONDS = int(os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900"))
 
 # Cache das camadas dinâmicas de veículos por fingerprint do snapshot.
 _vehicle_layers_cache_lock = threading.Lock()
-_vehicle_layers_cache = {}
 _VEHICLE_LAYERS_CACHE_MAX_ITEMS = 96
 _VEHICLE_LAYERS_CACHE_TTL_SECONDS = int(os.getenv("VEHICLE_LAYERS_CACHE_TTL_SECONDS", "120"))
 
@@ -214,9 +192,6 @@ _vehicle_layer_cache_stats = {
 _gtfs_load_event = threading.Event()  # Sinaliza quando GTFS foi carregado
 _gtfs_load_event.clear()
 
-# ===== OTIMIZAÇÃO: Cache de SVGs pré-gerados (evita recalcular toda renderização) =====
-_svg_cache = {}  # {(color, bearing_nan): svg_data_uri}
-_svg_cache_lock = threading.Lock()
 
 # ===== OTIMIZAÇÃO: Histórico estruturado por tipo + timestamp para limpeza automática =====
 _hist_lock = threading.Lock()
@@ -264,19 +239,6 @@ _http_session_brt = _build_retry_session()
 
 # Versao de build para invalidacao de cache do frontend apos deploy.
 APP_BUILD_ID = os.getenv("APP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "dev"
-
-MARKER_LIMITS_BY_ZOOM = [
-    (9, 150),
-    (10, 250),
-    (11, 400),
-    (12, 650),
-    (13, 900),
-    (14, 1300),
-]
-
-# Modo leve para interacao: reduz custo de renderizacao quando ha muitos pontos.
-LIGHTWEIGHT_MARKER_THRESHOLD = 220
-MAX_STOPS_PER_RENDER = 450
 
 
 def _perf_record(metric_name, value_ms):
@@ -568,346 +530,6 @@ def _group_vehicle_markers(markers):
     return [dl.LayerGroup(children=markers)]
 
 
-def _gerar_svg_seta(color="#888"):
-    """Gera SVG de seta e retorna data-URI codificado."""
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
-        f'<polygon points="14,2 24,24 14,18 4,24" fill="{color}" stroke="black" stroke-width="2"/>'
-        f"</svg>"
-    )
-    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
-
-
-def _gerar_svg_circulo(color="#888"):
-    """Gera SVG de círculo e retorna data-URI codificado."""
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 28 28">'
-        f'<circle cx="14" cy="14" r="10" fill="{color}" stroke="black" stroke-width="2.5"/>'
-        f'<circle cx="14" cy="14" r="4" fill="white"/>'
-        f"</svg>"
-    )
-    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
-
-
-def _gerar_svg_usuario():
-    """Gera SVG de marcador de usuário e retorna data-URI codificado."""
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">'
-        '<circle cx="11" cy="11" r="9" fill="#0d6efd" stroke="white" stroke-width="2.5"/>'
-        '<circle cx="11" cy="11" r="3" fill="white"/>'
-        '</svg>'
-    )
-    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
-
-
-def _gerar_svg_parada():
-    """Gera SVG de placa de parada com icone de onibus e retorna data-URI codificado."""
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">'
-        '<g transform="translate(2,1)">'
-        '<rect x="1" y="1" width="20" height="18" rx="3" fill="#1f2a37" stroke="#ffffff" stroke-width="1.4"/>'
-        '<rect x="4.2" y="4.5" width="13.6" height="8.2" rx="1.8" fill="#ffffff"/>'
-        '<rect x="5.6" y="6" width="4.8" height="3.6" rx="0.8" fill="#9ec5ff"/>'
-        '<rect x="11.6" y="6" width="4.8" height="3.6" rx="0.8" fill="#9ec5ff"/>'
-        '<rect x="8.7" y="10.1" width="4.6" height="1.8" rx="0.8" fill="#1f2a37"/>'
-        '<circle cx="8" cy="13.9" r="1.25" fill="#1f2a37"/>'
-        '<circle cx="14" cy="13.9" r="1.25" fill="#1f2a37"/>'
-        '<rect x="10.3" y="19" width="1.4" height="4.7" fill="#1f2a37"/>'
-        '</g>'
-        '</svg>'
-    )
-    return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
-
-def _cache_or_generate_svg(color, bearing):
-    """Cache de SVG: retorna do cache ou gera e armazena."""
-    is_nan = bearing is None or (isinstance(bearing, float) and math.isnan(bearing))
-    # Inclui o angulo no cache para nao reutilizar a mesma seta para bearings diferentes.
-    if is_nan:
-        cache_key = (color, "circle")
-    else:
-        try:
-            bearing_norm = int(round(float(bearing))) % 360
-        except Exception:
-            bearing_norm = 0
-        cache_key = (color, f"arrow-{bearing_norm}")
-
-    with _svg_cache_lock:
-        cached = _svg_cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    if is_nan:
-        svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 28 28">'
-            f'<circle cx="14" cy="14" r="10" fill="{color}" stroke="black" stroke-width="2.5"/>'
-            f'<circle cx="14" cy="14" r="4" fill="white"/>'
-            f"</svg>"
-        )
-        result = ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [19, 19], [9, 9])
-    else:
-        svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">'
-            f'<g transform="rotate({bearing_norm}, 14, 14)">'
-            f'<polygon points="14,2 24,24 14,18 4,24" fill="{color}" stroke="black" stroke-width="2"/>'
-            f"</g></svg>"
-        )
-        result = ("data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg), [28, 28], [14, 14])
-
-    with _svg_cache_lock:
-        _svg_cache[cache_key] = result
-    return result
-
-
-STOP_SIGN_ICON = {
-    "iconUrl": _gerar_svg_parada(),
-    "iconSize": [26, 26],
-    "iconAnchor": [13, 24],
-    "popupAnchor": [0, -22],
-}
-
-
-def _limpar_historico_antigo(hist_dict, tipo="SPPO"):
-    """Remove veículos do histórico que não foram atualizados há mais de MAX_AGE_SECONDS."""
-    agora = time.time()
-    ordens_remover = []
-    for ordem, dados in hist_dict.items():
-        ts_add = dados.get("ts_add", 0)
-        if agora - ts_add > _HIST_MAX_AGE_SECONDS:
-            ordens_remover.append(ordem)
-
-    for ordem in ordens_remover:
-        del hist_dict[ordem]
-
-def make_vehicle_icon(bearing, color="#1a6faf"):
-    """Gera ícone SVG direcional como data-URI.
-    Sem direção: círculo 19x19 (2/3). Com direção: seta 28x28.
-    Retorna (url, [w, h], [ax, ay]).
-    """
-    return _cache_or_generate_svg(color, bearing)
-
-
-def haversine(lat1, lon1, lat2, lon2):
-    """Distância em metros entre dois pontos geográficos."""
-    R  = 6_371_000
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-    a  = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def bearing_between(lat1, lon1, lat2, lon2):
-    """Bearing em graus (0 = Norte, sentido horário)."""
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dl = math.radians(lon2 - lon1)
-    x  = math.sin(dl) * math.cos(p2)
-    y  = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
-
-
-# Mapeamento de configurações para processamento de dados GPS
-GPS_CONFIG = {
-    "sppo": {
-        "timestamp_col": "datahora",
-        "timestamp_divisor": 1000,
-        "lat_col": "latitude",
-        "lon_col": "longitude",
-        "ordem_col": "ordem",
-        "linha_col": "linha",
-        "velocidade_col": "velocidade",
-        "sentido_col": None,
-        "tipo": "SPPO",
-        "lat_needs_conversion": True,
-        "lon_needs_conversion": True,
-    },
-    "brt": {
-        "timestamp_col": "dataHora",
-        "timestamp_divisor": 1000,
-        "lat_col": "latitude",
-        "lon_col": "longitude",
-        "ordem_col": "codigo",
-        "linha_col": "linha",
-        "velocidade_col": "velocidade",
-        "sentido_col": "sentido",
-        "tipo": "BRT",
-        "lat_needs_conversion": False,
-        "lon_needs_conversion": False,
-    },
-}
-
-
-def _processar_dados_gps(df, config):
-    """
-    Processa DataFrame GPS de acordo com configuração de mapeamento.
-    
-    Args:
-        df: DataFrame com dados brutos
-        config: Dicionário com mapeamento de colunas
-    
-    Returns:
-        DataFrame processado ou vazio se erro
-    """
-    try:
-        if df.empty or config["ordem_col"] not in df.columns:
-            return pd.DataFrame()
-        
-        df = df.copy()
-        
-        # Processar timestamp
-        ts_col = config["timestamp_col"]
-        if ts_col in df.columns:
-            df[ts_col] = pd.to_datetime(
-                df[ts_col].astype(float) / config["timestamp_divisor"],
-                unit="s"
-            ) - timedelta(hours=3)
-        
-        # Renomear coluna ordem se necessário
-        if config["ordem_col"] != "ordem":
-            df = df.rename(columns={config["ordem_col"]: "ordem"})
-        
-        # Processar coordenadas
-        lat_col = config["lat_col"]
-        lon_col = config["lon_col"]
-        
-        if config["lat_needs_conversion"]:
-            df[lat_col] = pd.to_numeric(
-                df[lat_col].astype(str).str.replace(",", ".", regex=False),
-                errors="coerce"
-            )
-        else:
-            df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
-        
-        if config["lon_needs_conversion"]:
-            df[lon_col] = pd.to_numeric(
-                df[lon_col].astype(str).str.replace(",", ".", regex=False),
-                errors="coerce"
-            )
-        else:
-            df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
-        
-        # Processar velocidade
-        vel_col = config["velocidade_col"]
-        if vel_col in df.columns:
-            df[vel_col] = pd.to_numeric(df[vel_col], errors="coerce")
-        
-        # Selecionar colunas finais
-        colunas = ["ordem", ts_col, lat_col, lon_col, config["linha_col"], config["velocidade_col"]]
-        if config["sentido_col"]:
-            colunas.append(config["sentido_col"])
-        
-        colunas = [c for c in colunas if c in df.columns]
-        df = df[colunas].copy()
-        
-        # Renomear para nomes padrão
-        rename_map = {
-            ts_col: "datahora",
-            lat_col: "latitude",
-            lon_col: "longitude",
-            config["linha_col"]: "linha",
-            config["velocidade_col"]: "velocidade",
-        }
-        if config["sentido_col"]:
-            rename_map[config["sentido_col"]] = "sentido"
-        
-        df = df.rename(columns=rename_map)
-        df["tipo"] = config["tipo"]
-        
-        if "sentido" not in df.columns:
-            df["sentido"] = None
-        
-        return df
-        
-    except Exception as e:
-        print(f"ERRO processando {config['tipo']}: {e}")
-        return pd.DataFrame()
-
-
-def calcular_bearing_df(df, hist_list, dist_min=20):
-    """
-    Adiciona coluna 'direcao' ao DataFrame.
-    Só atualiza o bearing quando o veículo andou >= dist_min m;
-    caso contrário preserva o último bearing registrado.
-    """
-    df = df.copy()
-    df["direcao"] = float("nan")
-
-    if not hist_list:
-        return df
-
-    # Aceita histórico no formato novo (dict) e no legado (lista de dicts)
-    hist_map = hist_list if isinstance(hist_list, dict) else {r["ordem"]: r for r in hist_list}
-    if not hist_map:
-        return df
-
-    hist_df = pd.DataFrame.from_dict(hist_map, orient="index")
-    if hist_df.empty:
-        return df
-    if "bearing" not in hist_df.columns:
-        hist_df["bearing"] = hist_df.get("ultimo_bearing")
-    hist_df["ordem"] = hist_df.index
-    hist_df = hist_df.rename(columns={"lat": "lat_prev", "lng": "lng_prev", "datahora": "datahora_prev"})
-
-    # Junta apenas veículos presentes no histórico para reduzir custo de iteração.
-    cand = df.reset_index().merge(
-        hist_df[["ordem", "lat_prev", "lng_prev", "datahora_prev", "bearing"]],
-        on="ordem",
-        how="inner",
-    )
-    if cand.empty:
-        return df
-
-    cand["datahora_prev"] = pd.to_datetime(cand["datahora_prev"], errors="coerce")
-    cand["datahora"] = pd.to_datetime(cand["datahora"], errors="coerce")
-    cand = cand.dropna(subset=["datahora", "datahora_prev", "lat_prev", "lng_prev", "lat", "lng"])
-    if cand.empty:
-        return df
-
-    time_diff_min = (cand["datahora"] - cand["datahora_prev"]).abs().dt.total_seconds().div(60)
-    cand = cand[time_diff_min < 10]
-    if cand.empty:
-        return df
-
-    for row in cand.itertuples(index=False):
-        dist = haversine(row.lat_prev, row.lng_prev, row.lat, row.lng)
-        if dist >= dist_min:
-            df.at[row.index, "direcao"] = round(
-                bearing_between(row.lat_prev, row.lng_prev, row.lat, row.lng), 0
-            )
-        elif row.bearing is not None and not (isinstance(row.bearing, float) and math.isnan(row.bearing)):
-            df.at[row.index, "direcao"] = row.bearing
-
-    return df
-
-
-def atualizar_historico(hist_dict, df):
-    """
-    Mantém apenas a posição mais recente por veículo no histórico.
-    Formato novo: {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
-    """
-    ts_now = time.time()
-    # itertuples reduz overhead de iterrows em ciclos frequentes.
-    for row in df.itertuples(index=False):
-        bearing = getattr(row, "direcao", None)
-        # Converte NaN para None
-        if bearing is not None and isinstance(bearing, float) and math.isnan(bearing):
-            bearing = None
-
-        ordem = str(getattr(row, "ordem", "")).strip()
-        if not ordem:
-            continue
-
-        hist_dict[ordem] = {
-            "lat": float(getattr(row, "lat")),
-            "lng": float(getattr(row, "lng")),
-            "datahora": str(getattr(row, "datahora")),
-            "bearing": bearing,
-            "ts_add": ts_now,  # Timestamp para limpeza automática
-        }
-
-    return hist_dict
-
 
 def _filtrar_pontos_fora_municipio(df):
     """Mantém apenas pontos dentro do município (quando polígono estiver disponível)."""
@@ -959,6 +581,16 @@ app    = dash.Dash(
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
+# Otimização Enterprise: Compressão de Respostas (Gzip/Brotli) para reduzir tráfego JSON/GeoJSON
+Compress(server)
+
+# Otimização Enterprise: Rate Limiting para rotas públicas
+limiter = Limiter(
+    get_remote_address,
+    app=server,
+    default_limits=["500 per minute"],
+    storage_uri="memory://",
+)
 
 MAP_SUPPORTS_VIEWPORT = "viewport" in getattr(dl.Map, "_prop_names", [])
 
@@ -995,8 +627,51 @@ def _handle_callback_exception(exc):
         return ("", 204)
     raise exc
 
+
+@server.route("/health")
+def _health_check():
+    """Endpoint de health check para monitoramento e deploy."""
+    import json as _json
+    with _status_lock:
+        last_ts = _last_update_ts
+        fetch_ok = _last_fetch_had_data
+    gtfs_loaded = _gtfs_load_event.is_set()
+    with _perf_metrics_lock:
+        cache_hits = _vehicle_layer_cache_stats.get("hit", 0)
+        cache_misses = _vehicle_layer_cache_stats.get("miss", 0)
+    with _map_static_cache_lock:
+        static_cache_items = len(_map_static_cache)
+    with _vehicle_layers_cache_lock:
+        vehicle_cache_items = len(_vehicle_layers_cache)
+    with _get_svg_cache_lock():
+        svg_cache_items = len(_get_svg_cache())
+
+    status = {
+        "status": "healthy",
+        "gtfs_loaded": gtfs_loaded,
+        "last_gps_update": str(last_ts) if last_ts else None,
+        "last_fetch_had_data": fetch_ok,
+        "cache": {
+            "static_layers_items": static_cache_items,
+            "vehicle_layers_items": vehicle_cache_items,
+            "svg_items": svg_cache_items,
+            "vehicle_layers_hit_rate": round(
+                cache_hits / max(1, cache_hits + cache_misses) * 100, 1
+            ),
+        },
+        "build_id": APP_BUILD_ID,
+    }
+
+    try:
+        import psutil
+        proc = psutil.Process()
+        status["memory_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+    except Exception:
+        pass
+
+    return _json.dumps(status), 200, {"Content-Type": "application/json"}
+
 app.layout = build_app_layout(
-    estilos=ESTILOS,
     linhas_short=linhas_short,
     linha_exibicao=linha_exibicao,
     app_build_id=APP_BUILD_ID,
@@ -1071,6 +746,7 @@ def ajustar_intervalo_polling(tab_filtro, linhas_sel, veiculos_sel):
     Output("store-hist-sppo", "data"),
     Output("store-hist-brt", "data"),
     Output("store-veiculos-opcoes", "data"),
+    Output("store-fetch-error", "data"),
     Input("intervalo",        "n_intervals"),
     Input("btn-atualizar",    "n_clicks"),
     Input("store-tab-filtro", "data"),
@@ -1104,7 +780,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
 
     # Atualiza timestamp apenas se fetch foi bem-sucedido
     if len(dados) > 0:
-        new_ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+        new_ts = datetime.now(BRT_TZ).replace(tzinfo=None)
         with _status_lock:
             _last_update_ts = new_ts
             _last_fetch_had_data = True
@@ -1112,8 +788,11 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     if len(dados) == 0:
         with _gps_lock:
             _gps_cache = pd.DataFrame()
-        with _status_lock:
-            _last_fetch_had_data = False
+        # Sem linhas selecionadas em modo linhas → estado vazio esperado, não é erro de API
+        no_filter = (modo == "linhas" and not linhas_sel)
+        if not no_filter:
+            with _status_lock:
+                _last_fetch_had_data = False
         with _hist_lock:
             _limpar_historico_antigo(_hist_sppo_bygps, tipo="SPPO")
             _limpar_historico_antigo(_hist_brt_bygps, tipo="BRT")
@@ -1124,7 +803,8 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
             f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
             f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n=0"
         )
-        return int(time.time()), {}, {}, []
+        error_msg = None if no_filter else "⚠️ Sem dados das APIs de GPS no momento"
+        return int(time.time()), {}, {}, [], error_msg
 
     # Em modo veículos, aplica filtro por seleção após montar opções.
     if modo == "veiculos" and veiculos_sel:
@@ -1132,7 +812,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         if dados.empty:
             with _gps_lock:
                 _gps_cache = pd.DataFrame()
-            return int(time.time()), {}, {}, opcoes_veiculos
+            return int(time.time()), {}, {}, opcoes_veiculos, None
 
     sppo_df, brt_df = split_gps_por_tipo(dados)
 
@@ -1170,7 +850,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         f"fetch_ms={fetch_ms:.1f} p95_total_ms={_perf_p95('atualizar_gps_total_ms'):.1f} n={len(dados_final)}"
     )
     # Mantemos stores legados vazios para compatibilidade com clientes em cache.
-    return int(time.time()), {}, {}, opcoes_veiculos
+    return int(time.time()), {}, {}, opcoes_veiculos, None
 
 
 def _bounds_to_box(bounds):
@@ -1241,22 +921,21 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
             modo=modo,
             fetch_ok=fetch_ok,
             secao_icones=secao_icones,
-            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
         return [], [], [], [], legenda
 
     if modo == "veiculos":
         if not selected_vehicles:
-            legenda = construir_legenda_sem_veiculos(secao_icones, ESTILOS["caixa_legenda"])
+            legenda = construir_legenda_sem_veiculos(secao_icones)
             return [], [], [], [], legenda
 
         dados_filtrados = dados[dados["ordem"].astype(str).isin(selected_vehicles)].copy()
-        dados_filtrados = _filtrar_df_por_viewport(dados_filtrados, map_bounds)
+        # Não filtra por viewport em modo veículos: o veículo selecionado deve
+        # aparecer sempre, mesmo que o mapa esteja centralizado em outro ponto.
         if dados_filtrados.empty:
             legenda = construir_legenda_sem_veiculos(
                 secao_icones,
-                ESTILOS["caixa_legenda"],
-                mensagem="Nenhum veículo visível no viewport",
+                mensagem="Veículo não encontrado nos dados recentes",
             )
             return [], [], [], [], legenda
         linhas_gtfs_ativas = linhas_ativas_por_veiculos(dados_filtrados, linhas_short)
@@ -1269,7 +948,6 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
             linhas_dict=linhas_dict,
             linha_exibicao_fn=linha_exibicao,
             secao_icones=secao_icones,
-            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
     else:
         if not linhas_sel:
@@ -1279,7 +957,8 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
                     html.Span("Nenhuma linha selecionada", style={"color": "#888", "fontStyle": "italic"}),
                     secao_icones,
                 ],
-                style={**ESTILOS["caixa_legenda"], "minWidth": "clamp(135px, 18vw, 180px)"},
+                className="caixa-legenda",
+                style={"minWidth": "clamp(135px, 18vw, 180px)"},
             )
             return [], [], [], [], legenda
 
@@ -1291,13 +970,15 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
             linhas_dict=linhas_dict,
             linha_exibicao_fn=linha_exibicao,
             secao_icones=secao_icones,
-            caixa_legenda_style=ESTILOS["caixa_legenda"],
         )
         dados_filtrados = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
 
     sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
-    sppo_df = _filtrar_df_por_viewport(sppo_df, map_bounds)
-    brt_df = _filtrar_df_por_viewport(brt_df, map_bounds)
+    # Viewport filter só em modo linhas (grandes volumes); em modo veículos os
+    # dados já são poucos e não devem ser cortados pelo pan/zoom do mapa.
+    if modo == "linhas":
+        sppo_df = _filtrar_df_por_viewport(sppo_df, map_bounds)
+        brt_df = _filtrar_df_por_viewport(brt_df, map_bounds)
     t_split = time.perf_counter()
 
     # Reduz marcadores em zoom baixo para evitar travamentos na renderização

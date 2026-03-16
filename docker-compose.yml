@@ -1,0 +1,38 @@
+version: "3.9"
+services:
+  gps-bus-rio:
+    build: .
+    container_name: gps-bus-rio-app
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - FLASK_ENV=production
+      - REDIS_URL=redis://redis:6379/0
+      - SENTRY_DSN=
+      # - MAP_STATIC_CACHE_TTL_SECONDS=900
+      # - VEHICLE_LAYERS_CACHE_TTL_SECONDS=120
+      # - POLL_INTERVAL_IDLE_MS=90000
+      # - POLL_INTERVAL_LINES_ACTIVE_MS=30000
+      # - POLL_INTERVAL_VEHICLES_ACTIVE_MS=20000
+      - PERF_LOG_ENABLED=1
+    restart: unless-stopped
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      
+  redis:
+    image: redis:7-alpine
+    container_name: gps-bus-rio-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

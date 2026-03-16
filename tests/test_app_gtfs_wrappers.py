@@ -1,5 +1,6 @@
 import importlib
 import sys
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -8,8 +9,14 @@ def _import_app_module_safely():
     if "app" in sys.modules:
         return sys.modules["app"]
 
-    with patch("threading.Thread") as mocked_thread:
-        mocked_thread.return_value.start.return_value = None
+    original_thread = threading.Thread
+    class MockThread(original_thread):
+        def start(self):
+            if getattr(self, "_target", None) and self._target.__name__ == "_carregar_dados_estaticos_bg":
+                return None
+            return super().start()
+
+    with patch("threading.Thread", MockThread):
         return importlib.import_module("app")
 
 

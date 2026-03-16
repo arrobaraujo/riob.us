@@ -16,15 +16,15 @@ class PerfLoggingTests(unittest.TestCase):
                 self.assertFalse(perf_logging_enabled())
 
     def test_perf_log_respects_flag(self):
-        with patch("builtins.print") as mocked_print:
+        with patch("logging.Logger.info") as mocked_info:
             with patch.dict(os.environ, {"PERF_LOG_ENABLED": "0"}, clear=True):
                 perf_log("PERF teste")
-            mocked_print.assert_not_called()
+            mocked_info.assert_not_called()
 
-        with patch("builtins.print") as mocked_print:
+        with patch("logging.Logger.info") as mocked_info:
             with patch.dict(os.environ, {"PERF_LOG_ENABLED": "1"}, clear=True):
                 perf_log("PERF teste")
-            mocked_print.assert_called_once_with("PERF teste")
+            mocked_info.assert_called_once_with("PERF teste")
 
 
 if __name__ == "__main__":

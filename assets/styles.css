@@ -1,0 +1,110 @@
+/* ==============================================================================
+   Estilos Globais e Componentes UI
+   ============================================================================== */
+
+.header {
+    padding: clamp(6px, 1.4vw, 10px) clamp(10px, 2.2vw, 18px);
+    background-color: #1f2a37;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid #16202b;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+
+.header-titulo {
+    margin: 0;
+    font-size: clamp(14px, 2.4vw, 19px);
+    font-weight: bold;
+    letter-spacing: 0.2px;
+    text-align: center;
+}
+
+.controles {
+    padding: 8px 14px;
+    background-color: #f6f8fb;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 2px 6px rgba(31,42,55,.06);
+}
+
+.label {
+    font-weight: bold;
+    margin-bottom: 2px;
+    text-align: center;
+}
+
+.dropdown-wrapper {
+    position: relative;
+    z-index: 9999;
+}
+
+.dropdown {
+    width: min(420px, 90vw);
+}
+
+.botao-atualizar {
+    background-color: #1366d6;
+    color: white;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    box-shadow: 0 1px 4px rgba(19,102,214,.25);
+}
+
+.texto-atualizacao {
+    color: #6c757d;
+    font-size: 12px;
+    margin: 0 0 0 10px;
+}
+
+.caixa-legenda {
+    background: rgba(255,255,255,.96);
+    padding: 7px 10px;
+    border-radius: 6px;
+    box-shadow: 0 6px 16px rgba(31,42,55,.16);
+    border: 1px solid #e7ecf3;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: clamp(9px, 1.1vw, 12px);
+    line-height: 1.4;
+    max-height: 38vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.botao-localizacao {
+    width: 34px;
+    height: 34px;
+    background-color: white;
+    border: 1px solid rgba(31,42,55,0.24);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    box-shadow: 0 1px 5px rgba(0,0,0,.15);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.botao-localizacao-container {
+    position: absolute;
+    top: clamp(76px, 12vh, 128px);
+    left: 10px;
+    z-index: 1000;
+}
+
+.legenda-container {
+    position: absolute;
+    bottom: 30px;
+    left: 10px;
+    z-index: 10000;
+    pointer-events: auto;
+}

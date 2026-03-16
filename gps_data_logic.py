@@ -1,8 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+
+BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 DEFAULT_HEADERS = {
@@ -80,7 +83,7 @@ def fetch_gps_data_service(
     if modo == "linhas" and not linhas_sel:
         return pd.DataFrame()
 
-    agora = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+    agora = datetime.now(BRT_TZ).replace(tzinfo=None)
     inicio = agora - timedelta(minutes=3)
     fmt = "%Y-%m-%d+%H:%M:%S"
 

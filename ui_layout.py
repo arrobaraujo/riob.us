@@ -4,10 +4,12 @@ from dash import dcc, html
 
 APP_INDEX_STRING = """
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
     <head>
         {%metas%}
         <title>{%title%}</title>
+        <link rel="manifest" href="/assets/manifest.json">
+        <meta name="theme-color" content="#1f2a37">
         {%favicon%}
         {%css%}
         <style>
@@ -120,6 +122,40 @@ APP_INDEX_STRING = """
             ._dash-loading-callback {
                 display: none !important;
             }
+
+            .map-loading-overlay {
+                position: absolute;
+                inset: 0;
+                z-index: 9998;
+                background: rgba(238,242,247,.55);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+                transition: opacity .25s ease;
+            }
+
+            .map-loading-spinner {
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                border: 3px solid #c8d8ef;
+                border-top-color: #1366d6;
+                animation: spin .9s linear infinite;
+            }
+
+            .error-banner {
+                background: #fff3cd;
+                color: #856404;
+                border-bottom: 1px solid #ffc107;
+                padding: 4px 12px;
+                font-size: 12px;
+                text-align: center;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+            }
         </style>
     </head>
     <body>
@@ -198,8 +234,8 @@ APP_INDEX_STRING = """
 """
 
 
-def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
-    return html.Div(
+def build_app_layout(linhas_short, linha_exibicao, app_build_id):
+    app_layout = html.Div(
         [
             dcc.Interval(id="intervalo", interval=45_000, n_intervals=0),
             dcc.Interval(id="intervalo-linhas-debounce", interval=500, n_intervals=0, disabled=True),
@@ -208,6 +244,7 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
             dcc.Store(id="store-build-sync", data=None),
+            dcc.Store(id="store-loading-ack", data=None),
             dcc.Store(id="store-force-map-view", data=None),
             dcc.Store(id="store-force-map-view-ack", data=None),
             dcc.Store(id="store-tab-filtro", data="linhas"),
@@ -217,9 +254,12 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-veiculos-opcoes", data=[]),
             dcc.Store(id="store-gps-ts", data=0),
             dcc.Store(id="store-localizacao", data=None),
+            dcc.Store(id="store-fetch-error", data=None),
+            dcc.Store(id="store-zoom-atual", data=11),
+            html.Div(id="error-banner-container"),
             html.Div(
-                html.H4("🚍 Consulta de ônibus - Rio de Janeiro 🚍", style=estilos["header_titulo"]),
-                style=estilos["header"],
+                html.H4("🚍 Consulta de ônibus - Rio de Janeiro 🚍", className="header-titulo"),
+                className="header",
             ),
             html.Div(
                 [
@@ -242,16 +282,16 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
                                         selected_style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px", "fontWeight": "700"},
                                         children=html.Div(
                                             [
-                                                html.Label("Linhas:", style=estilos["label"]),
+                                                html.Label("Linhas:", className="label"),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-linhas",
                                                         options=[{"label": linha_exibicao(ln), "value": ln} for ln in linhas_short],
                                                         multi=True,
                                                         placeholder="Selecione uma ou mais linhas...",
-                                                        style=estilos["dropdown"],
+                                                        className="dropdown",
                                                     ),
-                                                    style=estilos["dropdown_wrapper"],
+                                                    className="dropdown-wrapper",
                                                 ),
                                             ],
                                             style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
@@ -266,16 +306,16 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
                                         selected_style={"display": "inline-flex", "flex": "1 1 50%", "justifyContent": "center", "alignItems": "center", "padding": "4px 12px", "height": "32px", "lineHeight": "20px", "fontSize": "12px", "fontWeight": "700"},
                                         children=html.Div(
                                             [
-                                                html.Label("Veículos:", style=estilos["label"]),
+                                                html.Label("Veículos:", className="label"),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-veiculos",
                                                         options=[],
                                                         multi=True,
                                                         placeholder="Selecione um ou mais veículos...",
-                                                        style=estilos["dropdown"],
+                                                        className="dropdown",
                                                     ),
-                                                    style=estilos["dropdown_wrapper"],
+                                                    className="dropdown-wrapper",
                                                 ),
                                             ],
                                             style={"paddingTop": "4px", "display": "flex", "flexDirection": "column", "alignItems": "center", "width": "100%"},
@@ -289,15 +329,15 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
                     ),
                     html.Div(
                         [
-                            html.Button("Atualizar 🔄️", id="btn-atualizar", n_clicks=0, style=estilos["botao_atualizar"]),
-                            html.P("Última atualização:", style=estilos["texto_atualizacao"]),
-                            html.Span(id="span-update-icon", style={"marginLeft": "8px", "fontSize": "14px"}, children=""),
-                            html.Span(id="span-update-time", style={"marginLeft": "12px", "fontSize": "12px", "color": "#6c757d"}, children=""),
+                            html.Button("Atualizar 🔄️", id="btn-atualizar", n_clicks=0, className="botao-atualizar"),
+                            html.P("Última atualização:", className="texto-atualizacao"),
+                            html.Span(id="span-update-time", style={"marginLeft": "4px", "fontSize": "12px", "color": "#6c757d"}, children=""),
+                            html.Span(id="span-update-icon", style={"marginLeft": "4px", "fontSize": "14px"}, children=""),
                         ],
                         style={"display": "flex", "alignItems": "center", "justifyContent": "center", "flexWrap": "wrap", "gap": "6px", "width": "min(460px, 94vw)", "margin": "0 auto", "textAlign": "center"},
                     ),
                 ],
-                style=estilos["controles"],
+                className="controles",
             ),
             html.Div(
                 [
@@ -335,10 +375,13 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
                         ],
                     ),
                     html.Div(
-                        html.Button("📍", id="btn-localizar", n_clicks=0, title="Ir para minha localização", style=estilos["botao_localizacao"]),
-                        style=estilos["botao_localizacao_container"],
+                        html.Button("📍", id="btn-localizar", n_clicks=0, title="Ir para minha localização", className="botao-localizacao",
+                                **{"aria-label": "Ir para minha localização"}),
+                        className="botao-localizacao-container",
                     ),
-                    html.Div(id="legenda", style=estilos["legenda_container"]),
+                    html.Div(id="legenda", className="legenda-container", role="complementary", **{"aria-label": "Legenda do mapa"}),
+                    html.Div(id="map-loading-overlay", className="map-loading-overlay", style={"display": "none"},
+                             children=[html.Div(className="map-loading-spinner")]),
                 ],
                 style={"position": "relative", "flex": "1 1 auto", "minHeight": 0},
             ),
@@ -354,3 +397,21 @@ def build_app_layout(estilos, linhas_short, linha_exibicao, app_build_id):
             "background": "#eef2f7",
         },
     )
+
+    # Injetamos o script do service worker diretamente no final do componente Raiz/HTML
+    # Isso garante que registrará o SW em clientes que suportem.
+    app_layout.children.append(
+        html.Script('''
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                    navigator.serviceWorker.register('/assets/sw.js').then(function(registration) {
+                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                    }, function(err) {
+                        console.log('ServiceWorker registration failed: ', err);
+                    });
+                });
+            }
+        ''')
+    )
+
+    return app_layout

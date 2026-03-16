@@ -274,6 +274,17 @@ def construir_camadas_veiculos(
     vehicle_layers_cache_ttl_seconds=None,
     emit_cache_meta=False,
 ):
+    def _tooltip(row):
+        """Texto exibido ao passar o mouse sobre o ícone do veículo."""
+        ordem = row.get('ordem', '')
+        linha = linha_publica_fn(row.get('linha', ''))
+        tipo = row.get('tipo', '')
+        return dl.Tooltip(
+            f"🚍 {ordem}  •  Linha: {linha}",
+            permanent=False,
+            sticky=True,
+        )
+
     def _popup(row, extra=None):
         try:
             vel = round(float(row.get("velocidade", 0)), 1)
@@ -291,7 +302,7 @@ def construir_camadas_veiculos(
         if extra:
             items.append(html.P(extra, style={"margin": "2px 0"}))
         items.append(html.P(f"Hora: {hora}", style={"margin": "2px 0"}))
-        return dl.Popup(html.Div(items))
+        return [_tooltip(row), dl.Popup(html.Div(items))]
 
     lightweight_mode = (len(sppo_df) + len(brt_df)) > lightweight_marker_threshold
 

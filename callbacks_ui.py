@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 import dash
-from dash import Input, Output
+from dash import Input, Output, State
 
 
 def register_ui_callbacks(app, get_last_update_ts):
@@ -41,7 +41,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         Output("intervalo-linhas-debounce", "disabled"),
         Input("dropdown-linhas", "value"),
         Input("intervalo-linhas-debounce", "n_intervals"),
-        prevent_initial_call=True,
+        prevent_initial_call=False,
     )
     def sincronizar_linhas_com_debounce(linhas_sel, _n_intervals):
         """Sincroniza seleção de linhas com debounce de 500ms."""
@@ -50,7 +50,8 @@ def register_ui_callbacks(app, get_last_update_ts):
             return dash.no_update, False
         if trigger == "intervalo-linhas-debounce":
             return linhas_sel or [], True
-        return dash.no_update, dash.no_update
+        # Chamada inicial: popula o store com a seleção atual (normalmente vazia)
+        return linhas_sel or [], True
 
     @app.callback(
         Output("store-veiculos-debounce", "data"),
@@ -82,30 +83,30 @@ def register_ui_callbacks(app, get_last_update_ts):
     @app.callback(
         Output("dropdown-veiculos", "options"),
         Input("store-veiculos-opcoes", "data"),
-        Input("mapa", "bounds"),
+        Input("dropdown-veiculos", "search_value"),
+        State("dropdown-veiculos", "value"),
     )
-    def atualizar_opcoes_veiculos(opcoes, map_bounds):
-        """Atualiza opções do dropdown de veículos com snapshot das APIs."""
+    def atualizar_opcoes_veiculos(opcoes, search_value, veiculos_sel):
+        """Busca server-side: por padrão os 150 mais recentes; com texto filtra todos."""
         options = opcoes or []
-        box = _bounds_to_box(map_bounds)
-        if box is None:
-            return options
+        selected_set = set(str(v) for v in (veiculos_sel or []) if str(v).strip())
 
-        filtered = []
-        for opt in options:
-            lat = opt.get("lat") if isinstance(opt, dict) else None
-            lng = opt.get("lng") if isinstance(opt, dict) else None
-            if lat is None or lng is None:
-                filtered.append(opt)
-                continue
-            try:
-                latf = float(lat)
-                lngf = float(lng)
-            except Exception:
-                continue
-            if box["min_lat"] <= latf <= box["max_lat"] and box["min_lon"] <= lngf <= box["max_lon"]:
-                filtered.append(opt)
-        return filtered
+        # Veículos selecionados têm prioridade — sempre aparecem no topo
+        selected_opts = [o for o in options if str(o.get("value", "")) in selected_set]
+        unselected_opts = [o for o in options if str(o.get("value", "")) not in selected_set]
+
+        search = (search_value or "").strip().lower()
+        if len(search) >= 2:
+            search_terms = search.split()
+            # Filtra garantindo que todos os termos digitados apareçam no label
+            matched = [
+                o for o in unselected_opts
+                if all(term in str(o.get("label", "")).lower() for term in search_terms)
+            ]
+            return selected_opts + matched[:200]
+
+        # Sem busca: retorna selecionados + primeiros 150 do snapshot
+        return selected_opts + unselected_opts[:150]
 
     @app.callback(
         Output("span-update-time", "children"),
@@ -122,3 +123,53 @@ def register_ui_callbacks(app, get_last_update_ts):
             except Exception:
                 tempo_texto = ""
         return tempo_texto
+
+    @app.callback(
+        Output("error-banner-container", "children"),
+        Input("store-fetch-error", "data"),
+    )
+    def atualizar_error_banner(error_msg):
+        """Mostra/oculta banner de erro quando APIs falham."""
+        if not error_msg:
+            return []
+        from dash import html as _html
+        return _html.Div(
+            [_html.Span(str(error_msg))],
+            className="error-banner",
+            role="alert",
+        )
+
+    # Zoom tracking via clientside callback para renderização zoom-aware.
+    app.clientside_callback(
+        """
+        function(bounds) {
+            if (!bounds || !Array.isArray(bounds) || bounds.length < 2) {
+                return window.dash_clientside.no_update;
+            }
+            var map = window.__gps_leaflet_map || null;
+            if (map && typeof map.getZoom === 'function') {
+                return map.getZoom();
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("store-zoom-atual", "data"),
+        Input("mapa", "bounds"),
+        prevent_initial_call=True,
+    )
+
+    # Loading overlay toggle via clientside callback.
+    # NOTA: usa store-loading-ack (store dedicado) para não conflitar com o
+    # callback store-build-sync registrado em app.py.
+    app.clientside_callback(
+        """
+        function(gpsTs) {
+            var el = document.getElementById('map-loading-overlay');
+            if (el) { el.style.display = 'none'; }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("store-loading-ack", "data"),
+        Input("store-gps-ts", "data"),
+        prevent_initial_call=True,
+    )
