@@ -192,7 +192,12 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(shapes), 1)
         self.assertEqual(len(stops), 0)
         self.assertEqual(len(cache), 3)
-        self.assertIn(("linhas", "100"), cache)
+        expected_key = (
+            "linhas",
+            ("100",),
+            (("100", "#123456"),),
+        )
+        self.assertIn(expected_key, cache)
         self.assertNotIn(("old", "0"), cache)
 
     def test_construir_camadas_estaticas_aceita_formato_legado_tupla(self):

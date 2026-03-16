@@ -243,8 +243,9 @@ linhas_dict = {}
 linhas_short = []
 linha_cor_fixa = {}
 lecd_public_map = {}  # {LECDxxx: numero_publico}
-_linhas_sem_shapes = set()  # Cache de linhas sem dados no GTFS
-_linhas_sem_shapes.clear()  # Força retry em reinicialização
+# Cache com TTL: {linha: timestamp} — linhas confirmadas sem shape
+_linhas_sem_shapes = {}  # dict com timestamp para expirar
+_LINHAS_SEM_SHAPES_TTL = 300  # 5 min — refaz tentativa depois
 
 
 def _build_retry_session():
@@ -429,10 +430,20 @@ def _carregar_dados_estaticos():
     global _rio_polygon_prepared, _garagens_polygon_prepared
 
     t0 = time.perf_counter()
-    loaded = carregar_dados_estaticos_service(
-        empty_shapes_gdf_fn=_empty_shapes_gdf,
-        empty_stops_gdf_fn=_empty_stops_gdf,
-    )
+    try:
+        loaded = carregar_dados_estaticos_service(
+            empty_shapes_gdf_fn=_empty_shapes_gdf,
+            empty_stops_gdf_fn=_empty_stops_gdf,
+        )
+    except Exception as exc:
+        ms = (time.perf_counter() - t0) * 1000
+        print(
+            f"ERRO _carregar_dados_estaticos "
+            f"({type(exc).__name__}): {exc} "
+            f"ms={ms:.1f}"
+        )
+        _gtfs_load_event.set()
+        return
 
     rio_polygon = loaded["rio_polygon"]
     _rio_polygon_prepared = loaded["rio_polygon_prepared"]
@@ -448,6 +459,14 @@ def _carregar_dados_estaticos():
         line_to_shape_coords = loaded["line_to_shape_coords"]
         line_to_stops_points = loaded["line_to_stops_points"]
         line_to_bounds = loaded["line_to_bounds"]
+
+    n_shapes = sum(
+        len(v) for v in loaded["line_to_shape_coords"].values()
+    )
+    print(
+        f"GTFS background: {len(loaded['line_to_shape_coords'])} "
+        f"linhas com shapes ({n_shapes} segmentos)"
+    )
 
     with _map_static_cache_lock:
         _map_static_cache.clear()
@@ -469,7 +488,16 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
     if not linhas_sel:
         return
 
+    now = time.time()
     with _gtfs_data_lock:
+        # Expira entradas antigas de _linhas_sem_shapes
+        expired = [
+            ln for ln, ts in _linhas_sem_shapes.items()
+            if (now - ts) > _LINHAS_SEM_SHAPES_TTL
+        ]
+        for ln in expired:
+            _linhas_sem_shapes.pop(ln, None)
+
         missing = [
             ln for ln in linhas_sel
             if (
@@ -482,18 +510,38 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
         return
 
     t0 = time.perf_counter()
-    loaded = recarregar_gtfs_estatico_sob_demanda_service(linhas_sel)
-    if not loaded:
-        # Registra falha se nada foi retornado
+    print(
+        f"GTFS on-demand: tentando carregar "
+        f"{len(missing)} linhas: {missing[:5]}"
+    )
+    try:
+        loaded = recarregar_gtfs_estatico_sob_demanda_service(
+            linhas_sel
+        )
+    except Exception as exc:
         ms = (time.perf_counter() - t0) * 1000
-        perf_log(f"PERF gtfs_reload_fail ms={ms:.1f} lines={linhas_sel}")
+        print(
+            f"ERRO gtfs_reload ({type(exc).__name__}): "
+            f"{exc} ms={ms:.1f}"
+        )
+        return
+    if not loaded:
+        ms = (time.perf_counter() - t0) * 1000
+        print(
+            f"GTFS on-demand: retorno vazio "
+            f"ms={ms:.1f} lines={linhas_sel[:5]}"
+        )
         return
 
     with _gtfs_data_lock:
         # Mescla DataFrames no dicionário gtfs
         if "gtfs" in loaded and isinstance(loaded["gtfs"], dict):
             for k, df_new in loaded["gtfs"].items():
-                if k not in gtfs or gtfs[k] is None or gtfs[k].empty:
+                existing = gtfs.get(k)
+                if (
+                    existing is None
+                    or (hasattr(existing, "empty") and existing.empty)
+                ):
                     gtfs[k] = df_new
                 else:
                     # Evita duplicatas se o reloader retornou tudo de novo.
@@ -514,7 +562,7 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
                 ln not in line_to_shape_coords
                 and ln not in line_to_stops_points
             ):
-                _linhas_sem_shapes.add(ln)
+                _linhas_sem_shapes[ln] = time.time()
 
     with _map_static_cache_lock:
         _map_static_cache.clear()

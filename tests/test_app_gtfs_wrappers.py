@@ -27,6 +27,16 @@ class AppGtfsWrappersTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _import_app_module_safely()
 
+    def setUp(self):
+        """Reseta estado global entre testes para evitar contaminação."""
+        self.app.gtfs = {}
+        self.app.line_to_shape_ids = {}
+        self.app.line_to_stop_ids = {}
+        self.app.line_to_shape_coords = {}
+        self.app.line_to_stops_points = {}
+        self.app.line_to_bounds = {}
+        self.app._linhas_sem_shapes = {}
+
     def test_carregar_dados_estaticos_wrapper_updates_globals(self):
         loaded = {
             "rio_polygon": "RIO",

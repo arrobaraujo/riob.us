@@ -197,7 +197,6 @@ def construir_camadas_estaticas(
             for coords in shape_coords_snapshot.get(linha_id, []):
                 if not _coords_intersect_view(coords):
                     continue
-                linha_label = linha_publica_fn(linha_id)
                 shapes_layers.append(
                     dl.Polyline(
                         positions=coords,
@@ -205,7 +204,6 @@ def construir_camadas_estaticas(
                         weight=5,
                         opacity=0.8,
                         className="itinerario-polyline",
-                        children=dl.Tooltip(f"Linha {linha_label}"),
                     )
                 )
 
