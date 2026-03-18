@@ -1,9 +1,9 @@
 {
   "id": "/",
-  "name": "Consulta de Ônibus - Rio de Janeiro",
+  "name": "RioB.us",
   "short_name": "RioB.us",
   "description": "Rastreie ônibus em tempo real no mapa.",
-  "start_url": "/",
+  "start_url": "https://riob.us/",
   "scope": "/",
   "display": "standalone",
   "display_override": [
