@@ -10,8 +10,16 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+.hypothesis/
+.mypy_cache/
+.nox/
+.ruff_cache/
+.tox/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+*.egg-info/
 
 # Local configuration
 .env
@@ -30,4 +38,4 @@ pytest_map_data.txt
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db
+Thumbs.db
