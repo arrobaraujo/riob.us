@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sem conexao | Onibus RJ</title>
+    <style>
+      :root {
+        --bg1: #1f2a37;
+        --bg2: #1366d6;
+        --card: #f8fbff;
+        --text: #1f2a37;
+        --muted: #5b6b7a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: "Segoe UI", sans-serif;
+        color: var(--text);
+        background: linear-gradient(140deg, var(--bg1), var(--bg2));
+      }
+
+      .card {
+        width: min(92vw, 460px);
+        border-radius: 14px;
+        padding: 24px;
+        background: var(--card);
+        border: 1px solid rgba(31, 42, 55, 0.12);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 22px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+        font-size: 14px;
+      }
+
+      .actions {
+        margin-top: 16px;
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-weight: 600;
+        color: #fff;
+        background: #1366d6;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        color: #1f2a37;
+        background: #d8e8fb;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Voce esta offline</h1>
+      <p>
+        Sem conexao com a internet no momento. Quando a conexao voltar,
+        recarregue a pagina para ver os dados em tempo real.
+      </p>
+      <div class="actions">
+        <button onclick="location.reload()">Tentar novamente</button>
+        <button class="secondary" onclick="location.href='/'">Ir para inicio</button>
+      </div>
+    </main>
+  </body>
+</html>

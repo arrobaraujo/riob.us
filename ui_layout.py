@@ -10,6 +10,11 @@ APP_INDEX_STRING = """
         <title>{%title%}</title>
         <link rel="manifest" href="/assets/manifest.json">
         <meta name="theme-color" content="#1f2a37">
+          <meta name="apple-mobile-web-app-capable" content="yes">
+          <meta name="apple-mobile-web-app-status-bar-style"
+              content="default">
+          <meta name="apple-mobile-web-app-title" content="Ônibus RJ">
+          <link rel="apple-touch-icon" href="/assets/icon-192.png">
         {%favicon%}
         {%css%}
         <style>
@@ -674,6 +679,18 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                         className="botao-localizacao-container",
                     ),
                     html.Div(
+                        html.Button(
+                            "Instalar app",
+                            id="btn-instalar-pwa",
+                            n_clicks=0,
+                            title="Instalar aplicativo",
+                            className="botao-instalar",
+                            style={"display": "none"},
+                            **{"aria-label": "Instalar aplicativo"}
+                        ),
+                        className="botao-instalar-container",
+                    ),
+                    html.Div(
                         id="legenda", className="legenda-container",
                         role="complementary",
                         **{"aria-label": "Legenda do mapa"}
@@ -709,8 +726,65 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
     # Raiz/HTML. Isso garante que registrará o SW em clientes que suportem.
     app_layout.children.append(
         html.Script('''
+            var deferredInstallPrompt = null;
+
+            function getInstallButton() {
+                return document.getElementById('btn-instalar-pwa');
+            }
+
+            function hideInstallButton() {
+                var btn = getInstallButton();
+                if (!btn) return;
+                btn.style.display = 'none';
+            }
+
+            function showInstallButton() {
+                var btn = getInstallButton();
+                if (!btn) return;
+                btn.style.display = 'inline-flex';
+            }
+
+            function bindInstallButton() {
+                var btn = getInstallButton();
+                if (!btn || btn.__pwa_install_bound) {
+                    return;
+                }
+
+                btn.addEventListener('click', function () {
+                    if (!deferredInstallPrompt) {
+                        return;
+                    }
+
+                    deferredInstallPrompt.prompt();
+                    deferredInstallPrompt.userChoice
+                        .then(function () {
+                            deferredInstallPrompt = null;
+                            hideInstallButton();
+                        })
+                        .catch(function () {
+                            deferredInstallPrompt = null;
+                            hideInstallButton();
+                        });
+                });
+
+                btn.__pwa_install_bound = true;
+            }
+
+            window.addEventListener('beforeinstallprompt', function (event) {
+                event.preventDefault();
+                deferredInstallPrompt = event;
+                bindInstallButton();
+                showInstallButton();
+            });
+
+            window.addEventListener('appinstalled', function () {
+                deferredInstallPrompt = null;
+                hideInstallButton();
+            });
+
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
+                    bindInstallButton();
                     navigator.serviceWorker.register(
                         '/assets/sw.js'
                     ).then(function(reg) {

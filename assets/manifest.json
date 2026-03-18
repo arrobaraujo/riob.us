@@ -1,21 +1,50 @@
 {
+  "id": "/",
   "name": "Consulta de Ônibus - Rio de Janeiro",
   "short_name": "Ônibus RJ",
   "description": "Rastreie ônibus SPPO e BRT em tempo real no mapa.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
   "background_color": "#eef2f7",
   "theme_color": "#1f2a37",
+  "protocol_handlers": [
+    {
+      "protocol": "web+riobus",
+      "url": "/?protocol=%s"
+    }
+  ],
   "icons": [
     {
       "src": "/assets/icon-192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any"
     },
     {
       "src": "/assets/icon-512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Tela inicial no desktop"
+    },
+    {
+      "src": "/assets/screenshot-mobile.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "label": "Tela inicial no celular"
     }
   ]
 }

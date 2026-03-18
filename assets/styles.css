@@ -101,6 +101,47 @@
     z-index: 1000;
 }
 
+.botao-instalar-container {
+    position: absolute;
+    top: clamp(76px, 12vh, 128px);
+    left: 52px;
+    z-index: 1000;
+}
+
+.botao-instalar {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid rgba(19,102,214,0.28);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.95);
+    color: #1366d6;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 1px 5px rgba(0,0,0,.15);
+    align-items: center;
+    justify-content: center;
+}
+
+.botao-instalar:hover {
+    background: #1366d6;
+    color: #ffffff;
+}
+
+@media (max-width: 768px) {
+    .botao-instalar-container {
+        top: clamp(70px, 11vh, 118px);
+        left: 50px;
+    }
+
+    .botao-instalar {
+        min-height: 32px;
+        padding: 0 10px;
+        font-size: 11px;
+    }
+}
+
 .legenda-container {
     position: absolute;
     bottom: 30px;
