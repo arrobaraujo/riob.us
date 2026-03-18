@@ -1,8 +1,8 @@
 {
   "id": "/",
   "name": "Consulta de Ônibus - Rio de Janeiro",
-  "short_name": "Ônibus RJ",
-  "description": "Rastreie ônibus SPPO e BRT em tempo real no mapa.",
+  "short_name": "RioB.us",
+  "description": "Rastreie ônibus em tempo real no mapa.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
