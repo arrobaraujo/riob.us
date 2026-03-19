@@ -355,6 +355,42 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
         {"label": linha_exibicao(ln), "value": ln}
         for ln in linhas_short
     ]
+    line_placeholder = "Selecione uma ou mais linhas..."
+    vehicle_placeholder = "Selecione um ou mais veículos..."
+
+    def _build_filter_dropdown(dropdown_id, options, placeholder):
+        return html.Div(
+            dcc.Dropdown(
+                id=dropdown_id,
+                options=options,
+                multi=True,
+                placeholder=placeholder,
+                className="dropdown",
+            ),
+            className="dropdown-wrapper",
+        )
+
+    def _build_filter_tab(label, value, dropdown_id, options, placeholder):
+        return dcc.Tab(
+            label=label,
+            value=value,
+            className="tabs-filtro-item",
+            selected_className=(
+                "tabs-filtro-item "
+                "tabs-filtro-item--selected"
+            ),
+            children=html.Div(
+                [
+                    _build_filter_dropdown(
+                        dropdown_id=dropdown_id,
+                        options=options,
+                        placeholder=placeholder,
+                    ),
+                ],
+                className="tabs-panel-content",
+            ),
+        )
+
     app_layout = html.Div(
         [
             dcc.Interval(id="intervalo", interval=45_000, n_intervals=0),
@@ -370,6 +406,12 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 n_intervals=0,
                 disabled=True
             ),
+            dcc.Interval(
+                id="intervalo-linhas-recenter",
+                interval=350,
+                n_intervals=0,
+                disabled=True
+            ),
             dcc.Store(id="store-hist-sppo", data={}),
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
@@ -379,6 +421,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-force-map-view-ack", data=None),
             dcc.Store(id="store-tab-filtro", data="linhas"),
             dcc.Store(id="store-linhas-debounce", data=[]),
+            dcc.Store(id="store-linhas-recenter-token", data=0),
             dcc.Store(id="store-veiculos-debounce", data=[]),
             dcc.Store(id="store-veiculos-recenter-token", data=0),
             dcc.Store(id="store-veiculos-opcoes", data=[]),
@@ -404,7 +447,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                         className="header-title-row"
                                     ),
                                     html.P(
-                                        "Consulta em tempo real dos ônibus municipais e BRT",
+                                        "Consulta em tempo real dos ônibus",
                                         className="header-subtitulo"
                                     ),
                                 ],
@@ -426,124 +469,20 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                 mobile_breakpoint=0,
                                 parent_className="tabs-filtro-parent",
                                 className="tabs-filtro-container",
-                                style={
-                                    "width": "100%",
-                                    "display": "flex", "flexWrap": "nowrap"
-                                },
                                 children=[
-                                    dcc.Tab(
+                                    _build_filter_tab(
                                         label="Linhas",
                                         value="linhas",
-                                        className="tabs-filtro-item",
-                                        selected_className=(
-                                            "tabs-filtro-item "
-                                            "tabs-filtro-item--selected"
-                                        ),
-                                        style={
-                                            "display": "inline-flex",
-                                            "flex": "1 1 50%",
-                                            "justifyContent": "center",
-                                            "alignItems": "center",
-                                            "padding": "4px 12px",
-                                            "height": "32px",
-                                            "lineHeight": "20px",
-                                            "fontSize": "12px"
-                                        },
-                                        selected_style={
-                                            "display": "inline-flex",
-                                            "flex": "1 1 50%",
-                                            "justifyContent": "center",
-                                            "alignItems": "center",
-                                            "padding": "4px 12px",
-                                            "height": "32px",
-                                            "lineHeight": "20px",
-                                            "fontSize": "12px",
-                                            "fontWeight": "700"
-                                        },
-                                        children=html.Div(
-                                            [
-                                                html.Div(
-                                                    dcc.Dropdown(
-                                                        id="dropdown-linhas",
-                                                        options=dropdown_opts,
-                                                        multi=True,
-                                                        placeholder=(
-                                                            "Selecione uma "
-                                                            "ou mais "
-                                                            "linhas..."
-                                                        ),
-                                                        className="dropdown",
-                                                    ),
-                                                    className=(
-                                                        "dropdown-wrapper"
-                                                    ),
-                                                ),
-                                            ],
-                                            style={
-                                                "paddingTop": "4px",
-                                                "display": "flex",
-                                                "flexDirection": "column",
-                                                "alignItems": "center",
-                                                "width": "100%"
-                                            },
-                                        ),
+                                        dropdown_id="dropdown-linhas",
+                                        options=dropdown_opts,
+                                        placeholder=line_placeholder,
                                     ),
-                                    dcc.Tab(
+                                    _build_filter_tab(
                                         label="Veículos",
                                         value="veiculos",
-                                        className="tabs-filtro-item",
-                                        selected_className=(
-                                            "tabs-filtro-item "
-                                            "tabs-filtro-item--selected"
-                                        ),
-                                        style={
-                                            "display": "inline-flex",
-                                            "flex": "1 1 50%",
-                                            "justifyContent": "center",
-                                            "alignItems": "center",
-                                            "padding": "4px 12px",
-                                            "height": "32px",
-                                            "lineHeight": "20px",
-                                            "fontSize": "12px"
-                                        },
-                                        selected_style={
-                                            "display": "inline-flex",
-                                            "flex": "1 1 50%",
-                                            "justifyContent": "center",
-                                            "alignItems": "center",
-                                            "padding": "4px 12px",
-                                            "height": "32px",
-                                            "lineHeight": "20px",
-                                            "fontSize": "12px",
-                                            "fontWeight": "700"
-                                        },
-                                        children=html.Div(
-                                            [
-                                                html.Div(
-                                                    dcc.Dropdown(
-                                                        id="dropdown-veiculos",
-                                                        options=[],
-                                                        multi=True,
-                                                        placeholder=(
-                                                            "Selecione um "
-                                                            "ou mais "
-                                                            "veículos..."
-                                                        ),
-                                                        className="dropdown",
-                                                    ),
-                                                    className=(
-                                                        "dropdown-wrapper"
-                                                    ),
-                                                ),
-                                            ],
-                                            style={
-                                                "paddingTop": "4px",
-                                                "display": "flex",
-                                                "flexDirection": "column",
-                                                "alignItems": "center",
-                                                "width": "100%"
-                                            },
-                                        ),
+                                        dropdown_id="dropdown-veiculos",
+                                        options=[],
+                                        placeholder=vehicle_placeholder,
                                     ),
                                 ],
                             ),
@@ -566,7 +505,16 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                             html.Div(
                                 [
                                     html.Span(
-                                        "Última atualização",
+                                        [
+                                            html.Span(
+                                                "Última atualização",
+                                                className="update-label-full"
+                                            ),
+                                            html.Span(
+                                                "Atualizado",
+                                                className="update-label-short"
+                                            ),
+                                        ],
                                         className="texto-atualizacao"
                                     ),
                                     html.Span(
@@ -712,9 +660,8 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
     )
 
     # Injetamos o script do service worker diretamente no final do componente
-    # Raiz/HTML. Isso garante que registrará o SW em clientes que suportem.
-    app_layout.children.append(
-        html.Script('''
+    # raiz/HTML. Isso garante que registrará o SW em clientes que suportem.
+    sw_script = html.Script('''
             var deferredInstallPrompt = null;
 
             function getInstallButton() {
@@ -789,6 +736,13 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 });
             }
         ''')
-    )
+
+    children = app_layout.children
+    if children is None:
+        app_layout.children = [sw_script]
+    elif isinstance(children, list):
+        children.append(sw_script)
+    else:
+        app_layout.children = [children, sw_script]
 
     return app_layout

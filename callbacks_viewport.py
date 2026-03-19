@@ -153,13 +153,14 @@ def register_viewport_callbacks(
             Input("store-tab-filtro", "data"),
             Input("dropdown-linhas", "value"),
             Input("store-linhas-debounce", "data"),
+            Input("store-linhas-recenter-token", "data"),
             Input("store-veiculos-debounce", "data"),
             Input("store-veiculos-recenter-token", "data"),
             prevent_initial_call=True,
         )
         def controlar_viewport_mapa(
             data_loc, gps_ts, tab_filtro,
-            linhas_sel, linhas_sel_debounce,
+            linhas_sel, linhas_sel_debounce, linhas_recenter_token,
             veiculos_sel, veiculos_recenter_token
         ):
             command, marker_layer = resolver_comando_viewport(
@@ -168,6 +169,7 @@ def register_viewport_callbacks(
                 tab_filtro,
                 linhas_sel,
                 linhas_sel_debounce,
+                linhas_recenter_token,
                 veiculos_sel,
                 veiculos_recenter_token,
             )
@@ -192,13 +194,14 @@ def register_viewport_callbacks(
             Input("store-tab-filtro", "data"),
             Input("dropdown-linhas", "value"),
             Input("store-linhas-debounce", "data"),
+            Input("store-linhas-recenter-token", "data"),
             Input("store-veiculos-debounce", "data"),
             Input("store-veiculos-recenter-token", "data"),
             prevent_initial_call=True,
         )
         def controlar_viewport_mapa(
             data_loc, gps_ts, tab_filtro,
-            linhas_sel, linhas_sel_debounce,
+            linhas_sel, linhas_sel_debounce, linhas_recenter_token,
             veiculos_sel, veiculos_recenter_token
         ):
             command, marker_layer = resolver_comando_viewport(
@@ -207,6 +210,7 @@ def register_viewport_callbacks(
                 tab_filtro,
                 linhas_sel,
                 linhas_sel_debounce,
+                linhas_recenter_token,
                 veiculos_sel,
                 veiculos_recenter_token,
             )

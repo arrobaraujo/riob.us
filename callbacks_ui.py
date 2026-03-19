@@ -40,6 +40,27 @@ def register_ui_callbacks(app, get_last_update_ts):
         return linhas_sel or [], True
 
     @app.callback(
+        Output("intervalo-linhas-recenter", "disabled"),
+        Output("store-linhas-recenter-token", "data"),
+        Input("store-linhas-debounce", "data"),
+        Input("store-tab-filtro", "data"),
+        Input("intervalo-linhas-recenter", "n_intervals"),
+        prevent_initial_call=True,
+    )
+    def agendar_recenter_linhas(linhas_sel, tab_filtro, _tick):
+        """Agenda um segundo recenter curto para foco de linhas no primeiro uso."""
+        ctx = dash.callback_context
+        trigger = ctx.triggered[0]["prop_id"].split(".")[0] \
+            if ctx.triggered else None
+        if trigger in ("store-linhas-debounce", "store-tab-filtro"):
+            if tab_filtro != "veiculos" and len(linhas_sel or []) > 0:
+                return False, dash.no_update
+            return True, dash.no_update
+        if trigger == "intervalo-linhas-recenter":
+            return True, int(time.time() * 1000)
+        return dash.no_update, dash.no_update
+
+    @app.callback(
         Output("store-veiculos-debounce", "data"),
         Input("dropdown-veiculos", "value"),
     )

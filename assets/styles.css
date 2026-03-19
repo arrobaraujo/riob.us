@@ -102,7 +102,7 @@ body[data-theme="riob"] {
 
 .header-titulo {
     margin: 0;
-    font-size: clamp(1rem, 2vw, 1.35rem);
+    font-size: clamp(0.94rem, 1.55vw, 1.12rem);
     line-height: 1.1;
     font-weight: 750;
     letter-spacing: 0.01em;
@@ -207,7 +207,7 @@ body[data-theme="riob"] {
     flex: 0 0 auto;
     padding: 10px 14px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 8px;
@@ -228,6 +228,8 @@ body[data-theme="riob"] {
     font-weight: 700;
     box-shadow: 0 12px 24px rgba(19, 102, 214, 0.24);
     transition: transform 0.16s ease, box-shadow 0.16s ease;
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .botao-atualizar:hover {
@@ -256,12 +258,22 @@ body[data-theme="riob"] {
     border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, white);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.82);
+    white-space: nowrap;
+    flex: 0 1 auto;
+    min-width: 0;
 }
 
 .texto-atualizacao {
+    display: inline-flex;
+    align-items: center;
     color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
     font-size: 0.8rem;
     font-weight: 600;
+    white-space: nowrap;
+}
+
+.update-label-short {
+    display: none;
 }
 
 .update-time-value {
@@ -421,6 +433,14 @@ body[data-theme="riob"] {
     width: 100%;
 }
 
+.tabs-panel-content {
+    padding-top: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
 /* daisyUI hides any .tab-content globally; override for Dash's dcc.Tabs panel */
 .tabs-filtro-parent .tab-content {
     display: block !important;
@@ -449,6 +469,11 @@ body[data-theme="riob"] {
     border: 1px solid transparent !important;
     background: transparent !important;
     color: color-mix(in oklab, var(--color-base-content) 60%, transparent) !important;
+    min-height: 32px !important;
+    padding: 4px 12px !important;
+    line-height: 20px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
 }
 
 .tabs-filtro-item--selected {
@@ -456,6 +481,7 @@ body[data-theme="riob"] {
     color: var(--color-base-content) !important;
     border-color: rgba(255, 255, 255, 0.82) !important;
     box-shadow: 0 10px 20px rgba(31, 42, 55, 0.08) !important;
+    font-weight: 700 !important;
 }
 
 .dropdown .Select-control {
@@ -502,13 +528,34 @@ body[data-theme="riob"] {
     color: var(--color-primary);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 640px) {
     .header {
         padding-top: 8px;
     }
 
+    .shell-navbar {
+        padding: 8px 12px;
+        gap: 10px;
+    }
+
+    .header-icon {
+        width: 2.3rem;
+        height: 2.3rem;
+        font-size: 1rem;
+    }
+
+    .header-titulo {
+        font-size: 0.9rem;
+    }
+
+    .header-subtitulo {
+        font-size: 0.68rem;
+    }
+
     .controles {
         flex-direction: column;
+        gap: 8px;
+        padding: 8px 10px;
     }
 
     .controls-card,
@@ -519,7 +566,70 @@ body[data-theme="riob"] {
 
     .toolbar-card {
         flex-direction: row;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        justify-content: space-between;
+        padding: 8px 10px;
+        gap: 6px;
+    }
+
+    .botao-atualizar {
+        min-height: 2.45rem;
+        padding: 0.62rem 0.9rem;
+        gap: 6px;
+        font-size: 0.82rem;
+    }
+
+    .update-status-chip {
+        min-height: 2.45rem;
+        padding: 0.45rem 0.72rem;
+        gap: 4px;
+    }
+
+    .texto-atualizacao {
+        font-size: 0.72rem;
+    }
+
+    .update-label-full {
+        display: none;
+    }
+
+    .update-label-short {
+        display: inline;
+    }
+
+    .update-time-value {
+        font-size: 0.76rem;
+    }
+
+    .update-time-icon {
+        min-width: 0.8rem;
+        font-size: 0.82rem;
+    }
+
+    .tabs-filtro-container {
+        gap: 6px;
+        padding: 3px;
+    }
+
+    .tabs-filtro-item {
+        min-height: 30px !important;
+        padding: 4px 8px !important;
+        line-height: 18px !important;
+        font-size: 11px !important;
+    }
+
+    .tabs-panel-content {
+        padding-top: 2px;
+    }
+
+    .dropdown .Select-control {
+        min-height: 40px;
+    }
+
+    .dropdown .Select-placeholder,
+    .dropdown .Select-value-label,
+    .dropdown .Select-input > input {
+        font-size: 12px !important;
     }
 
     .botao-instalar-container {

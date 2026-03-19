@@ -251,6 +251,7 @@ def resolver_comando_viewport(
     tab_filtro,
     linhas_sel,
     linhas_sel_debounce,
+    linhas_recenter_token,
     veiculos_sel,
     veiculos_recenter_token,
     gerar_svg_usuario,
@@ -285,6 +286,10 @@ def resolver_comando_viewport(
     has_veiculos_store_trigger = any(
         prop.startswith("store-veiculos-debounce.") for prop in triggered_props
     )
+    has_linhas_recenter_trigger = any(
+        prop.startswith("store-linhas-recenter-token.")
+        for prop in triggered_props
+    )
     has_veiculos_recenter_trigger = any(
         prop.startswith("store-veiculos-recenter-token.")
         for prop in triggered_props
@@ -293,7 +298,11 @@ def resolver_comando_viewport(
         prop.startswith("store-tab-filtro.")
         for prop in triggered_props
     )
-    has_lines_trigger = has_dropdown_trigger or has_debounce_trigger
+    has_lines_trigger = (
+        has_dropdown_trigger
+        or has_debounce_trigger
+        or has_linhas_recenter_trigger
+    )
     has_vehicles_selection_trigger = has_veiculos_store_trigger
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
 

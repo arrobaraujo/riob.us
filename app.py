@@ -1368,7 +1368,8 @@ def _calcular_viewport_veiculos(veiculos_ativos):
 
 def _resolver_comando_viewport(
     data_localizacao, gps_ts, tab_filtro, linhas_sel,
-    linhas_sel_debounce, veiculos_sel, veiculos_recenter_token
+    linhas_sel_debounce, linhas_recenter_token,
+    veiculos_sel, veiculos_recenter_token
 ):
     return viewport_logic_resolver_comando_viewport(
         data_localizacao=data_localizacao,
@@ -1376,6 +1377,7 @@ def _resolver_comando_viewport(
         tab_filtro=tab_filtro,
         linhas_sel=linhas_sel,
         linhas_sel_debounce=linhas_sel_debounce,
+        linhas_recenter_token=linhas_recenter_token,
         veiculos_sel=veiculos_sel,
         veiculos_recenter_token=veiculos_recenter_token,
         gerar_svg_usuario=_gerar_svg_usuario,
