@@ -39,36 +39,24 @@ def gerar_svg_usuario() -> str:
     """Gera SVG de marcador de usuário e retorna data-URI codificado."""
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" '
-        'width="22" height="22" viewBox="0 0 22 22">'
-        '<circle cx="11" cy="11" r="9" fill="#0d6efd" '
-        'stroke="white" stroke-width="2.5"/>'
-        '<circle cx="11" cy="11" r="3" fill="white"/>'
+        'width="28" height="28" viewBox="0 0 28 28">'
+        '<path d="M14 2.5c-4.6 0-8.3 3.7-8.3 8.3c0 5.8 6.8 13.8 7.1 14.1'
+        'c0.3 0.4 0.9 0.4 1.2 0c0.3-0.3 7.1-8.3 7.1-14.1c0-4.6-3.7-8.3-8.3-8.3z" '
+        'fill="#e53935" stroke="white" stroke-width="1.8"/>'
+        '<circle cx="14" cy="10.8" r="3.4" fill="white"/>'
         '</svg>'
     )
     return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
 
 
 def gerar_svg_parada() -> str:
-    """Gera SVG de placa de parada e retorna data-URI codificado."""
-    sw = "1.4"
+    """Gera SVG com emoji de parada e retorna data-URI codificado."""
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" '
         'width="26" height="26" viewBox="0 0 26 26">'
-        '<g transform="translate(2,1)">'
-        f'<rect x="1" y="1" width="20" height="18" rx="3" fill="#1f2a37" '
-        f'stroke="#ffffff" stroke-width="{sw}"/>'
-        '<rect x="4.2" y="4.5" width="13.6" height="8.2" rx="1.8" '
-        'fill="#ffffff"/>'
-        '<rect x="5.6" y="6" width="4.8" height="3.6" rx="0.8" '
-        'fill="#9ec5ff"/>'
-        '<rect x="11.6" y="6" width="4.8" height="3.6" rx="0.8" '
-        'fill="#9ec5ff"/>'
-        '<rect x="8.7" y="10.1" width="4.6" height="1.8" rx="0.8" '
-        'fill="#1f2a37"/>'
-        '<circle cx="8" cy="13.9" r="1.25" fill="#1f2a37"/>'
-        '<circle cx="14" cy="13.9" r="1.25" fill="#1f2a37"/>'
-        '<rect x="10.3" y="19" width="1.4" height="4.7" fill="#1f2a37"/>'
-        '</g></svg>'
+        '<text x="13" y="19" text-anchor="middle" '
+        'font-size="18">🚏</text>'
+        '</svg>'
     )
     return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
 

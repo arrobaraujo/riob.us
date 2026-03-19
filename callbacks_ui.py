@@ -6,41 +6,19 @@ from dash import Input, Output, State
 
 
 def register_ui_callbacks(app, get_last_update_ts):
-    def _bounds_to_box(bounds):
-        if not bounds or not isinstance(bounds, (list, tuple)) or \
-                len(bounds) < 2:
-            return None
-        try:
-            sw = bounds[0]
-            ne = bounds[1]
-            return {
-                "min_lat": float(sw[0]),
-                "min_lon": float(sw[1]),
-                "max_lat": float(ne[0]),
-                "max_lon": float(ne[1]),
-            }
-        except Exception:
-            return None
-
     @app.callback(
         Output("store-tab-filtro", "data"),
-        Output("texto-ajuda-tab", "children"),
         Output("dropdown-linhas", "value"),
         Output("dropdown-veiculos", "value"),
         Input("tabs-filtro", "value"),
         prevent_initial_call=False,
     )
     def sincronizar_tab_filtro(tab_value):
-        """Mantém estado da aba ativa e texto de ajuda do filtro."""
+        """Mantém estado da aba ativa e limpa o outro dropdown ao trocar aba."""
         tab = tab_value or "linhas"
         if tab == "veiculos":
-            return (
-                tab,
-                "Pesquise pelo número do veículo ou linha.",
-                [],
-                dash.no_update
-            )
-        return "linhas", "Pesquise pelo número da linha.", dash.no_update, []
+            return tab, [], dash.no_update
+        return "linhas", dash.no_update, []
 
     @app.callback(
         Output("store-linhas-debounce", "data"),
@@ -188,18 +166,4 @@ def register_ui_callbacks(app, get_last_update_ts):
         prevent_initial_call=True,
     )
 
-    # Loading overlay toggle via clientside callback.
-    # NOTA: usa store-loading-ack (store dedicado) para não conflitar com o
-    # callback store-build-sync registrado em app.py.
-    app.clientside_callback(
-        """
-        function(gpsTs) {
-            var el = document.getElementById('map-loading-overlay');
-            if (el) { el.style.display = 'none'; }
-            return window.dash_clientside.no_update;
-        }
-        """,
-        Output("store-loading-ack", "data"),
-        Input("store-gps-ts", "data"),
-        prevent_initial_call=True,
-    )
+

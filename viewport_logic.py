@@ -22,9 +22,9 @@ def calcular_viewport_linhas(
 
     recarregar_gtfs_estatico_sob_demanda(linhas_sel)
     if not gtfs_load_event.is_set():
-        gtfs_load_event.wait(timeout=1.2)
-        if not gtfs_load_event.is_set():
-            return None, None, None
+        # Evita falhar no primeiro clique: tenta aguardar um pouco,
+        # mas segue com o que já estiver disponível mesmo sem sinal.
+        gtfs_load_event.wait(timeout=2.5)
 
     with gtfs_data_lock:
         bounds_snapshot = dict(line_to_bounds)
@@ -89,11 +89,19 @@ def calcular_viewport_linhas(
     if None in (min_lat, min_lon, max_lat, max_lon):
         return None, None, None
 
+    user_agent = (request.headers.get("User-Agent", "") or "").lower()
+    is_mobile = any(
+        token in user_agent
+        for token in ["mobile", "android", "iphone", "ipad"]
+    )
+
     lat_span_raw = abs(max_lat - min_lat)
     lon_span_raw = abs(max_lon - min_lon)
 
-    lat_pad = max(0.0012, lat_span_raw * 0.08)
-    lon_pad = max(0.0012, lon_span_raw * 0.08)
+    pad_factor = 0.14 if is_mobile else 0.08
+    min_pad = 0.0022 if is_mobile else 0.0012
+    lat_pad = max(min_pad, lat_span_raw * pad_factor)
+    lon_pad = max(min_pad, lon_span_raw * pad_factor)
     min_lat -= lat_pad
     max_lat += lat_pad
     min_lon -= lon_pad
@@ -113,14 +121,10 @@ def calcular_viewport_linhas(
     zoom_lat = math.log2(170.0 / lat_span)
     zoom_lon = math.log2(360.0 / lon_span)
 
-    user_agent = (request.headers.get("User-Agent", "") or "").lower()
-    is_mobile = any(
-        token in user_agent
-        for token in ["mobile", "android", "iphone", "ipad"]
-    )
     min_zoom = 13 if is_mobile else (14 if len(linhas_sel) == 1 else 13)
     zoom_base = math.floor(min(zoom_lat, zoom_lon))
-    zoom = int(max(min_zoom, min(17, zoom_base + 2)))
+    zoom_offset = 1 if is_mobile else 2
+    zoom = int(max(min_zoom, min(17, zoom_base + zoom_offset)))
 
     return center, zoom, bounds
 
@@ -286,7 +290,6 @@ def resolver_comando_viewport(
         for prop in triggered_props
     )
     has_tab_trigger = any(
-        prop.startswith("tabs-filtro.") or
         prop.startswith("store-tab-filtro.")
         for prop in triggered_props
     )
@@ -309,16 +312,35 @@ def resolver_comando_viewport(
 
         lat = float(data_localizacao["lat"])
         lon = float(data_localizacao["lon"])
-        icone_usuario = gerar_svg_usuario()
-        marcador = dl.Marker(
-            position=[lat, lon],
-            icon={
-                "iconUrl": icone_usuario,
-                "iconSize": [22, 22],
-                "iconAnchor": [11, 11]
-            },
-            children=dl.Tooltip("Você está aqui"),
-        )
+        marker_icon = {
+            "iconSize": [22, 22],
+            "iconAnchor": [11, 11],
+            "popupAnchor": [0, -11],
+            "className": "map-user-pin-icon",
+        }
+        try:
+            icon_url = gerar_svg_usuario()
+            if icon_url:
+                marker_icon["iconUrl"] = icon_url
+        except Exception:
+            icon_url = None
+
+        if marker_icon.get("iconUrl"):
+            marcador = dl.Marker(
+                position=[lat, lon],
+                icon=marker_icon,
+                children=dl.Tooltip("Você está aqui"),
+            )
+        else:
+            marcador = dl.CircleMarker(
+                center=[lat, lon],
+                radius=8,
+                color="#ffffff",
+                weight=2,
+                fillColor="#0d6efd",
+                fillOpacity=0.95,
+                children=dl.Tooltip("Você está aqui"),
+            )
         zoom_loc = 16
         return {
             "center": [lat, lon],
@@ -354,10 +376,7 @@ def resolver_comando_viewport(
                     return {"center": center, "zoom": 12}, dash.no_update
             return dash.no_update, dash.no_update
 
-        if map_supports_viewport:
-            command = {"center": center, "zoom": zoom}
-        else:
-            command = {"center": center, "zoom": zoom}
+        command = {"center": center, "zoom": zoom, "bounds": bounds}
         return command, dash.no_update
 
     if (

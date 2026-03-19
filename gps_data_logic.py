@@ -20,7 +20,7 @@ DEFAULT_HEADERS = {
 
 
 def sanitize_selection(values):
-    return [str(v) for v in (values or []) if str(v).strip()]
+    return [str(v) for v in (values or []) if v is not None and str(v).strip()]
 
 
 def _fetch_sppo(

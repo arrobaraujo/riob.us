@@ -1,41 +1,191 @@
 /* ==============================================================================
-   Estilos Globais e Componentes UI
+   daisyUI Theme + App Shell
    ============================================================================== */
 
+:root,
+body[data-theme="riob"] {
+    --color-base-100: oklch(98.5% 0.008 220);
+    --color-base-200: oklch(95.8% 0.014 224);
+    --color-base-300: oklch(90.2% 0.02 226);
+    --color-base-content: oklch(26% 0.028 246);
+    --color-primary: oklch(52% 0.16 249);
+    --color-primary-content: oklch(98% 0.01 240);
+    --color-secondary: oklch(38% 0.05 242);
+    --color-secondary-content: oklch(96% 0.01 240);
+    --color-accent: oklch(72% 0.14 190);
+    --color-accent-content: oklch(23% 0.04 210);
+    --color-neutral: oklch(26% 0.03 248);
+    --color-neutral-content: oklch(95% 0.01 240);
+    --color-info: oklch(72% 0.11 224);
+    --color-info-content: oklch(27% 0.03 238);
+    --color-success: oklch(73% 0.14 163);
+    --color-success-content: oklch(28% 0.04 166);
+    --color-warning: oklch(79% 0.16 78);
+    --color-warning-content: oklch(31% 0.06 52);
+    --color-error: oklch(67% 0.19 20);
+    --color-error-content: oklch(27% 0.08 18);
+    --radius-box: 1.15rem;
+    --radius-field: 0.9rem;
+    --radius-selector: 0.8rem;
+    --depth: 1;
+}
+
+.app-shell {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+    max-width: 100vw;
+    color: var(--color-base-content);
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(115, 184, 255, 0.24), transparent 32%),
+        radial-gradient(circle at top right, rgba(84, 210, 194, 0.18), transparent 28%),
+        linear-gradient(180deg, #edf4fb 0%, #e6eef8 40%, #dde8f5 100%);
+}
+
+.shell-banner {
+    position: relative;
+    z-index: 30;
+}
+
 .header {
-    padding: clamp(6px, 1.4vw, 10px) clamp(10px, 2.2vw, 18px);
-    background-color: #1f2a37;
-    color: white;
+    padding: clamp(10px, 1.8vw, 18px) clamp(12px, 2.6vw, 24px) 0;
+}
+
+.shell-navbar {
+    min-height: 0;
+    padding: clamp(10px, 1.6vw, 16px) clamp(14px, 2vw, 20px);
+    justify-content: center;
+    align-items: center;
+    gap: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    border-radius: 1.25rem;
+    background:
+        linear-gradient(135deg, rgba(19, 33, 53, 0.96), rgba(24, 56, 96, 0.88)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+    box-shadow: 0 22px 46px rgba(26, 54, 91, 0.18);
+    color: #f6fbff;
+}
+
+.header-brand {
     display: flex;
     align-items: center;
+    gap: 12px;
+    width: auto;
+}
+
+.header-icon {
+    width: 2.8rem;
+    height: 2.8rem;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
-    border-bottom: 1px solid #16202b;
-    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(86, 187, 255, 0.35), rgba(255, 255, 255, 0.14));
+    font-size: 1.2rem;
+}
+
+.header-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.header-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
 .header-titulo {
     margin: 0;
-    font-size: clamp(14px, 2.4vw, 19px);
-    font-weight: bold;
-    letter-spacing: 0.2px;
-    text-align: center;
+    font-size: clamp(1rem, 2vw, 1.35rem);
+    line-height: 1.1;
+    font-weight: 750;
+    letter-spacing: 0.01em;
+}
+
+.header-subtitulo {
+    margin: 0;
+    color: rgba(236, 245, 255, 0.75);
+    font-size: clamp(0.74rem, 1.15vw, 0.9rem);
+}
+
+.header-status {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.08);
+    color: #ecfff7;
+    backdrop-filter: blur(8px);
+}
+
+.header-status-text {
+    font-weight: 700;
 }
 
 .controles {
-    padding: 8px 14px;
-    background-color: #f6f8fb;
-    border-bottom: 1px solid #dee2e6;
+    padding: 10px clamp(10px, 2vw, 20px);
     display: flex;
-    flex-direction: column;
-    align-items: center;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.controls-card,
+.toolbar-card,
+.map-frame {
+    border-color: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: none;
+    box-shadow: 0 10px 24px rgba(33, 57, 88, 0.08);
+}
+
+.controls-card {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 14px 14px 12px;
+}
+
+.controls-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.controls-title {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.controls-subtitle {
+    margin: 2px 0 0;
+    color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+    font-size: 0.84rem;
+}
+
+.controls-badges {
+    display: flex;
     gap: 6px;
-    box-shadow: 0 2px 6px rgba(31,42,55,.06);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.controls-help {
+    margin-top: 6px;
+    text-align: center;
+    font-size: 0.76rem;
+    color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
 
 .label {
-    font-weight: bold;
-    margin-bottom: 2px;
+    font-weight: 700;
+    margin-bottom: 4px;
     text-align: center;
+    color: var(--color-base-content);
 }
 
 .dropdown-wrapper {
@@ -43,51 +193,163 @@
     z-index: 9999;
 }
 
+.controles,
+.controls-card {
+    position: relative;
+    z-index: 10001;
+}
+
 .dropdown {
     width: min(420px, 90vw);
 }
 
+.toolbar-card {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
 .botao-atualizar {
-    background-color: #1366d6;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 2.85rem;
+    padding: 0.75rem 1.2rem;
+    border: 1px solid color-mix(in oklab, var(--color-primary) 24%, white);
+    border-radius: 999px;
+    background: linear-gradient(135deg, #176edc, #0f4ea9);
     color: white;
-    border: none;
-    padding: 8px 18px;
-    border-radius: 6px;
     cursor: pointer;
-    font-weight: 600;
-    box-shadow: 0 1px 4px rgba(19,102,214,.25);
+    font-weight: 700;
+    box-shadow: 0 12px 24px rgba(19, 102, 214, 0.24);
+    transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.botao-atualizar:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 28px rgba(19, 102, 214, 0.28);
+}
+
+.botao-atualizar:disabled {
+    opacity: 0.72;
+    cursor: default;
+    transform: none;
+}
+
+.refresh-button-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.update-status-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 2.7rem;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, white);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.82);
 }
 
 .texto-atualizacao {
-    color: #6c757d;
-    font-size: 12px;
-    margin: 0 0 0 10px;
+    color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.update-time-value {
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.update-time-icon {
+    min-width: 1rem;
+    font-size: 0.95rem;
+    line-height: 1;
+}
+
+.map-frame {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.map-frame-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 6px 10px;
+}
+
+.map-frame-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.map-frame-title {
+    font-size: 0.9rem;
+    font-weight: 750;
+}
+
+.map-frame-subtitle {
+    font-size: 0.76rem;
+    color: color-mix(in oklab, var(--color-base-content) 54%, transparent);
+}
+
+.map-frame .leaflet-container {
+    border-radius: calc(var(--radius-box) - 0.25rem);
+    overflow: hidden;
 }
 
 .caixa-legenda {
-    background: rgba(255,255,255,.96);
-    padding: 7px 10px;
-    border-radius: 6px;
-    box-shadow: 0 6px 16px rgba(31,42,55,.16);
-    border: 1px solid #e7ecf3;
-    font-family: 'Segoe UI', sans-serif;
+    background: rgba(255, 255, 255, 0.96);
+    padding: 10px 12px;
+    border-radius: 1rem;
+    box-shadow: 0 10px 22px rgba(31, 42, 55, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    backdrop-filter: none;
+    font-family: "Segoe UI", sans-serif;
     font-size: clamp(9px, 1.1vw, 12px);
-    line-height: 1.4;
+    line-height: 1.45;
     max-height: 38vh;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
+.caixa-legenda > b:first-child {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px !important;
+    color: color-mix(in oklab, var(--color-base-content) 86%, transparent);
+}
+
+.caixa-legenda img {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(31, 42, 55, 0.1);
+}
+
 .botao-localizacao {
-    width: 34px;
-    height: 34px;
-    background-color: white;
-    border: 1px solid rgba(31,42,55,0.24);
-    border-radius: 6px;
+    width: 40px;
+    height: 40px;
+    background: rgba(255,255,255,0.96);
+    border: 1px solid rgba(31,42,55,0.16);
+    border-radius: 999px;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 17px;
     line-height: 1;
-    box-shadow: 0 1px 5px rgba(0,0,0,.15);
+    box-shadow: 0 10px 24px rgba(15, 36, 61, 0.18);
     padding: 0;
     display: flex;
     align-items: center;
@@ -96,30 +358,30 @@
 
 .botao-localizacao-container {
     position: absolute;
-    top: clamp(76px, 12vh, 128px);
+    top: 82px;
     left: 10px;
     z-index: 1000;
 }
 
 .botao-instalar-container {
     position: absolute;
-    top: clamp(76px, 12vh, 128px);
-    left: 52px;
+    top: 82px;
+    left: 58px;
     z-index: 1000;
 }
 
 .botao-instalar {
-    min-height: 34px;
-    padding: 0 12px;
-    border: 1px solid rgba(19,102,214,0.28);
-    border-radius: 6px;
-    background: rgba(255,255,255,0.95);
-    color: #1366d6;
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid rgba(19,102,214,0.18);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.92);
+    color: #0f4ea9;
     cursor: pointer;
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
-    box-shadow: 0 1px 5px rgba(0,0,0,.15);
+    box-shadow: 0 10px 24px rgba(15, 36, 61, 0.16);
     align-items: center;
     justify-content: center;
 }
@@ -129,23 +391,162 @@
     color: #ffffff;
 }
 
-@media (max-width: 768px) {
-    .botao-instalar-container {
-        top: clamp(70px, 11vh, 118px);
-        left: 50px;
-    }
-
-    .botao-instalar {
-        min-height: 32px;
-        padding: 0 10px;
-        font-size: 11px;
-    }
-}
-
 .legenda-container {
     position: absolute;
     bottom: 30px;
-    left: 10px;
+    left: 16px;
     z-index: 10000;
     pointer-events: auto;
+}
+
+.error-banner {
+    border: none;
+    border-bottom: 1px solid color-mix(in oklab, var(--color-warning) 35%, white);
+    background: color-mix(in oklab, var(--color-warning) 16%, white);
+    color: color-mix(in oklab, var(--color-warning-content) 90%, var(--color-base-content));
+    padding: 7px 12px;
+    font-size: 12px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+/* ==============================================================================
+   Dash Components
+   ============================================================================== */
+
+.tabs-filtro-parent {
+    width: 100%;
+}
+
+/* daisyUI hides any .tab-content globally; override for Dash's dcc.Tabs panel */
+.tabs-filtro-parent .tab-content {
+    display: block !important;
+    visibility: visible !important;
+}
+
+.tabs-filtro-container {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    width: 100%;
+    gap: 8px;
+    padding: 4px;
+    border-radius: 1rem;
+    background: color-mix(in oklab, var(--color-base-200) 88%, white);
+}
+
+.tabs-filtro-item {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 1 1 50% !important;
+    width: 50% !important;
+    max-width: 50% !important;
+    white-space: nowrap;
+    border-radius: 0.85rem !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    color: color-mix(in oklab, var(--color-base-content) 60%, transparent) !important;
+}
+
+.tabs-filtro-item--selected {
+    background: rgba(255, 255, 255, 0.92) !important;
+    color: var(--color-base-content) !important;
+    border-color: rgba(255, 255, 255, 0.82) !important;
+    box-shadow: 0 10px 20px rgba(31, 42, 55, 0.08) !important;
+}
+
+.dropdown .Select-control {
+    min-height: 44px;
+    border-radius: 0.95rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, white);
+    background: #ffffff;
+    box-shadow: 0 8px 18px rgba(31, 42, 55, 0.06);
+}
+
+.dropdown .Select.is-focused > .Select-control,
+.dropdown .Select-control:hover {
+    border-color: color-mix(in oklab, var(--color-primary) 45%, white);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 18%, transparent);
+}
+
+.dropdown .Select-value-label,
+.dropdown .Select-placeholder,
+.dropdown .Select-input > input {
+    color: var(--color-base-content) !important;
+}
+
+.dropdown .Select-menu-outer {
+    margin-top: 8px;
+    z-index: 11000 !important;
+    border-radius: 1rem;
+    border: 1px solid #e8edf2;
+    background: #ffffff;
+    box-shadow: 0 18px 34px rgba(31, 42, 55, 0.14);
+}
+
+.dropdown .Select-menu {
+    z-index: 11000 !important;
+}
+
+.dropdown .Select-option.is-focused {
+    background: color-mix(in oklab, var(--color-primary) 12%, white);
+}
+
+.dropdown .Select--multi .Select-value {
+    border-radius: 999px;
+    border: none;
+    background: color-mix(in oklab, var(--color-primary) 14%, white);
+    color: var(--color-primary);
+}
+
+@media (max-width: 768px) {
+    .header {
+        padding-top: 8px;
+    }
+
+    .controles {
+        flex-direction: column;
+    }
+
+    .controls-card,
+    .toolbar-card {
+        width: 100%;
+        flex: 0 0 auto;
+    }
+
+    .toolbar-card {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .botao-instalar-container {
+        top: 82px;
+        left: 58px;
+    }
+
+    .botao-instalar {
+        min-height: 34px;
+        padding: 0 10px;
+        font-size: 11px;
+    }
+
+    .botao-localizacao-container {
+        top: 82px;
+        left: 10px;
+    }
+
+    .legenda-container {
+        left: 10px;
+        right: auto;
+        bottom: 18px;
+        max-width: calc(100vw - 20px);
+    }
+
+    .caixa-legenda {
+        width: max-content;
+        max-width: min(220px, calc(100vw - 24px));
+    }
 }

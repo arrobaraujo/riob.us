@@ -10,7 +10,7 @@ from shapely.prepared import prep
 
 
 GTFS_STATIC_CACHE_PATH = "gtfs/gtfs_static_cache.pkl"
-GTFS_STATIC_CACHE_VERSION = 1
+GTFS_STATIC_CACHE_VERSION = 2
 
 
 def _normalize_line_key(value):
@@ -141,8 +141,6 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         "garagens_polygon": None,
         "garagens_polygon_prepared": None,
         "gtfs": {},
-        "shapes_gtfs": empty_shapes_gdf_fn(),
-        "stops_gtfs": empty_stops_gdf_fn(),
         "line_to_shape_ids": {},
         "line_to_stop_ids": {},
         "line_to_shape_coords": {},
@@ -478,14 +476,6 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                 )
 
         result["gtfs"] = gtfs
-        fallback_shapes = empty_shapes_gdf_fn()
-        result["shapes_gtfs"] = (
-            shapes_gtfs if shapes_gtfs is not None else fallback_shapes
-        )
-        fallback_stops = empty_stops_gdf_fn()
-        result["stops_gtfs"] = (
-            stops_gtfs if stops_gtfs is not None else fallback_stops
-        )
         result["line_to_shape_ids"] = line_to_shape_ids
         result["line_to_stop_ids"] = line_to_stop_ids
         result["line_to_shape_coords"] = line_to_shape_coords
@@ -494,16 +484,10 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
 
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
-        result["shapes_gtfs"] = empty_shapes_gdf_fn()
-        result["stops_gtfs"] = empty_stops_gdf_fn()
     except KeyError as e:
         print(f"ERRO ao carregar GTFS (coluna faltante): {e}")
-        result["shapes_gtfs"] = empty_shapes_gdf_fn()
-        result["stops_gtfs"] = empty_stops_gdf_fn()
     except Exception as e:
         print(f"ERRO ao carregar GTFS: {type(e).__name__} - {e}")
-        result["shapes_gtfs"] = empty_shapes_gdf_fn()
-        result["stops_gtfs"] = empty_stops_gdf_fn()
 
     _save_cached_result(source_signature, result)
     return result

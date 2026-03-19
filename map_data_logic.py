@@ -90,10 +90,6 @@ def construir_secao_icones(cache_or_generate_svg_fn):
 
 def construir_legenda_vazia(modo, fetch_ok, secao_icones):
     titulo = "Veículos no mapa:" if modo == "veiculos" else "Linhas no mapa:"
-    if not fetch_ok:
-        texto_vazio = "Sem dados novos no momento"
-    else:
-        texto_vazio = "Nenhum dado disponível no momento"
     return html.Div(
         [
             html.B(
@@ -103,10 +99,6 @@ def construir_legenda_vazia(modo, fetch_ok, secao_icones):
                     "marginBottom": "3px",
                     "fontSize": "clamp(10px, 1.1vw, 13px)"
                 }
-            ),
-            html.Span(
-                texto_vazio,
-                style={"color": "#888", "fontStyle": "italic"}
             ),
             secao_icones,
         ],
@@ -208,16 +200,6 @@ def construir_legenda_veiculos(
                             if nome_long
                             else []
                         )
-                        + [
-                            html.Br(),
-                            html.Span(
-                                f"Fonte: {tipo_val}",
-                                style={
-                                    "color": "#6a7583",
-                                    "fontSize": "clamp(9px, 1vw, 11px)"
-                                },
-                            ),
-                        ]
                     ),
                 ],
                 style={
@@ -252,13 +234,18 @@ def construir_legenda_veiculos(
 
 def construir_legenda_linhas(
     linhas_render, cores, linhas_dict,
-    linha_exibicao_fn, secao_icones
+    linha_exibicao_fn, secao_icones,
+    contagem_por_linha=None,
 ):
+    contagem_por_linha = contagem_por_linha or {}
     itens = []
     for ln in linhas_render:
         cor = cores.get(ln, "#888888")
         nome_long = linhas_dict.get(ln, "")
         linha_label = linha_exibicao_fn(ln)
+        total = int(contagem_por_linha.get(ln, 0) or 0)
+        sufixo = "Veículo" if total == 1 else "Veículos"
+        linha_titulo = f"{linha_label} - {total} {sufixo}"
         itens.append(
             html.Div(
                 [
@@ -274,7 +261,7 @@ def construir_legenda_linhas(
                         }
                     ),
                     html.Span(
-                        [html.B(linha_label)]
+                        [html.B(linha_titulo)]
                         + (
                             [
                                 html.Br(),

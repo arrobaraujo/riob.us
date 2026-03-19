@@ -91,14 +91,14 @@ class MapDataLogicTests(unittest.TestCase):
             secao_icones=html.Div("icones"),
         )
         texto = _collect_text(legenda)
-        self.assertIn("Sem dados novos no momento", texto)
+        self.assertIn("Linhas no mapa:", texto)
 
     def test_construir_legenda_sem_veiculos(self):
         legenda = construir_legenda_sem_veiculos(
             secao_icones=html.Div("icones"),
         )
         texto = _collect_text(legenda)
-        self.assertIn("Nenhum veículo selecionado", texto)
+        self.assertIn("Veículos no mapa:", texto)
 
     def test_construir_legenda_veiculos(self):
         dados = pd.DataFrame(
@@ -127,9 +127,10 @@ class MapDataLogicTests(unittest.TestCase):
             linhas_dict={"100": "Linha Centro"},
             linha_exibicao_fn=lambda x: f"L{x}",
             secao_icones=html.Div("icones"),
+            contagem_por_linha={"100": 2},
         )
         texto = _collect_text(legenda)
-        self.assertIn("L100", texto)
+        self.assertIn("L100 - 2 Veículos", texto)
         self.assertIn("Linha Centro", texto)
 
 

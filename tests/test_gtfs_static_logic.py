@@ -173,8 +173,6 @@ class GtfsStaticLogicTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
-        self.assertEqual(len(out["shapes_gtfs"]), 0)
-        self.assertEqual(len(out["stops_gtfs"]), 0)
 
     def test_recarregar_gtfs_sob_demanda_service_empty_selection(self):
         out = recarregar_gtfs_estatico_sob_demanda_service([])

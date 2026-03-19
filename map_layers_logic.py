@@ -105,7 +105,6 @@ def construir_camadas_estaticas(
     modo,
     linhas_render,
     cores,
-    gtfs_load_event,
     recarregar_gtfs_estatico_sob_demanda,
     gtfs_data_lock,
     line_to_shape_coords,
@@ -121,34 +120,11 @@ def construir_camadas_estaticas(
     viewport_bounds=None,
     viewport_padding_degrees=0.01,
 ):
-    if not gtfs_load_event.is_set():
-        pass
-
     recarregar_gtfs_estatico_sob_demanda(linhas_render)
 
     with gtfs_data_lock:
         shape_coords_snapshot = dict(line_to_shape_coords)
         stops_points_snapshot = dict(line_to_stops_points)
-
-    cache_key = (
-        modo,
-        tuple(sorted(str(ln) for ln in linhas_render)),
-        tuple(sorted(cores.items())),
-    )
-    now = time.time()
-    with map_static_cache_lock:
-        cached_layers = _cache_get(
-            map_static_cache,
-            cache_key,
-            now=now,
-            ttl_seconds=map_static_cache_ttl_seconds,
-        )
-
-    if cached_layers is not None:
-        return list(cached_layers[0]), list(cached_layers[1])
-
-    shapes_layers = []
-    paradas_layers = []
 
     def _normalize_bounds(bounds):
         if not bounds or not isinstance(bounds, (list, tuple)) or \
@@ -166,6 +142,29 @@ def construir_camadas_estaticas(
             return None
 
     normalized_bounds = _normalize_bounds(viewport_bounds)
+    cache_key = (
+        modo,
+        tuple(sorted(str(ln) for ln in linhas_render)),
+        tuple(sorted(cores.items())),
+    )
+    if normalized_bounds is not None:
+        viewport_key = tuple(round(float(v), 3) for v in normalized_bounds)
+        cache_key = cache_key + (viewport_key,)
+
+    now = time.time()
+    with map_static_cache_lock:
+        cached_layers = _cache_get(
+            map_static_cache,
+            cache_key,
+            now=now,
+            ttl_seconds=map_static_cache_ttl_seconds,
+        )
+
+    if cached_layers is not None:
+        return list(cached_layers[0]), list(cached_layers[1])
+
+    shapes_layers = []
+    paradas_layers = []
 
     def _coords_intersect_view(coords):
         if normalized_bounds is None:

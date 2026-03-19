@@ -26,7 +26,7 @@ class _FakeSession:
 class GpsDataLogicTests(unittest.TestCase):
     def test_sanitize_selection(self):
         values = [1, "", "  ", "A", None]
-        self.assertEqual(sanitize_selection(values), ["1", "A", "None"])
+        self.assertEqual(sanitize_selection(values), ["1", "A"])
 
     def test_fetch_service_mode_linhas_sem_linhas(self):
         out = fetch_gps_data_service(

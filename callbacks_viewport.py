@@ -29,17 +29,17 @@ def register_viewport_callbacks(
                     map.setView([cmd.center[0], cmd.center[1]], z, {
                         animate: false
                     });
-                    setTimeout(function () {
+                }
+
+                if (typeof map.invalidateSize === 'function') {
+                    window.requestAnimationFrame(function() {
                         try {
-                            var c = cmd.center;
-                            map.setView([c[0], c[1]], z, {animate: false});
+                            map.invalidateSize(false);
                         } catch (e2) {
                             // sem-op
                         }
-                    }, 140);
+                    });
                 }
-
-                map.invalidateSize(false);
                 return {ok: true, ts: Date.now(), token: cmd.token || null};
             } catch (e) {
                 return {

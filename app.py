@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 import re
@@ -125,7 +126,8 @@ class RedisDict:
         self.prefix = prefix
 
     def _key(self, k):
-        return f"{self.prefix}:{hash(k)}"
+        h = hashlib.sha256(str(k).encode("utf-8")).hexdigest()[:20]
+        return f"{self.prefix}:{h}"
 
     def get(self, k, default=None):
         if not self.client:
@@ -232,8 +234,6 @@ garagens_polygon = None
 _rio_polygon_prepared = None
 _garagens_polygon_prepared = None
 gtfs = {}
-shapes_gtfs = None
-stops_gtfs = None
 line_to_shape_ids = {}
 line_to_stop_ids = {}
 line_to_shape_coords = {}  # {linha: [coords_list]}
@@ -242,7 +242,6 @@ line_to_stops_points = {}
 line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
 linhas_dict = {}
 linhas_short = []
-linha_cor_fixa = {}
 lecd_public_map = {}  # {LECDxxx: numero_publico}
 # Cache com TTL: {linha: timestamp} — linhas confirmadas sem shape
 _linhas_sem_shapes = {}  # dict com timestamp para expirar
@@ -434,10 +433,6 @@ try:
                     _routes_df["route_short_name"].dropna().unique().tolist(),
                     key=linha_sort_key,
                 )
-                linha_cor_fixa = {
-                    ln: PALETA_CORES[i % len(PALETA_CORES)]
-                    for i, ln in enumerate(linhas_short)
-                }
 except FileNotFoundError:
     print("ERRO: Arquivo gtfs/gtfs.zip não encontrado no startup")
 except KeyError:
@@ -447,8 +442,8 @@ except Exception as e:
 
 
 def _carregar_dados_estaticos():
-    global rio_polygon, garagens_polygon, gtfs, shapes_gtfs
-    global stops_gtfs, line_to_shape_ids, line_to_stop_ids
+    global rio_polygon, garagens_polygon, gtfs
+    global line_to_shape_ids, line_to_stop_ids
     global line_to_shape_coords, line_to_stops_points, line_to_bounds
     global _rio_polygon_prepared, _garagens_polygon_prepared
 
@@ -475,8 +470,6 @@ def _carregar_dados_estaticos():
 
     with _gtfs_data_lock:
         gtfs = loaded["gtfs"]
-        shapes_gtfs = loaded["shapes_gtfs"]
-        stops_gtfs = loaded["stops_gtfs"]
         line_to_shape_ids = loaded["line_to_shape_ids"]
         line_to_stop_ids = loaded["line_to_stop_ids"]
         line_to_shape_coords = loaded["line_to_shape_coords"]
@@ -576,18 +569,7 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
     with _gtfs_data_lock:
         # Mescla DataFrames no dicionário gtfs
         if "gtfs" in loaded and isinstance(loaded["gtfs"], dict):
-            for k, df_new in loaded["gtfs"].items():
-                existing = gtfs.get(k)
-                if (
-                    existing is None
-                    or (hasattr(existing, "empty") and existing.empty)
-                ):
-                    gtfs[k] = df_new
-                else:
-                    # Evita duplicatas se o reloader retornou tudo de novo.
-                    # Como recarregar_gtfs_estatico_sob_demanda_service lê o
-                    # arquivo inteiro do zip, substituir é mais seguro.
-                    gtfs[k] = df_new
+            gtfs.update(loaded["gtfs"])
 
         # Mescla dicionários de mapeamento (o ponto crítico)
         line_to_shape_ids.update(loaded.get("line_to_shape_ids", {}))
@@ -777,7 +759,7 @@ def fetch_gps_data(linhas_sel=None, veiculos_sel=None, modo="linhas"):
 
 app = dash.Dash(
     __name__,
-    title="🚍 Consulta de ônibus - Rio de Janeiro 🚍",
+    title="🚍 RioB.us 🚍",
     meta_tags=[{
         "name": "viewport",
         "content": "width=device-width, initial-scale=1"
@@ -989,11 +971,11 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
     t_fetch = time.perf_counter()
     opcoes_veiculos = montar_opcoes_veiculos(dados, veiculo_exibicao)
 
-    # Atualiza timestamp apenas se fetch foi bem-sucedido
-    if len(dados) > 0:
-        new_ts = datetime.now(BRT_TZ).replace(tzinfo=None)
-        with _status_lock:
-            _last_update_ts = new_ts
+    # Atualiza timestamp a cada fetch bem-sucedido (API respondeu)
+    new_ts = datetime.now(BRT_TZ).replace(tzinfo=None)
+    with _status_lock:
+        _last_update_ts = new_ts
+        if len(dados) > 0:
             _last_fetch_had_data = True
 
     if len(dados) == 0:
@@ -1013,15 +995,15 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
             "n=0"
         )
         error_msg = (
-            None if no_filter else "⚠️ Sem dados das APIs de GPS no momento"
+            None if no_filter else "⚠️ Sem dados para alguma das linhas selecionadas"
         )
-        return int(time.time()), {}, {}, [], error_msg
+        return int(time.time() * 1000), {}, {}, [], error_msg
 
     # Em modo veículos, aplica filtro por seleção após montar opções.
     if modo == "veiculos" and veiculos_sel:
         dados = filtrar_por_veiculos(dados, veiculos_sel)
         if dados.empty:
-            return int(time.time()), {}, {}, opcoes_veiculos, None
+            return int(time.time() * 1000), {}, {}, opcoes_veiculos, None
 
     sppo_df, brt_df = split_gps_por_tipo(dados)
 
@@ -1061,7 +1043,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         f"n={len(dados_final)}"
     )
     # Mantemos stores legados vazios para compatibilidade com clientes.
-    return int(time.time()), {}, {}, opcoes_veiculos, None
+    return int(time.time() * 1000), {}, {}, opcoes_veiculos, None
 
 
 def _bounds_to_box(bounds):
@@ -1095,12 +1077,50 @@ def _filtrar_df_por_viewport(df, bounds):
     return df[mask]
 
 
+def _build_layer_group_children(layer_prefix, layers):
+    if not layers:
+        return []
+    layer_token = int(time.time() * 1000)
+    return [
+        dl.LayerGroup(
+            id=f"{layer_prefix}-inner-{layer_token}",
+            children=layers,
+        )
+    ]
+
+
+def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, dados):
+    modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
+    linhas_sel = linhas_sel or []
+    veiculos_sel = veiculos_sel or []
+
+    if dados is None or dados.empty:
+        return modo, [], {}
+
+    if modo == "veiculos":
+        selected_vehicles = set(str(v) for v in veiculos_sel)
+        if not selected_vehicles:
+            return modo, [], {}
+        dados_filtrados = dados[
+            dados["ordem"].astype(str).isin(selected_vehicles)
+        ].copy()
+        if dados_filtrados.empty:
+            return modo, [], {}
+        linhas_render = linhas_ativas_por_veiculos(
+            dados_filtrados, linhas_short
+        )
+    else:
+        if not linhas_sel:
+            return modo, [], {}
+        linhas_render = [str(ln) for ln in linhas_sel]
+
+    cores = get_linha_cores(linhas_render)
+    return modo, linhas_render, cores
+
+
 @app.callback(
     Output("layer-itinerarios", "children"),
     Output("layer-paradas", "children"),
-    Output("layer-onibus", "children"),
-    Output("layer-brt", "children"),
-    Output("legenda", "children"),
     Input("store-gps-ts", "data"),
     Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
@@ -1108,114 +1128,26 @@ def _filtrar_df_por_viewport(df, bounds):
     Input("mapa", "bounds"),
     prevent_initial_call=False,
 )
-def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
-    """Reconstrói as camadas do mapa lendo do cache server-side."""
+def atualizar_camadas_estaticas(
+    _ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds
+):
+    """Reconstrói apenas camadas estáticas, reagindo ao viewport atual."""
     t0 = time.perf_counter()
-    modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
-    linhas_sel = linhas_sel or []
-    veiculos_sel = veiculos_sel or []
-    selected_lines = set(str(ln) for ln in linhas_sel)
-    selected_vehicles = set(str(v) for v in veiculos_sel)
-    # Lê do cache server-side PRIMEIRO
     with _gps_lock:
         dados = _gps_cache
-    with _status_lock:
-        fetch_ok = _last_fetch_had_data
-    # --- Legenda ---
-    secao_icones = construir_secao_icones(_cache_or_generate_svg)
-
-    if dados.empty:
-        legenda = construir_legenda_vazia(
-            modo=modo,
-            fetch_ok=fetch_ok,
-            secao_icones=secao_icones,
-        )
-        return [], [], [], [], legenda
-
-    if modo == "veiculos":
-        if not selected_vehicles:
-            legenda = construir_legenda_sem_veiculos(secao_icones)
-            return [], [], [], [], legenda
-
-        dados_filtrados = dados[
-            dados["ordem"].astype(str).isin(selected_vehicles)
-        ].copy()
-        # Não filtra por viewport em modo veículos: o veículo selecionado deve
-        # aparecer sempre, mesmo que o mapa esteja centralizado em outro ponto.
-        if dados_filtrados.empty:
-            legenda = construir_legenda_sem_veiculos(
-                secao_icones,
-                mensagem="Veículo não encontrado nos dados recentes",
-            )
-            return [], [], [], [], legenda
-        linhas_gtfs_ativas = linhas_ativas_por_veiculos(
-            dados_filtrados, linhas_short
-        )
-        linhas_render = linhas_gtfs_ativas
-        cores = get_linha_cores(linhas_render)
-
-        legenda = construir_legenda_veiculos(
-            dados_filtrados=dados_filtrados,
-            cores=cores,
-            linhas_dict=linhas_dict,
-            linha_exibicao_fn=linha_exibicao,
-            secao_icones=secao_icones,
-        )
-    else:
-        if not linhas_sel:
-            legenda = html.Div(
-                [
-                    html.B(
-                        "Linhas no mapa:",
-                        style={
-                            "display": "block",
-                            "marginBottom": "3px",
-                            "fontSize": "clamp(10px, 1.1vw, 13px)"
-                        }
-                    ),
-                    html.Span(
-                        "Nenhuma linha selecionada",
-                        style={"color": "#888", "fontStyle": "italic"}
-                    ),
-                    secao_icones,
-                ],
-                className="caixa-legenda",
-                style={"minWidth": "clamp(135px, 18vw, 180px)"},
-            )
-            return [], [], [], [], legenda
-
-        linhas_render = [str(ln) for ln in linhas_sel]
-        cores = get_linha_cores(linhas_render)
-        legenda = construir_legenda_linhas(
-            linhas_render=linhas_render,
-            cores=cores,
-            linhas_dict=linhas_dict,
-            linha_exibicao_fn=linha_exibicao,
-            secao_icones=secao_icones,
-        )
-        dados_filtrados = dados[
-            dados["linha"].astype(str).isin(selected_lines)
-        ].copy()
-
-    sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
-    # Viewport filter só em modo linhas (grandes volumes); em modo veículos os
-    # dados já são poucos e não devem ser cortados pelo pan/zoom do mapa.
-    if modo == "linhas":
-        sppo_df = _filtrar_df_por_viewport(sppo_df, map_bounds)
-        brt_df = _filtrar_df_por_viewport(brt_df, map_bounds)
-    t_split = time.perf_counter()
-
-    # Reduz marcadores em zoom baixo para evitar travamentos na renderização
-    # Sem Input de zoom no callback para evitar incompatibilidade de payload
-    # com alguns clientes Dash/dash-leaflet. Usa zoom padrão do mapa (11).
-    sppo_df = _limit_df_for_render(sppo_df, 11)
-    brt_df = _limit_df_for_render(brt_df, 11)
+    modo, linhas_render, cores = _resolver_contexto_camadas_estaticas(
+        tab_filtro,
+        linhas_sel,
+        veiculos_sel,
+        dados,
+    )
+    if not linhas_render:
+        return [], []
 
     shapes_layers, paradas_layers = construir_camadas_estaticas(
         modo=modo,
         linhas_render=linhas_render,
         cores=cores,
-        gtfs_load_event=_gtfs_load_event,
         recarregar_gtfs_estatico_sob_demanda=(
             _recarregar_gtfs_estatico_sob_demanda
         ),
@@ -1230,11 +1162,130 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
         stop_sign_icon=STOP_SIGN_ICON,
         limit_list_for_render_fn=_limit_list_for_render,
         max_stops_per_render=MAX_STOPS_PER_RENDER,
-        viewport_bounds=map_bounds if modo == "veiculos" else None,
+        viewport_bounds=map_bounds,
     )
-    t_static = time.perf_counter()
+    total_ms = (time.perf_counter() - t0) * 1000
+    _perf_record("atualizar_mapa_static_ms", total_ms)
+    perf_log(
+        f"PERF atualizar_camadas_estaticas modo={modo} total_ms={total_ms:.1f} "
+        f"bounds={'on' if map_bounds else 'off'} lines={len(linhas_render)}"
+    )
+    return (
+        _build_layer_group_children("layer-itinerarios", shapes_layers),
+        _build_layer_group_children("layer-paradas", paradas_layers),
+    )
 
-    onibus_children, brt_children, cache_meta = construir_camadas_veiculos(
+
+@app.callback(
+    Output("layer-onibus", "children"),
+    Output("layer-brt", "children"),
+    Output("legenda", "children"),
+    Input("store-gps-ts", "data"),
+    Input("store-tab-filtro", "data"),
+    Input("store-linhas-debounce", "data"),
+    Input("store-veiculos-debounce", "data"),
+    prevent_initial_call=False,
+)
+def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
+    """Reconstrói camadas dinâmicas e legenda sem depender do viewport."""
+    t0 = time.perf_counter()
+    modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
+    linhas_sel = linhas_sel or []
+    veiculos_sel = veiculos_sel or []
+    selected_lines = set(str(ln) for ln in linhas_sel)
+    selected_vehicles = set(str(v) for v in veiculos_sel)
+
+    with _gps_lock:
+        dados = _gps_cache
+    with _status_lock:
+        fetch_ok = _last_fetch_had_data
+
+    secao_icones = construir_secao_icones(_cache_or_generate_svg)
+
+    if dados.empty:
+        legenda = construir_legenda_vazia(
+            modo=modo,
+            fetch_ok=fetch_ok,
+            secao_icones=secao_icones,
+        )
+        return [], [], legenda
+
+    if modo == "veiculos":
+        if not selected_vehicles:
+            legenda = construir_legenda_vazia(
+                modo=modo,
+                fetch_ok=fetch_ok,
+                secao_icones=secao_icones,
+            )
+            return [], [], legenda
+
+        dados_filtrados = dados[
+            dados["ordem"].astype(str).isin(selected_vehicles)
+        ].copy()
+        if dados_filtrados.empty:
+            legenda = construir_legenda_sem_veiculos(
+                secao_icones,
+                mensagem="Veículo não encontrado nos dados recentes",
+            )
+            return [], [], legenda
+
+        linhas_render = linhas_ativas_por_veiculos(
+            dados_filtrados, linhas_short
+        )
+        cores = get_linha_cores(linhas_render)
+        legenda = construir_legenda_veiculos(
+            dados_filtrados=dados_filtrados,
+            cores=cores,
+            linhas_dict=linhas_dict,
+            linha_exibicao_fn=linha_exibicao,
+            secao_icones=secao_icones,
+        )
+    else:
+        if not linhas_sel:
+            legenda = construir_legenda_linhas(
+                linhas_render=[],
+                cores={},
+                linhas_dict=linhas_dict,
+                linha_exibicao_fn=linha_exibicao,
+                secao_icones=secao_icones,
+                contagem_por_linha={},
+            )
+            return [], [], legenda
+
+        linhas_render = [str(ln) for ln in linhas_sel]
+        cores = get_linha_cores(linhas_render)
+        dados_filtrados = dados[
+            dados["linha"].astype(str).isin(selected_lines)
+        ].copy()
+        contagem_por_linha = {}
+        if "linha" in dados.columns and "ordem" in dados.columns:
+            dados_linhas = dados[
+                dados["linha"].astype(str).isin(selected_lines)
+            ].copy()
+            if not dados_linhas.empty:
+                contagem_series = (
+                    dados_linhas.groupby(dados_linhas["linha"].astype(str))["ordem"]
+                    .nunique(dropna=True)
+                )
+                contagem_por_linha = {
+                    str(k): int(v) for k, v in contagem_series.items()
+                }
+        legenda = construir_legenda_linhas(
+            linhas_render=linhas_render,
+            cores=cores,
+            linhas_dict=linhas_dict,
+            linha_exibicao_fn=linha_exibicao,
+            secao_icones=secao_icones,
+            contagem_por_linha=contagem_por_linha,
+        )
+
+    sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
+    t_split = time.perf_counter()
+
+    sppo_df = _limit_df_for_render(sppo_df, 11)
+    brt_df = _limit_df_for_render(brt_df, 11)
+
+    camadas_dinamicas = construir_camadas_veiculos(
         sppo_df=sppo_df,
         brt_df=brt_df,
         cores=cores,
@@ -1251,12 +1302,13 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
         vehicle_layers_cache_ttl_seconds=_VEHICLE_LAYERS_CACHE_TTL_SECONDS,
         emit_cache_meta=True,
     )
+    onibus_children = camadas_dinamicas[0]
+    brt_children = camadas_dinamicas[1]
+    cache_meta = camadas_dinamicas[2] if len(camadas_dinamicas) > 2 else {}
     total_ms = (time.perf_counter() - t0) * 1000
     split_ms = (t_split - t0) * 1000
-    static_ms = (t_static - t_split) * 1000
-    vehicles_ms = (time.perf_counter() - t_static) * 1000
+    vehicles_ms = (time.perf_counter() - t_split) * 1000
     _perf_record("atualizar_mapa_total_ms", total_ms)
-    _perf_record("atualizar_mapa_static_ms", static_ms)
     _perf_record("atualizar_mapa_vehicles_ms", vehicles_ms)
 
     with _perf_metrics_lock:
@@ -1270,47 +1322,28 @@ def atualizar_mapa(_ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds):
     hit_rate = (hits / total_cache_checks) * 100.0
 
     perf_log(
-        f"PERF atualizar_mapa modo={modo} total_ms={total_ms:.1f} "
-        f"split_ms={split_ms:.1f} static_ms={static_ms:.1f} "
-        f"vehicles_ms={vehicles_ms:.1f} "
-        f"p95_total={_perf_p95('atualizar_mapa_total_ms'):.1f} "
-        f"cache_hit={cache_meta.get('hit')} "
-        f"cache_hit_rate={hit_rate:.1f}% "
-        f"cache_fp={cache_meta.get('fingerprint_mode')} "
-        f"evictions={int(cache_meta.get('evictions') or 0)}"
+        f"PERF atualizar_camadas_dinamicas modo={modo} total_ms={total_ms:.1f} "
+        f"split_ms={split_ms:.1f} "
+        f"vehicles_ms={vehicles_ms:.1f} hit_rate={hit_rate:.1f}%"
     )
-
-    linhas_token = "-".join(str(ln) for ln in linhas_render[:4]) or "none"
-    layer_token = (
-        f"{modo}-{int(_ts or 0)}-{linhas_token}-"
-        f"{len(shapes_layers)}-{len(paradas_layers)}"
-    )
-    shapes_children = []
-    if shapes_layers:
-        shapes_children = [
-            dl.LayerGroup(
-                id=f"layer-itinerarios-inner-{layer_token}",
-                children=shapes_layers,
-            )
-        ]
-    paradas_children = []
-    if paradas_layers:
-        paradas_children = [
-            dl.LayerGroup(
-                id=f"layer-paradas-inner-{layer_token}",
-                children=paradas_layers,
-            )
-        ]
-
-    return (
-        shapes_children, paradas_children,
-        onibus_children, brt_children, legenda
-    )
+    return onibus_children, brt_children, legenda
 
 
-def _calcular_viewport_linhas(linhas_sel):
+# ==============================================================================
+# Viewport helpers (module scope)
+# Mantidos fora de _resolver_comando_viewport para reduzir risco de NameError
+# em refactors e facilitar testes/manutenção.
+# ==============================================================================
+
+
+def _get_gps_snapshot_for_viewport():
+    with _gps_lock:
+        return _gps_cache.copy() if not _gps_cache.empty else pd.DataFrame()
+
+
+def _calcular_viewport_linhas(linhas_ativas):
     return viewport_logic_calcular_viewport_linhas(
-        linhas_sel=linhas_sel,
+        linhas_sel=linhas_ativas,
         recarregar_gtfs_estatico_sob_demanda=(
             _recarregar_gtfs_estatico_sob_demanda
         ),
@@ -1322,16 +1355,10 @@ def _calcular_viewport_linhas(linhas_sel):
     )
 
 
-def _calcular_viewport_veiculos(veiculos_sel):
-    def _get_gps_snapshot():
-        with _gps_lock:
-            if _gps_cache.empty:
-                return pd.DataFrame()
-            return _gps_cache.copy()
-
+def _calcular_viewport_veiculos(veiculos_ativos):
     return viewport_logic_calcular_viewport_veiculos(
-        veiculos_sel=veiculos_sel,
-        get_gps_snapshot=_get_gps_snapshot,
+        veiculos_sel=veiculos_ativos,
+        get_gps_snapshot=_get_gps_snapshot_for_viewport,
         rio_polygon=rio_polygon,
         rio_polygon_prepared=_rio_polygon_prepared,
         build_point_mask=build_point_mask,
@@ -1343,13 +1370,6 @@ def _resolver_comando_viewport(
     data_localizacao, gps_ts, tab_filtro, linhas_sel,
     linhas_sel_debounce, veiculos_sel, veiculos_recenter_token
 ):
-    def _get_gps_snapshot():
-        with _gps_lock:
-            return (
-                _gps_cache.copy() if not _gps_cache.empty
-                else pd.DataFrame()
-            )
-
     return viewport_logic_resolver_comando_viewport(
         data_localizacao=data_localizacao,
         gps_ts=gps_ts,
@@ -1361,7 +1381,7 @@ def _resolver_comando_viewport(
         gerar_svg_usuario=_gerar_svg_usuario,
         calcular_viewport_linhas_fn=_calcular_viewport_linhas,
         calcular_viewport_veiculos_fn=_calcular_viewport_veiculos,
-        get_gps_snapshot=_get_gps_snapshot,
+        get_gps_snapshot=_get_gps_snapshot_for_viewport,
         map_supports_viewport=MAP_SUPPORTS_VIEWPORT,
     )
 

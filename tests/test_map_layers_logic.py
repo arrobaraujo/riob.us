@@ -38,7 +38,6 @@ class MapLayersLogicTests(unittest.TestCase):
             modo="linhas",
             linhas_render=["100"],
             cores={"100": "#123456"},
-            gtfs_load_event=threading.Event(),
             recarregar_gtfs_estatico_sob_demanda=recarregar,
             gtfs_data_lock=gtfs_lock,
             line_to_shape_coords=line_to_shape_coords,
@@ -59,7 +58,6 @@ class MapLayersLogicTests(unittest.TestCase):
             modo="linhas",
             linhas_render=["100"],
             cores={"100": "#123456"},
-            gtfs_load_event=threading.Event(),
             recarregar_gtfs_estatico_sob_demanda=recarregar,
             gtfs_data_lock=gtfs_lock,
             line_to_shape_coords=line_to_shape_coords,
@@ -174,7 +172,6 @@ class MapLayersLogicTests(unittest.TestCase):
             modo="linhas",
             linhas_render=["100"],
             cores={"100": "#123456"},
-            gtfs_load_event=threading.Event(),
             recarregar_gtfs_estatico_sob_demanda=lambda _linhas: None,
             gtfs_data_lock=gtfs_lock,
             line_to_shape_coords={"100": [[[-22.9, -43.2], [-22.91, -43.21]]]},
@@ -211,7 +208,6 @@ class MapLayersLogicTests(unittest.TestCase):
             modo="linhas",
             linhas_render=["100"],
             cores={"100": "#123456"},
-            gtfs_load_event=threading.Event(),
             recarregar_gtfs_estatico_sob_demanda=lambda _linhas: None,
             gtfs_data_lock=gtfs_lock,
             line_to_shape_coords={"100": []},
@@ -241,7 +237,6 @@ class MapLayersLogicTests(unittest.TestCase):
             modo="linhas",
             linhas_render=["100"],
             cores={"100": "#123456"},
-            gtfs_load_event=threading.Event(),
             recarregar_gtfs_estatico_sob_demanda=lambda _linhas: None,
             gtfs_data_lock=gtfs_lock,
             line_to_shape_coords={
@@ -279,6 +274,61 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(stops), 1)
         self.assertEqual(shapes[0].id, "shape-100-0")
         self.assertEqual(stops[0].id, "stop-100-0")
+
+    def test_construir_camadas_estaticas_cache_respeita_viewport(self):
+        lock = threading.Lock()
+        gtfs_lock = threading.Lock()
+        cache = {}
+
+        kwargs = dict(
+            modo="linhas",
+            linhas_render=["100"],
+            cores={"100": "#123456"},
+            recarregar_gtfs_estatico_sob_demanda=lambda _linhas: None,
+            gtfs_data_lock=gtfs_lock,
+            line_to_shape_coords={
+                "100": [
+                    [[-22.90, -43.20], [-22.91, -43.21]],
+                    [[-22.10, -44.10], [-22.11, -44.11]],
+                ]
+            },
+            line_to_stops_points={
+                "100": [
+                    {
+                        "lat": -22.90, "lon": -43.20, "stop_name": "A",
+                        "stop_code": "1", "stop_desc": "", "platform_code": ""
+                    },
+                    {
+                        "lat": -22.10, "lon": -44.10, "stop_name": "B",
+                        "stop_code": "2", "stop_desc": "", "platform_code": ""
+                    },
+                ]
+            },
+            map_static_cache_lock=lock,
+            map_static_cache=cache,
+            map_static_cache_max_items=16,
+            linha_publica_fn=lambda x: x,
+            stop_sign_icon={
+                "iconUrl": "x", "iconSize": [1, 1],
+                "iconAnchor": [0, 0], "popupAnchor": [0, 0]
+            },
+            limit_list_for_render_fn=lambda values, _limit: values,
+            max_stops_per_render=100,
+        )
+
+        shapes_a, stops_a = construir_camadas_estaticas(
+            **kwargs,
+            viewport_bounds=[[-22.95, -43.30], [-22.85, -43.10]],
+        )
+        shapes_b, stops_b = construir_camadas_estaticas(
+            **kwargs,
+            viewport_bounds=[[-22.15, -44.15], [-22.05, -44.05]],
+        )
+
+        self.assertEqual([shape.id for shape in shapes_a], ["shape-100-0"])
+        self.assertEqual([stop.id for stop in stops_a], ["stop-100-0"])
+        self.assertEqual([shape.id for shape in shapes_b], ["shape-100-1"])
+        self.assertEqual([stop.id for stop in stops_b], ["stop-100-1"])
 
     def test_construir_camadas_veiculos_expira_cache_por_ttl(self):
         sppo_df = pd.DataFrame([{

@@ -47,8 +47,6 @@ class AppGtfsWrappersTests(unittest.TestCase):
             "garagens_polygon": "GAR",
             "garagens_polygon_prepared": "GAR_PREP",
             "gtfs": {"routes": "ok"},
-            "shapes_gtfs": "SHAPES",
-            "stops_gtfs": "STOPS",
             "line_to_shape_ids": {"100": ["S1"]},
             "line_to_stop_ids": {"100": ["P1"]},
             "line_to_shape_coords": {

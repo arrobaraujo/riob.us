@@ -8,6 +8,10 @@ APP_INDEX_STRING = """
     <head>
         {%metas%}
         <title>{%title%}</title>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/daisyui@latest"
+        >
         <link rel="manifest" href="/assets/manifest.json">
         <meta name="theme-color" content="#1f2a37">
           <meta name="apple-mobile-web-app-capable" content="yes">
@@ -48,11 +52,12 @@ APP_INDEX_STRING = """
 
             .boot-card {
                 min-width: 250px;
-                padding: 16px 20px;
-                border-radius: 12px;
-                background: rgba(255,255,255,.92);
-                border: 1px solid #d5dfeb;
-                box-shadow: 0 10px 30px rgba(31,42,55,.14);
+                padding: 18px 22px;
+                border-radius: 16px;
+                background: rgba(255, 255, 255, 0.78);
+                border: 1px solid rgba(255, 255, 255, 0.82);
+                box-shadow: 0 22px 46px rgba(31, 42, 55, 0.18);
+                backdrop-filter: blur(16px);
                 text-align: center;
                 font-family: 'Segoe UI', sans-serif;
                 color: #1f2a37;
@@ -67,16 +72,16 @@ APP_INDEX_STRING = """
             .boot-subtitle {
                 margin: 8px 0 0 0;
                 font-size: 12px;
-                color: #4b5a6b;
+                color: #4d5f73;
             }
 
             .boot-spinner {
-                width: 34px;
-                height: 34px;
+                width: 36px;
+                height: 36px;
                 margin: 0 auto;
                 border-radius: 50%;
-                border: 3px solid #c8d8ef;
-                border-top-color: #1366d6;
+                border: 3px solid #c7d7ec;
+                border-top-color: #176edc;
                 animation: spin .9s linear infinite;
             }
 
@@ -156,32 +161,12 @@ APP_INDEX_STRING = """
                 display: none !important;
             }
 
-            .map-loading-overlay {
-                position: absolute;
-                inset: 0;
-                z-index: 9998;
-                background: rgba(238,242,247,.55);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                pointer-events: none;
-                transition: opacity .25s ease;
-            }
-
-            .map-loading-spinner {
-                width: 30px;
-                height: 30px;
-                border-radius: 50%;
-                border: 3px solid #c8d8ef;
-                border-top-color: #1366d6;
-                animation: spin .9s linear infinite;
-            }
-
             .error-banner {
-                background: #fff3cd;
-                color: #856404;
-                border-bottom: 1px solid #ffc107;
-                padding: 4px 12px;
+                border: none;
+                border-bottom: 1px solid color-mix(in oklab, oklch(79% 0.16 78) 35%, white);
+                background: color-mix(in oklab, oklch(79% 0.16 78) 16%, white);
+                color: color-mix(in oklab, oklch(31% 0.06 52) 90%, oklch(26% 0.028 246));
+                padding: 7px 12px;
                 font-size: 12px;
                 text-align: center;
                 display: flex;
@@ -191,7 +176,7 @@ APP_INDEX_STRING = """
             }
         </style>
     </head>
-    <body>
+    <body data-theme="riob">
         <div id="boot-loader" aria-live="polite"
              aria-label="Carregando aplicação">
             <div class="boot-card">
@@ -389,7 +374,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
             dcc.Store(id="store-build-sync", data=None),
-            dcc.Store(id="store-loading-ack", data=None),
+
             dcc.Store(id="store-force-map-view", data=None),
             dcc.Store(id="store-force-map-view-ack", data=None),
             dcc.Store(id="store-tab-filtro", data="linhas"),
@@ -401,12 +386,34 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-localizacao", data=None),
             dcc.Store(id="store-fetch-error", data=None),
             dcc.Store(id="store-zoom-atual", data=11),
-            html.Div(id="error-banner-container"),
+            html.Div(id="error-banner-container", className="shell-banner"),
             html.Div(
-                html.H4(
-                    "🚍 Consulta de ônibus - Rio de Janeiro 🚍",
-                    className="header-titulo"
-                ),
+                [
+                    html.Div(
+                        [
+                            html.Span("🚍", className="header-icon"),
+                            html.Div(
+                                [
+                                    html.Div(
+                                        [
+                                            html.H1(
+                                                "RioB.us",
+                                                className="header-titulo"
+                                            ),
+                                        ],
+                                        className="header-title-row"
+                                    ),
+                                    html.P(
+                                        "Consulta em tempo real dos ônibus municipais e BRT",
+                                        className="header-subtitulo"
+                                    ),
+                                ],
+                                className="header-copy"
+                            ),
+                        ],
+                        className="navbar shell-navbar"
+                    ),
+                ],
                 className="header",
             ),
             html.Div(
@@ -420,7 +427,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                 parent_className="tabs-filtro-parent",
                                 className="tabs-filtro-container",
                                 style={
-                                    "height": "32px", "width": "100%",
+                                    "width": "100%",
                                     "display": "flex", "flexWrap": "nowrap"
                                 },
                                 children=[
@@ -455,17 +462,14 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                         },
                                         children=html.Div(
                                             [
-                                                html.Label(
-                                                    "Linhas:",
-                                                    className="label"
-                                                ),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-linhas",
                                                         options=dropdown_opts,
                                                         multi=True,
                                                         placeholder=(
-                                                            "Selecione "
+                                                            "Selecione uma "
+                                                            "ou mais "
                                                             "linhas..."
                                                         ),
                                                         className="dropdown",
@@ -515,10 +519,6 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                         },
                                         children=html.Div(
                                             [
-                                                html.Label(
-                                                    "Veículos:",
-                                                    className="label"
-                                                ),
                                                 html.Div(
                                                     dcc.Dropdown(
                                                         id="dropdown-veiculos",
@@ -547,133 +547,131 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                     ),
                                 ],
                             ),
-                            html.Div(
-                                id="texto-ajuda-tab",
-                                style={
-                                    "fontSize": "11px", "color": "#5a6573",
-                                    "textAlign": "center", "marginTop": "2px"
-                                }
-                            ),
                         ],
-                        style={
-                            "display": "flex", "flexDirection": "column",
-                            "alignItems": "center", "width": "min(460px, 94vw)"
-                        },
+                        className="card card-border card-compact controls-card"
                     ),
                     html.Div(
                         [
                             html.Button(
-                                "Atualizar 🔄️", id="btn-atualizar",
+                                [
+                                    html.Span("Atualizar"),
+                                    html.Span(
+                                        "⟳",
+                                        className="refresh-button-icon"
+                                    ),
+                                ],
+                                id="btn-atualizar",
                                 n_clicks=0, className="botao-atualizar"
                             ),
-                            html.P(
-                                "Última atualização:",
-                                className="texto-atualizacao"
-                            ),
-                            html.Span(
-                                id="span-update-time",
-                                style={
-                                    "marginLeft": "4px", "fontSize": "12px",
-                                    "color": "#6c757d"
-                                },
-                                children=""
-                            ),
-                            html.Span(
-                                id="span-update-icon",
-                                style={
-                                    "marginLeft": "4px", "fontSize": "14px"
-                                },
-                                children=""
+                            html.Div(
+                                [
+                                    html.Span(
+                                        "Última atualização",
+                                        className="texto-atualizacao"
+                                    ),
+                                    html.Span(
+                                        id="span-update-time",
+                                        className="update-time-value",
+                                        children="--"
+                                    ),
+                                    html.Span(
+                                        id="span-update-icon",
+                                        className="update-time-icon",
+                                        children=""
+                                    ),
+                                ],
+                                className="update-status-chip"
                             ),
                         ],
-                        style={
-                            "display": "flex", "alignItems": "center",
-                            "justifyContent": "center", "flexWrap": "wrap",
-                            "gap": "6px", "width": "min(460px, 94vw)",
-                            "margin": "0 auto", "textAlign": "center"
-                        },
+                        className="card card-border card-compact toolbar-card"
                     ),
                 ],
                 className="controles",
             ),
             html.Div(
                 [
-                    dl.Map(
-                        id="mapa",
-                        center=[-22.9, -43.2],
-                        zoom=11,
-                        style={"height": "100%", "width": "100%"},
-                        children=[
-                            dl.LayersControl(
-                                [
-                                    dl.BaseLayer(
-                                        dl.TileLayer(
-                                            url=(
-                                                "https://{s}.tile"
-                                                ".openstreetmap.org"
-                                                "/{z}/{x}/{y}.png"
+                    html.Div(
+                        [
+                            dl.Map(
+                                id="mapa",
+                                center=[-22.9, -43.2],
+                                zoom=11,
+                                style={"height": "100%", "width": "100%"},
+                                children=[
+                                    dl.LayersControl(
+                                        [
+                                            dl.BaseLayer(
+                                                dl.TileLayer(
+                                                    url=(
+                                                        "https://{s}.tile"
+                                                        ".openstreetmap.org"
+                                                        "/{z}/{x}/{y}.png"
+                                                    ),
+                                                    attribution=(
+                                                        "© OpenStreetMap contributors"
+                                                    )
+                                                ),
+                                                name="OSM",
+                                                checked=False,
                                             ),
-                                            attribution=(
-                                                "© OpenStreetMap contributors"
-                                            )
-                                        ),
-                                        name="OSM",
-                                        checked=False,
-                                    ),
-                                    dl.BaseLayer(
-                                        dl.TileLayer(
-                                            url=(
-                                                "https://server"
-                                                ".arcgisonline.com"
-                                                "/ArcGIS/rest/services"
-                                                "/World_Street_Map"
-                                                "/MapServer/tile/"
-                                                "{z}/{y}/{x}"
+                                            dl.BaseLayer(
+                                                dl.TileLayer(
+                                                    url=(
+                                                        "https://server"
+                                                        ".arcgisonline.com"
+                                                        "/ArcGIS/rest/services"
+                                                        "/World_Street_Map"
+                                                        "/MapServer/tile/"
+                                                        "{z}/{y}/{x}"
+                                                    ),
+                                                    attribution="Esri"
+                                                ),
+                                                name="ESRI Padrão",
+                                                checked=True,
                                             ),
-                                            attribution="Esri"
-                                        ),
-                                        name="ESRI Padrão",
-                                        checked=True,
-                                    ),
-                                    dl.BaseLayer(
-                                        dl.TileLayer(
-                                            url=(
-                                                "https://server"
-                                                ".arcgisonline.com"
-                                                "/ArcGIS/rest/services"
-                                                "/Canvas/World_Light_Gra"
-                                                "y_Base/MapServer"
-                                                "/tile/{z}/{y}/{x}"
+                                            dl.BaseLayer(
+                                                dl.TileLayer(
+                                                    url=(
+                                                        "https://server"
+                                                        ".arcgisonline.com"
+                                                        "/ArcGIS/rest/services"
+                                                        "/Canvas/World_Light_Gra"
+                                                        "y_Base/MapServer"
+                                                        "/tile/{z}/{y}/{x}"
+                                                    ),
+                                                    attribution="Esri"
+                                                ),
+                                                name="ESRI P&B",
+                                                checked=False,
                                             ),
-                                            attribution="Esri"
-                                        ),
-                                        name="ESRI P&B",
-                                        checked=False,
-                                    ),
-                                    dl.Overlay(
-                                        dl.LayerGroup(id="layer-itinerarios"),
-                                        name="Itinerários", checked=True
-                                    ),
-                                    dl.Overlay(
-                                        dl.LayerGroup(id="layer-paradas"),
-                                        name="Paradas", checked=False
-                                    ),
-                                    dl.Overlay(
-                                        dl.LayerGroup(id="layer-onibus"),
-                                        name="Ônibus", checked=True
-                                    ),
-                                    dl.Overlay(
-                                        dl.LayerGroup(id="layer-brt"),
-                                        name="BRT", checked=True
-                                    ),
-                                    dl.Overlay(
-                                        dl.LayerGroup(id="layer-localizacao"),
-                                        name="Minha posição", checked=True
+                                            dl.Overlay(
+                                                dl.LayerGroup(id="layer-itinerarios"),
+                                                name="Itinerários", checked=True
+                                            ),
+                                            dl.Overlay(
+                                                dl.LayerGroup(id="layer-paradas"),
+                                                name="Paradas", checked=False
+                                            ),
+                                            dl.Overlay(
+                                                dl.LayerGroup(id="layer-onibus"),
+                                                name="Ônibus", checked=True
+                                            ),
+                                            dl.Overlay(
+                                                dl.LayerGroup(id="layer-brt"),
+                                                name="BRT", checked=True
+                                            ),
+                                            dl.Overlay(
+                                                dl.LayerGroup(id="layer-localizacao"),
+                                                name="Minha posição", checked=True
+                                            ),
+                                        ],
+                                        position="topright",
                                     ),
                                 ],
-                                position="topright",
                             ),
                         ],
+                        className="card card-border map-frame",
+                        style={"flex": "1 1 auto", "minHeight": 0},
                     ),
                     html.Div(
                         html.Button(
@@ -701,31 +699,16 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                         role="complementary",
                         **{"aria-label": "Legenda do mapa"}
                     ),
-                    html.Div(
-                        id="map-loading-overlay",
-                        className="map-loading-overlay",
-                        style={"display": "none"},
-                        children=[
-                            html.Div(className="map-loading-spinner")
-                        ]
-                    ),
                 ],
+
                 style={
                     "position": "relative", "flex": "1 1 auto",
-                    "minHeight": 0
+                    "minHeight": 0, "display": "flex",
+                    "flexDirection": "column"
                 },
             ),
         ],
-        style={
-            "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
-            "boxSizing": "border-box",
-            "display": "flex",
-            "flexDirection": "column",
-            "height": "100dvh",
-            "overflow": "hidden",
-            "maxWidth": "100vw",
-            "background": "#eef2f7",
-        },
+        className="app-shell",
     )
 
     # Injetamos o script do service worker diretamente no final do componente
