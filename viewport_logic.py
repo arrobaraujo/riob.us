@@ -319,7 +319,17 @@ def resolver_comando_viewport(
             },
             children=dl.Tooltip("Você está aqui"),
         )
-        return {"center": [lat, lon], "zoom": 15}, [marcador]
+        zoom_loc = 16
+        return {
+            "center": [lat, lon],
+            "zoom": zoom_loc,
+            "clear_bounds": True,
+            "force_view": {
+                "center": [lat, lon],
+                "zoom": zoom_loc,
+                "token": int(time.time() * 1000),
+            },
+        }, [marcador]
 
     if (modo == "linhas" and (
         has_lines_trigger or

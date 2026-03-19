@@ -76,11 +76,22 @@ def register_viewport_callbacks(
                     };
                 }
 
+                var quickOpts = {
+                    enableHighAccuracy: false,
+                    timeout: 4500,
+                    maximumAge: 60000
+                };
+                var preciseOpts = {
+                    enableHighAccuracy: true,
+                    timeout: 7000,
+                    maximumAge: 0
+                };
+
                 navigator.geolocation.getCurrentPosition(
                     function(pos1) {
                         var c1 = pos1 && pos1.coords ? pos1.coords : null;
                         var acc1 = Number(c1 ? c1.accuracy : NaN);
-                        if (!isNaN(acc1) && acc1 <= 120) {
+                        if (!isNaN(acc1) && acc1 <= 180) {
                             resolve(toPayload(pos1));
                             return;
                         }
@@ -102,23 +113,27 @@ def register_viewport_callbacks(
                             function() {
                                 resolve(toPayload(pos1));
                             },
-                            },
-                            {
-                                enableHighAccuracy: true,
-                                timeout: 12000,
-                                maximumAge: 0
-                            }
+                            preciseOpts
                         );
                     },
                     function(err) {
-                        alert("Erro ao obter localização: " + err.message);
-                        resolve(window.dash_clientside.no_update);
+                        navigator.geolocation.getCurrentPosition(
+                            function(pos2) {
+                                resolve(toPayload(pos2));
+                            },
+                            function(err2) {
+                                var msg = (
+                                    (err2 && err2.message)
+                                    || (err && err.message)
+                                    || "erro desconhecido"
+                                );
+                                alert("Erro ao obter localização: " + msg);
+                                resolve(window.dash_clientside.no_update);
+                            },
+                            preciseOpts
+                        );
                     },
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                        maximumAge: 0
-                    }
+                    quickOpts
                 );
             });
         }
@@ -162,9 +177,9 @@ def register_viewport_callbacks(
                 command.get("force_view", dash.no_update)
                 if isinstance(command, dict) else dash.no_update
             )
-            if tab_filtro == "veiculos" and force_cmd is not dash.no_update:
+            if force_cmd is not dash.no_update:
                 return dash.no_update, marker_layer, force_cmd
-            return command, marker_layer, force_cmd
+            return command, marker_layer, dash.no_update
     else:
         @app.callback(
             Output("mapa", "center"),
@@ -208,11 +223,8 @@ def register_viewport_callbacks(
             )
 
             if isinstance(command, dict):
-                is_veic_force = (
-                    tab_filtro == "veiculos"
-                    and force_cmd is not dash.no_update
-                )
-                if is_veic_force:
+                is_force = force_cmd is not dash.no_update
+                if is_force:
                     return (
                         dash.no_update, dash.no_update, dash.no_update,
                         marker_layer, force_cmd

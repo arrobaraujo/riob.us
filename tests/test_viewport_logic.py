@@ -94,7 +94,10 @@ class ViewportLogicTests(unittest.TestCase):
             )
 
         self.assertEqual(command["center"], [-22.9, -43.2])
-        self.assertEqual(command["zoom"], 15)
+        self.assertEqual(command["zoom"], 16)
+        self.assertIn("force_view", command)
+        self.assertEqual(command["force_view"]["center"], [-22.9, -43.2])
+        self.assertEqual(command["force_view"]["zoom"], 16)
         self.assertTrue(
             isinstance(marker_layer, list) and len(marker_layer) == 1
         )
