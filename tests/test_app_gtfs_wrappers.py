@@ -222,6 +222,26 @@ class AppGtfsWrappersTests(unittest.TestCase):
         self.assertEqual(len(self.app._gps_cache), 1)
         self.assertEqual(self.app._gps_cache.iloc[0]["ordem"], "B1")
 
+    def test_linha_sort_key_usa_numero_publico_lecd(self):
+        self.app.lecd_public_map = {
+            "LECD010": "10",
+            "LECD002": "2",
+            "LECD100": "100",
+        }
+        ordered = sorted(
+            ["LECD010", "LECD100", "LECD002"],
+            key=self.app.linha_sort_key,
+        )
+        self.assertEqual(ordered, ["LECD002", "LECD010", "LECD100"])
+
+    def test_linha_sort_key_ordena_natural_sem_lecd(self):
+        self.app.lecd_public_map = {}
+        ordered = sorted(
+            ["100", "2", "A20", "A3"],
+            key=self.app.linha_sort_key,
+        )
+        self.assertEqual(ordered, ["2", "100", "A3", "A20"])
+
 
 if __name__ == "__main__":
     unittest.main()

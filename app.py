@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import time
 import zipfile
 import warnings
@@ -340,6 +341,27 @@ def linha_exibicao(valor_linha):
     return pub or ln
 
 
+def _natural_text_key(value):
+    """Chave de ordenacao natural (2 antes de 10, sem perder texto)."""
+    txt = _normalizar_linha(value)
+    if not txt:
+        return (1, ())
+    parts = re.split(r"(\d+)", txt)
+    key = tuple(
+        (0, int(p)) if p.isdigit() else (1, p.casefold())
+        for p in parts
+        if p != ""
+    )
+    return (0, key)
+
+
+def linha_sort_key(valor_linha):
+    """Ordena pela linha publica quando houver mapeamento LECD."""
+    ln = _normalizar_linha(valor_linha)
+    publico = linha_publica(ln)
+    return (_natural_text_key(publico), _natural_text_key(ln))
+
+
 def _normalizar_veiculo(valor):
     """Normaliza identificador de veículo para string segura."""
     if valor is None:
@@ -409,7 +431,8 @@ try:
                     _routes_df["route_long_name"]
                 ))
                 linhas_short = sorted(
-                    _routes_df["route_short_name"].dropna().unique().tolist()
+                    _routes_df["route_short_name"].dropna().unique().tolist(),
+                    key=linha_sort_key,
                 )
                 linha_cor_fixa = {
                     ln: PALETA_CORES[i % len(PALETA_CORES)]
