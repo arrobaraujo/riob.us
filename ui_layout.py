@@ -253,11 +253,17 @@ APP_INDEX_STRING = """
                 }
 
                 function isMobileDevice() {
+                    var smallViewport = false;
+                    var coarseNoHover = false;
                     try {
-                        if (window.matchMedia && (
-                            window.matchMedia('(max-width: 768px)').matches
-                        )) {
-                            return true;
+                        if (window.matchMedia) {
+                            smallViewport = window.matchMedia(
+                                '(max-width: 768px)'
+                            ).matches;
+                            coarseNoHover = (
+                                window.matchMedia('(pointer: coarse)').matches &&
+                                window.matchMedia('(hover: none)').matches
+                            );
                         }
                     } catch (e) {
                         // sem-op
@@ -265,7 +271,7 @@ APP_INDEX_STRING = """
                     var touchPoints = Number(
                         navigator.maxTouchPoints || 0
                     );
-                    return touchPoints > 0;
+                    return smallViewport || (coarseNoHover && touchPoints > 0);
                 }
 
                 function configureMobileMapBehavior() {
