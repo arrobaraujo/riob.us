@@ -1,7 +1,7 @@
 services:
-  gps-bus-rio:
+  riob-us:
     build: .
-    container_name: gps-bus-rio-app
+    container_name: riob-us-app
     ports:
       - "8080:8080"
     environment:
@@ -30,7 +30,7 @@ services:
       
   redis:
     image: redis:7-alpine
-    container_name: gps-bus-rio-redis
+    container_name: riob-us-redis
     ports:
       - "6379:6379"
     restart: unless-stopped
