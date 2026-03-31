@@ -743,7 +743,12 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 hideInstallButton();
             });
 
-            if ('serviceWorker' in navigator) {
+            var isLocalHost = (
+                location.hostname === 'localhost' ||
+                location.hostname === '127.0.0.1'
+            );
+
+            if ('serviceWorker' in navigator && !isLocalHost) {
                 window.addEventListener('load', function() {
                     bindInstallButton();
                     navigator.serviceWorker.register(
