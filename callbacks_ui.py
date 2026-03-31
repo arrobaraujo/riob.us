@@ -3,7 +3,7 @@ from datetime import datetime
 from urllib.parse import unquote, parse_qs
 
 import dash
-from dash import Input, Output
+from dash import Input, Output, State
 
 
 def _normalize_multi_values(values):
@@ -225,7 +225,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         Output("dropdown-veiculos", "options"),
         Input("store-veiculos-opcoes", "data"),
         Input("dropdown-veiculos", "search_value"),
-        Input("dropdown-veiculos", "value"),
+        State("dropdown-veiculos", "value"),
     )
     def atualizar_opcoes_veiculos(opcoes, search_value, veiculos_sel):
         """
@@ -267,32 +267,22 @@ def register_ui_callbacks(app, get_last_update_ts):
 
             matched = [o for o in unselected_opts if _match_option(o)]
 
+            # Fallback: se o texto digitado não está no snapshot, expõe uma
+            # opção de busca manual selecionável. Tenta resolver alias numérico
+            # (ex.: "50001" → "A50001") antes de criar a opção sintética.
             resolved_value = _resolve_vehicle_alias(options, search_value)
-            resolved_manual_opt = []
-            if resolved_value and resolved_value not in selected_set:
-                if resolved_value not in known_values:
-                    resolved_manual_opt = [
-                    {
-                        "label": f"{resolved_value} · busca manual",
-                        "value": resolved_value,
-                    }
-                    ]
-
-            # Fallback: permite selecionar um veículo digitado mesmo fora
-            # do snapshot atual do dropdown.
-            typed_value = (search_value or "").strip()
-            synthetic_opt = []
+            manual_opt = []
             if (
-                typed_value
-                and resolved_value not in known_values
+                resolved_value
                 and resolved_value not in selected_set
+                and resolved_value not in known_values
             ):
-                synthetic_opt = [{
+                manual_opt = [{
                     "label": f"{resolved_value} · busca manual",
                     "value": resolved_value,
                 }]
 
-            return selected_opts + resolved_manual_opt + synthetic_opt + matched[:200]
+            return selected_opts + manual_opt + matched[:200]
 
         # Sem busca: retorna selecionados + primeiros 150 do snapshot
         return selected_opts + unselected_opts[:150]
