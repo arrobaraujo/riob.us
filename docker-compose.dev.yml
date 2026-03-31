@@ -8,7 +8,7 @@ services:
       - GUNICORN_THREADS=2
       - GUNICORN_TIMEOUT=180
     command: >
-      sh -c "gunicorn app:server
+      sh -c "gunicorn src.core.app_runtime:server
       --reload
       --workers 1
       --threads ${GUNICORN_THREADS:-2}

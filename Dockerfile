@@ -18,4 +18,4 @@ ENV IN_DOCKER=1
 EXPOSE 8080
 
 # Gunicorn usa a porta provida pelo ambiente (Render) ou 8080 local.
-CMD ["sh", "-c", "gunicorn app:server --workers ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} --timeout ${GUNICORN_TIMEOUT:-180} --bind 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile - --log-level info"]
+CMD ["sh", "-c", "gunicorn src.core.app_runtime:server --workers ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} --timeout ${GUNICORN_TIMEOUT:-180} --bind 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile - --log-level info"]
