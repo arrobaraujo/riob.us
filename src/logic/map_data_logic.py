@@ -43,16 +43,14 @@ def filtrar_por_veiculos(dados, veiculos_sel):
         if token_digits:
             selected_digits.add(token_digits)
 
-    ordens = dados["ordem"].astype(str)
+    # Vetorizado: evita .map() com função Python por linha em datasets grandes
+    ordens = dados["ordem"].astype(str).str.strip().str.upper()
+    ordens_digits = ordens.str.replace(r"\D", "", regex=True)
 
-    def _matches_vehicle(ordem):
-        ordem_full, ordem_digits = _normalize_vehicle_token(ordem)
-        return (
-            ordem_full in selected_full
-            or (ordem_digits and ordem_digits in selected_digits)
-        )
-
-    return dados[ordens.map(_matches_vehicle)]
+    mask = ordens.isin(selected_full) | (
+        ordens_digits.ne("") & ordens_digits.isin(selected_digits)
+    )
+    return dados[mask]
 
 
 def split_gps_por_tipo(dados):

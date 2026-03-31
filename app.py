@@ -770,15 +770,9 @@ app = dash.Dash(
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
-if _DEV_ASSETS_AUTO_RELOAD:
-    # Em desenvolvimento no Docker, habilita hot reload também para assets.
-    app.enable_dev_tools(
-        debug=True,
-        dev_tools_ui=False,
-        dev_tools_hot_reload=True,
-        dev_tools_hot_reload_interval=1000,
-        dev_tools_hot_reload_watch_interval=1000,
-    )
+# Nota: enable_dev_tools(debug=True) com Gunicorn+gevent causa deadlock
+# de greenlets nos callbacks. Hot reload de Python é feito pelo --reload do
+# Gunicorn; CSS/assets precisam de Ctrl+F5 manual em dev.
 
 # Otimização Enterprise: Compressão de Respostas (Gzip/Brotli)
 # para reduzir tráfego JSON/GeoJSON

@@ -135,14 +135,23 @@ def register_ui_callbacks(app, get_last_update_ts):
     )
     def sincronizar_tab_filtro(tab_value, pathname, search):
         """Mantém estado da aba ativa e limpa o outro dropdown ao trocar aba."""
-        parsed = _parse_deep_link(pathname, search)
+        ctx = dash.callback_context
+        triggers = {t["prop_id"].split(".")[0] for t in (ctx.triggered or [])}
+
+        # Deep link via URL: aplica apenas quando a URL mudou
+        url_triggered = bool(
+            triggers & {"url-router"}
+            or any("url-router" in t for t in triggers)
+        )
+        if url_triggered:
+            parsed = _parse_deep_link(pathname, search)
+            if parsed:
+                tab, token = parsed
+                return "linhas", [token], []
 
         current_tab = tab_value or "linhas"
 
-        if parsed:
-            tab, token = parsed
-            return "linhas", [token], []
-
+        # Troca de aba pelo usuário: limpa o dropdown oposto
         if current_tab == "veiculos":
             return current_tab, [], dash.no_update
         return "linhas", dash.no_update, []
