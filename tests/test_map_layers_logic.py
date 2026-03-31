@@ -439,6 +439,41 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(onibus2[0], "geojson-sppo")
         self.assertEqual(brt2[0], "geojson-brt")
 
+    def test_construir_camadas_veiculos_popup_exibe_tarifa_gtfs(self):
+        sppo_df = pd.DataFrame([{
+            "lat": -22.9,
+            "lng": -43.2,
+            "linha": "100",
+            "ordem": "A1",
+            "tipo": "SPPO",
+            "datahora": "2026-03-31 10:00:00",
+            "velocidade": 12,
+        }])
+        brt_df = pd.DataFrame(columns=sppo_df.columns)
+
+        onibus, brt = construir_camadas_veiculos(
+            sppo_df=sppo_df,
+            brt_df=brt_df,
+            cores={"100": "#111"},
+            linhas_render=["100"],
+            lightweight_marker_threshold=999,
+            build_geojson_cluster_layer_fn=(
+                lambda df, lid: [lid, len(df)]
+            ),
+            group_vehicle_markers_fn=lambda markers: markers,
+            make_vehicle_icon_fn=lambda bearing, cor: ["url", [1, 1], [0, 0]],
+            linha_publica_fn=lambda x: x,
+            linhas_dict={"100": "Linha 100"},
+            line_to_fares={"100": "4.5"},
+        )
+
+        self.assertEqual(len(brt), 0)
+        self.assertEqual(len(onibus), 1)
+
+        popup = onibus[0].children[1]
+        texts = [str(item.children) for item in popup.children.children]
+        self.assertIn("Tarifa: R$ 4,50", texts)
+
 
 if __name__ == "__main__":
     unittest.main()

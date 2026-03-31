@@ -81,7 +81,7 @@ Servicos esperados:
 
 ## Deploy em producao (Render Docker)
 
-O deploy e feito pelo `render.yaml` com `env: docker` e `dockerfilePath: ./Dockerfile`.
+O deploy e feito pelo `render.yaml` com `runtime: docker` e `dockerfilePath: ./Dockerfile`.
 
 Passos recomendados:
 

@@ -243,6 +243,7 @@ line_to_shape_coords = {}  # {linha: [coords_list]}
 # {linha: [{lat, lon, stop_name, stop_code, stop_desc, platform_code}]}
 line_to_stops_points = {}
 line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
+line_to_fares = {}  # {route_short_name: fare_price}
 linhas_dict = {}
 linhas_short = []
 lecd_public_map = {}  # {LECDxxx: numero_publico}
@@ -448,6 +449,7 @@ def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs
     global line_to_shape_ids, line_to_stop_ids
     global line_to_shape_coords, line_to_stops_points, line_to_bounds
+    global line_to_fares
     global _rio_polygon_prepared, _garagens_polygon_prepared
 
     t0 = time.perf_counter()
@@ -478,6 +480,7 @@ def _carregar_dados_estaticos():
         line_to_shape_coords = loaded["line_to_shape_coords"]
         line_to_stops_points = loaded["line_to_stops_points"]
         line_to_bounds = loaded["line_to_bounds"]
+        line_to_fares = loaded.get("line_to_fares", {}) or {}
 
     n_shapes = sum(
         len(v) for v in loaded["line_to_shape_coords"].values()
@@ -580,6 +583,7 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
         line_to_shape_coords.update(loaded.get("line_to_shape_coords", {}))
         line_to_stops_points.update(loaded.get("line_to_stops_points", {}))
         line_to_bounds.update(loaded.get("line_to_bounds", {}))
+        line_to_fares.update(loaded.get("line_to_fares", {}) or {})
 
         # Atualiza cache de linhas sem shapes
         for ln in missing:
@@ -1434,6 +1438,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
         make_vehicle_icon_fn=make_vehicle_icon,
         linha_publica_fn=linha_publica,
         linhas_dict=linhas_dict,
+        line_to_fares=line_to_fares,
         vehicle_layers_cache_lock=_vehicle_layers_cache_lock,
         vehicle_layers_cache=_vehicle_layers_cache,
         vehicle_layers_cache_max_items=_VEHICLE_LAYERS_CACHE_MAX_ITEMS,

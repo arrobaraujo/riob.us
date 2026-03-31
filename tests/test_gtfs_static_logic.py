@@ -121,6 +121,43 @@ def _write_gtfs_zip_stops_without_optional_columns(base_dir):
             zf.writestr(name, content)
 
 
+def _write_gtfs_zip_with_fares(base_dir):
+    gtfs_dir = os.path.join(base_dir, "gtfs")
+    os.makedirs(gtfs_dir, exist_ok=True)
+    gtfs_zip_path = os.path.join(gtfs_dir, "gtfs.zip")
+
+    files = {
+        "routes.txt": (
+            "route_id,route_short_name,tarifas\n"
+            "R1,100,9.99\n"
+            "R2,200,7.10\n"
+        ),
+        "trips.txt": "trip_id,route_id,shape_id\nT1,R1,S1\n",
+        "shapes.txt": (
+            "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+            "S1,-22.90,-43.20,1\n"
+            "S1,-22.91,-43.21,2\n"
+        ),
+        "stops.txt": (
+            "stop_id,stop_name,stop_lat,stop_lon\n"
+            "P1,Parada 1,-22.90,-43.20\n"
+        ),
+        "stop_times.txt": "trip_id,stop_id\nT1,P1\n",
+        "fare_rules.txt": (
+            "fare_id,route_id\n"
+            "F1,R1\n"
+        ),
+        "fare_attributes.txt": (
+            "fare_id,price\n"
+            "F1,4.50\n"
+        ),
+    }
+
+    with zipfile.ZipFile(gtfs_zip_path, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+
+
 class GtfsStaticLogicTests(unittest.TestCase):
     def test_carregar_dados_estaticos_service_success(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,6 +328,45 @@ class GtfsStaticLogicTests(unittest.TestCase):
 
         self.assertIn("100", first["line_to_shape_ids"])
         self.assertIn("100", second["line_to_shape_ids"])
+
+    def test_carregar_dados_estaticos_service_builds_line_to_fares(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_gtfs_zip_with_fares(tmp)
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with patch("src.logic.gtfs_static_logic.requests.get",
+                           return_value=_FakeIbgeResponse()):
+                    with patch("src.logic.gtfs_static_logic.gpd.read_file",
+                               return_value=_FakeGaragensGdf()):
+                        out = carregar_dados_estaticos_service(
+                            empty_shapes_gdf_fn=lambda: pd.DataFrame(
+                                columns=["shape_id", "geometry"]
+                            ),
+                            empty_stops_gdf_fn=lambda: pd.DataFrame(
+                                columns=["stop_id", "stop_lat", "stop_lon"]
+                            ),
+                        )
+            finally:
+                os.chdir(old_cwd)
+
+        # Prioriza fare_rules/fare_attributes quando houver mapeamento route_id.
+        self.assertEqual(out["line_to_fares"].get("100"), "4.50")
+        # Fallback para routes.tarifas quando não há fare_rules para a linha.
+        self.assertEqual(out["line_to_fares"].get("200"), "7.10")
+
+    def test_recarregar_gtfs_sob_demanda_service_builds_line_to_fares(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_gtfs_zip_with_fares(tmp)
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                out = recarregar_gtfs_estatico_sob_demanda_service(["100"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out["line_to_fares"].get("100"), "4.50")
 
 
 if __name__ == "__main__":

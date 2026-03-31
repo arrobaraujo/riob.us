@@ -38,6 +38,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
         self.app.line_to_shape_coords = {}
         self.app.line_to_stops_points = {}
         self.app.line_to_bounds = {}
+        self.app.line_to_fares = {}
         self.app._linhas_sem_shapes = {}
         self.app._gps_cache = pd.DataFrame()
 
@@ -55,6 +56,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
             },
             "line_to_stops_points": {"100": [{"lat": -22.9, "lon": -43.2}]},
             "line_to_bounds": {"100": [[-22.95, -43.3], [-22.85, -43.1]]},
+            "line_to_fares": {"100": "4.50"},
         }
 
         self.app._map_static_cache["dummy"] = ([], [])
@@ -75,6 +77,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
             self.app.line_to_bounds,
             {"100": [[-22.95, -43.3], [-22.85, -43.1]]}
         )
+        self.assertEqual(self.app.line_to_fares, {"100": "4.50"})
         self.assertEqual(self.app._map_static_cache, {})
         self.assertTrue(self.app._gtfs_load_event.is_set())
 
@@ -93,6 +96,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
             },
             "line_to_stops_points": {"200": [{"lat": -22.8, "lon": -43.0}]},
             "line_to_bounds": {"200": [[-22.82, -43.02], [-22.79, -42.99]]},
+            "line_to_fares": {"200": "5.20"},
         }
 
         with patch.object(
@@ -116,6 +120,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
             self.app.line_to_bounds,
             {"200": [[-22.82, -43.02], [-22.79, -42.99]]}
         )
+        self.assertEqual(self.app.line_to_fares, {"200": "5.20"})
         self.assertEqual(self.app._map_static_cache, {})
         self.assertTrue(self.app._gtfs_load_event.is_set())
 
@@ -151,6 +156,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
                 },
                 "line_to_stops_points": {},
                 "line_to_bounds": {},
+                "line_to_fares": {},
             },
         ) as mocked_service:
             self.app._recarregar_gtfs_estatico_sob_demanda(["415"])

@@ -10,7 +10,114 @@ from shapely.prepared import prep
 
 
 GTFS_STATIC_CACHE_PATH = "gtfs/gtfs_static_cache.pkl"
-GTFS_STATIC_CACHE_VERSION = 2
+GTFS_STATIC_CACHE_VERSION = 3
+
+
+def _to_float_price(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("R$", "").replace(" ", "")
+    text = text.replace(",", ".")
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def _build_line_to_fares(gtfs):
+    line_to_fares = {}
+
+    routes_df = gtfs.get("routes")
+    if routes_df is None or routes_df.empty:
+        return line_to_fares
+    if not {"route_id", "route_short_name"}.issubset(routes_df.columns):
+        return line_to_fares
+
+    routes_base = routes_df[["route_id", "route_short_name"]].dropna(
+        subset=["route_id", "route_short_name"]
+    ).copy()
+    if routes_base.empty:
+        return line_to_fares
+    routes_base["route_id"] = routes_base["route_id"].astype(str).str.strip()
+    routes_base["route_short_name"] = (
+        routes_base["route_short_name"].astype(str).str.strip()
+    )
+    routes_base = routes_base[
+        (routes_base["route_id"] != "")
+        & (routes_base["route_short_name"] != "")
+    ]
+    if routes_base.empty:
+        return line_to_fares
+
+    route_to_price = {}
+    fare_rules_df = gtfs.get("fare_rules")
+    fare_attrs_df = gtfs.get("fare_attributes")
+    if (
+        fare_rules_df is not None
+        and fare_attrs_df is not None
+        and not fare_rules_df.empty
+        and not fare_attrs_df.empty
+        and {"route_id", "fare_id"}.issubset(fare_rules_df.columns)
+        and {"fare_id", "price"}.issubset(fare_attrs_df.columns)
+    ):
+        rules = fare_rules_df[["route_id", "fare_id"]].dropna(
+            subset=["route_id", "fare_id"]
+        ).copy()
+        attrs = fare_attrs_df[["fare_id", "price"]].dropna(
+            subset=["fare_id", "price"]
+        ).copy()
+        if not rules.empty and not attrs.empty:
+            rules["route_id"] = rules["route_id"].astype(str).str.strip()
+            rules["fare_id"] = rules["fare_id"].astype(str).str.strip()
+            attrs["fare_id"] = attrs["fare_id"].astype(str).str.strip()
+            attrs["price"] = attrs["price"].astype(str).str.strip()
+            merged = rules.merge(attrs, on="fare_id", how="inner")
+            if not merged.empty:
+                merged = merged[
+                    (merged["route_id"] != "")
+                    & (merged["fare_id"] != "")
+                    & (merged["price"] != "")
+                ].copy()
+                if not merged.empty:
+                    merged["_price_num"] = merged["price"].apply(
+                        _to_float_price
+                    )
+                    merged = merged.sort_values(
+                        by=["route_id", "_price_num", "fare_id"],
+                        na_position="last",
+                    )
+                    for route_id, grp in merged.groupby("route_id", sort=False):
+                        price = ""
+                        for _, fare_row in grp.iterrows():
+                            candidate = str(fare_row.get("price", "") or "").strip()
+                            if candidate:
+                                price = candidate
+                                break
+                        if price:
+                            route_to_price[route_id] = price
+
+    for row in routes_base.itertuples(index=False):
+        route_id = str(row.route_id)
+        route_short_name = str(row.route_short_name)
+        price = str(route_to_price.get(route_id, "") or "").strip()
+        if price and route_short_name and route_short_name not in line_to_fares:
+            line_to_fares[route_short_name] = price
+
+    # Fallback legado: routes.txt.tarifas
+    if "tarifas" in routes_df.columns:
+        fallback = routes_df[["route_short_name", "tarifas"]].dropna(
+            subset=["route_short_name", "tarifas"]
+        )
+        for row in fallback.itertuples(index=False):
+            route_short_name = str(row.route_short_name).strip()
+            price = str(row.tarifas).strip()
+            if route_short_name and price and route_short_name not in line_to_fares:
+                line_to_fares[route_short_name] = price
+
+    return line_to_fares
 
 
 def _normalize_line_key(value):
@@ -146,6 +253,7 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         "line_to_shape_coords": {},
         "line_to_stops_points": {},
         "line_to_bounds": {},
+        "line_to_fares": {},
     }
 
     try:
@@ -208,7 +316,11 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
 
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
             target_files = {
-                "routes": {"usecols": ["route_id", "route_short_name"]},
+                "routes": {
+                    "usecols": lambda c: c in {
+                        "route_id", "route_short_name", "tarifas"
+                    }
+                },
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
                 "shapes": {
                     "usecols": [
@@ -228,12 +340,21 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                     ]
                 },
                 "stop_times": {"usecols": ["trip_id", "stop_id"]},
+                "fare_rules": {
+                    "usecols": ["fare_id", "route_id"],
+                    "optional": True,
+                },
+                "fare_attributes": {
+                    "usecols": ["fare_id", "price"],
+                    "optional": True,
+                },
             }
             zip_names = z.namelist()
             for key, opts in target_files.items():
                 names = [n for n in zip_names if n.endswith(f"{key}.txt")]
                 if not names:
-                    print(f"  AVISO: {key}.txt não encontrado no GTFS")
+                    if not opts.get("optional"):
+                        print(f"  AVISO: {key}.txt não encontrado no GTFS")
                     continue
                 try:
                     with z.open(names[0]) as f:
@@ -271,7 +392,8 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
                         except Exception as e2:
                             print(f"  ✗ Erro ao ler {key}: {e2}")
                     else:
-                        print(f"  ✗ Erro ao ler {key}")
+                        if not opts.get("optional"):
+                            print(f"  ✗ Erro ao ler {key}")
 
         shapes_gtfs = empty_shapes_gdf_fn()
         stops_gtfs = empty_stops_gdf_fn()
@@ -481,6 +603,7 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         result["line_to_shape_coords"] = line_to_shape_coords
         result["line_to_stops_points"] = line_to_stops_points
         result["line_to_bounds"] = line_to_bounds
+        result["line_to_fares"] = _build_line_to_fares(gtfs)
 
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
@@ -502,7 +625,11 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
         with zipfile.ZipFile("gtfs/gtfs.zip") as z:
             gtfs = {}
             target_files = {
-                "routes": {"usecols": ["route_id", "route_short_name"]},
+                "routes": {
+                    "usecols": lambda c: c in {
+                        "route_id", "route_short_name", "tarifas"
+                    }
+                },
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
                 "shapes": {
                     "usecols": [
@@ -522,6 +649,14 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
                     ]
                 },
                 "stop_times": {"usecols": ["trip_id", "stop_id"]},
+                "fare_rules": {
+                    "usecols": ["fare_id", "route_id"],
+                    "optional": True,
+                },
+                "fare_attributes": {
+                    "usecols": ["fare_id", "price"],
+                    "optional": True,
+                },
             }
             zip_names = z.namelist()
             for key, opts in target_files.items():
@@ -742,6 +877,7 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
             "line_to_shape_coords": line_to_shape_coords,
             "line_to_stops_points": line_to_stops_points,
             "line_to_bounds": line_to_bounds,
+            "line_to_fares": _build_line_to_fares(gtfs),
         }
     except Exception as e:
         print(f"ERRO no fallback GTFS: {type(e).__name__} - {e}")

@@ -302,12 +302,28 @@ def construir_camadas_veiculos(
     make_vehicle_icon_fn,
     linha_publica_fn,
     linhas_dict,
+    line_to_fares=None,
     vehicle_layers_cache_lock=None,
     vehicle_layers_cache=None,
     vehicle_layers_cache_max_items=128,
     vehicle_layers_cache_ttl_seconds=None,
     emit_cache_meta=False,
 ):
+    line_to_fares = line_to_fares or {}
+
+    def _format_popup_fare(value):
+        text = str(value).strip() if value is not None else ""
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return "N/D"
+
+        normalized = text.replace("R$", "").replace(" ", "")
+        normalized = normalized.replace(",", ".")
+        try:
+            amount = float(normalized)
+            return f"R$ {amount:.2f}".replace(".", ",")
+        except Exception:
+            return text
+
     def _tooltip(row):
         """Texto exibido ao passar o mouse sobre o ícone do veículo."""
         ordem = row.get('ordem', '')
@@ -325,6 +341,8 @@ def construir_camadas_veiculos(
             vel = 0
         hora = str(row.get("datahora", ""))
         hora = hora[-8:] if len(hora) >= 8 else hora
+        linha_id = str(row.get("linha", "") or "")
+        tarifa = _format_popup_fare(line_to_fares.get(linha_id, ""))
         style_m2 = {"margin": "2px 0"}
         items = [
             html.P(
@@ -337,6 +355,10 @@ def construir_camadas_veiculos(
             ),
             html.P(
                 f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
+                style=style_m2
+            ),
+            html.P(
+                f"Tarifa: {tarifa}",
                 style=style_m2
             ),
             html.P(
@@ -366,6 +388,13 @@ def construir_camadas_veiculos(
         cache_meta["fingerprint_mode"] = f"{fp_mode_sppo}+{fp_mode_brt}"
         cache_key = (
             tuple(sorted(str(ln) for ln in (linhas_render or []))),
+            tuple(sorted(
+                (
+                    str(ln),
+                    str(line_to_fares.get(str(ln), "") or ""),
+                )
+                for ln in (linhas_render or [])
+            )),
             bool(lightweight_mode),
             (fp_mode_sppo, fp_sppo),
             (fp_mode_brt, fp_brt),
