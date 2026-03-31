@@ -256,7 +256,7 @@ def _build_retry_session():
     session = requests.Session()
     retry = Retry(
         total=2,
-        connect=2,
+        connect=0,
         read=2,
         backoff_factor=0.3,
         status_forcelist=(429, 500, 502, 503, 504),
@@ -1217,10 +1217,9 @@ def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, d
     linhas_sel = linhas_sel or []
     veiculos_sel = veiculos_sel or []
 
-    if dados is None or dados.empty:
-        return modo, [], {}
-
     if modo == "veiculos":
+        if dados is None or dados.empty:
+            return modo, [], {}
         if not veiculos_sel:
             return modo, [], {}
         dados_filtrados = filtrar_por_veiculos(dados, veiculos_sel).copy()
