@@ -760,9 +760,16 @@ def fetch_gps_data(linhas_sel=None, veiculos_sel=None, modo="linhas"):
 # Layout do App
 # ==============================================================================
 
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+_ASSETS_DIR = os.path.join(_PROJECT_ROOT, "assets")
+
 app = dash.Dash(
     __name__,
     title="🚍 RioB.us 🚍",
+    assets_folder=_ASSETS_DIR,
+    assets_url_path="/assets",
     meta_tags=[{
         "name": "viewport",
         "content": "width=device-width, initial-scale=1"
