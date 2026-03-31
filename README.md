@@ -1,4 +1,4 @@
-# GPS Bus Rio
+# RioB.us
 
 Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Rio de Janeiro, com atualizacao em tempo real de posicoes GPS e sobreposicao de dados estaticos GTFS.
 
@@ -138,6 +138,15 @@ Observacao:
 - Deep link de veiculos foi desativado temporariamente para estabilizacao.
 
 ## Testes
+
+Fluxo recomendado para ambiente Python local (fora de Docker):
+
+```powershell
+pip install -r requirements.txt
+pip install -e ".[test]"
+```
+
+Esse fluxo garante importacao formal do pacote `src` sem manipulacao manual de `sys.path`.
 
 Execute os testes no ambiente local (ou dentro do container de app):
 

@@ -9,10 +9,11 @@
 
 1. Criar branch de feature.
 2. Subir ambiente com `docker compose up --build`.
-3. Implementar mudancas pequenas e focadas.
-4. Executar testes (`pytest`).
-5. Validar smoke em `/health` e `/status`.
-6. Abrir PR com descricao de risco/regressao.
+3. Instalar dependencias de teste com `pip install -r requirements.txt` e `pip install -e ".[test]"`.
+4. Implementar mudancas pequenas e focadas.
+5. Executar testes (`pytest`).
+6. Validar smoke em `/health` e `/status`.
+7. Abrir PR com descricao de risco/regressao.
 
 ## Convencoes
 
