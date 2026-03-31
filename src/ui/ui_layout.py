@@ -382,7 +382,12 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
     line_placeholder = "Selecione uma ou mais linhas..."
     vehicle_placeholder = "Selecione um ou mais veículos..."
 
-    def _build_filter_dropdown(dropdown_id, options, placeholder):
+    def _build_filter_dropdown(
+        dropdown_id,
+        options,
+        placeholder,
+        persistence_key=None,
+    ):
         return html.Div(
             dcc.Dropdown(
                 id=dropdown_id,
@@ -390,11 +395,21 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 multi=True,
                 placeholder=placeholder,
                 className="dropdown",
+                persistence=persistence_key,
+                persistence_type="local",
+                persisted_props=["value"],
             ),
             className="dropdown-wrapper",
         )
 
-    def _build_filter_tab(label, value, dropdown_id, options, placeholder):
+    def _build_filter_tab(
+        label,
+        value,
+        dropdown_id,
+        options,
+        placeholder,
+        persistence_key=None,
+    ):
         return dcc.Tab(
             label=label,
             value=value,
@@ -409,6 +424,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                         dropdown_id=dropdown_id,
                         options=options,
                         placeholder=placeholder,
+                        persistence_key=persistence_key,
                     ),
                 ],
                 className="tabs-panel-content",
@@ -453,6 +469,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-gps-ts", data=0),
             dcc.Store(id="store-localizacao", data=None),
             dcc.Store(id="store-fetch-error", data=None),
+            dcc.Store(id="store-session-warning", data=None),
             dcc.Store(id="store-zoom-atual", data=11),
             html.Div(id="error-banner-container", className="shell-banner"),
             html.Div(
@@ -501,6 +518,9 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                         dropdown_id="dropdown-linhas",
                                         options=dropdown_opts,
                                         placeholder=line_placeholder,
+                                        persistence_key=(
+                                            f"linhas::{app_build_id}"
+                                        ),
                                     ),
                                     _build_filter_tab(
                                         label="Veículos",

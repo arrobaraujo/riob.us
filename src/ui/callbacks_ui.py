@@ -32,6 +32,17 @@ def _normalize_vehicle_token(value):
     return text, digits
 
 
+def _filter_values_in_options(values, options):
+    selected = _normalize_multi_values(values)
+    allowed = {
+        str((opt or {}).get("value", "")).strip()
+        for opt in (options or [])
+        if str((opt or {}).get("value", "")).strip()
+    }
+    valid = [value for value in selected if value in allowed]
+    return selected, valid, allowed
+
+
 def _resolve_vehicle_alias(options, typed_value):
     raw_full, raw_digits = _normalize_vehicle_token(typed_value)
     if not raw_full:
@@ -110,6 +121,44 @@ def _parse_deep_link(pathname, search=None):
 
 
 def register_ui_callbacks(app, get_last_update_ts):
+    @app.callback(
+        Output("dropdown-linhas", "value"),
+        Output("store-session-warning", "data"),
+        Input("dropdown-linhas", "value"),
+        State("dropdown-linhas", "options"),
+        prevent_initial_call=False,
+    )
+    def validar_linhas_persistidas(linhas_sel, linhas_opts):
+        """Remove linhas inválidas restauradas do localStorage."""
+        selected, valid, allowed = _filter_values_in_options(
+            linhas_sel,
+            linhas_opts,
+        )
+
+        if not selected:
+            return dash.no_update, None
+
+        if selected == valid:
+            return dash.no_update, None
+
+        if not allowed:
+            return [], (
+                "Aviso: não foi possível restaurar as linhas da última sessão "
+                "porque as opções ainda não estão disponíveis."
+            )
+
+        removed_count = len(selected) - len(valid)
+        if valid:
+            return valid, (
+                "Aviso: algumas linhas da última sessão não estão mais "
+                "disponíveis e foram removidas."
+            )
+
+        return [], (
+            "Aviso: as linhas salvas da última sessão não estão disponíveis "
+            f"({removed_count} removida(s))."
+        )
+
     @app.callback(
         Output("tabs-filtro", "value"),
         Input("url-router", "pathname"),
@@ -318,12 +367,20 @@ def register_ui_callbacks(app, get_last_update_ts):
     @app.callback(
         Output("error-banner-container", "children"),
         Input("store-fetch-error", "data"),
+        Input("store-session-warning", "data"),
     )
-    def atualizar_error_banner(error_msg):
+    def atualizar_error_banner(error_msg, warning_msg):
         """Mostra/oculta banner de erro quando APIs falham."""
-        if not error_msg:
-            return []
         from dash import html as _html
+
+        if not error_msg:
+            if not warning_msg:
+                return []
+            return _html.Div(
+                [_html.Span(str(warning_msg))],
+                className="error-banner",
+                role="status",
+            )
         return _html.Div(
             [_html.Span(str(error_msg))],
             className="error-banner",
