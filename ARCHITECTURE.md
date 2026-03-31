@@ -34,7 +34,6 @@ A aplicacao renderiza dados de onibus em tempo real no mapa, combinando:
 Estado atual:
 
 - Implementacao principal consolidada em `src/`.
-- Modulos na raiz permanecem como shims de compatibilidade temporarios.
 - `app.py` importa componentes diretamente de `src.*`.
 
 Pacotes alvo em `src/`:

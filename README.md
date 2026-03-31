@@ -9,7 +9,7 @@ Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Ri
 - Endpoint tecnico para monitoramento: `GET /health`.
 - Pagina amigavel para suporte operacional: `GET /status`.
 - Aba Veiculos aceita busca manual de ID fora da listagem atual do dropdown.
-- Reorganizacao estrutural consolidada em `src/`, com shims de compatibilidade na raiz.
+- Reorganizacao estrutural consolidada em `src/`, sem camada legada na raiz.
 
 ## Visao geral
 
@@ -39,11 +39,8 @@ Estrutura atual do projeto:
 
 - `app.py`: entrypoint e servidor Flask/Dash.
 - `src/`: pacote Python oficial (`config`, `core`, `logic`, `state`, `ui`, `utils`).
-- `*_logic.py`, `*_helpers.py` e arquivos de callback/layout na raiz: shims de compatibilidade temporaria para imports legados.
 - `tests/`: suite de testes automatizados.
 - `assets/`: CSS e arquivos estaticos web.
-
-> Observacao: os shims legados na raiz serao removidos apenas apos validacao operacional completa.
 
 ## Requisitos
 
@@ -180,7 +177,6 @@ Quando as APIs publicas de GPS estiverem fora do ar (timeouts/503):
 ## Proximos passos de organizacao
 
 - Validar operacao em producao/staging apos migracao para `src`.
-- Remover camada legada de compatibilidade na raiz.
 - Manter cobertura de testes e smoke checks (`/health` e `/status`) a cada lote.
 
 ## Fluxo de commits recomendados

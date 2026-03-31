@@ -18,7 +18,7 @@
 
 - Preferir alteracoes incrementais e com baixo risco.
 - Evitar refatoracoes amplas sem cobertura de testes.
-- Manter retrocompatibilidade durante migracao para `src/`.
+- Manter novos modulos e imports sempre dentro de `src/`.
 - Evitar mudancas de estilo em massa sem necessidade funcional.
 
 ## Testes
