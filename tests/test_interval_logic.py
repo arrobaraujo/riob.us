@@ -1,6 +1,6 @@
 import unittest
 
-from interval_logic import compute_poll_interval_ms
+from src.logic.interval_logic import compute_poll_interval_ms
 
 
 class IntervalLogicTests(unittest.TestCase):

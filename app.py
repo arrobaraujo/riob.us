@@ -43,7 +43,7 @@ from gps_processing import (
     atualizar_historico,
     limpar_historico_antigo as _limpar_historico_antigo,
 )
-from interval_logic import compute_poll_interval_ms
+from src.logic.interval_logic import compute_poll_interval_ms
 from gtfs_static_logic import (
     carregar_dados_estaticos_service,
     recarregar_gtfs_estatico_sob_demanda_service,
