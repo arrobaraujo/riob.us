@@ -3,7 +3,7 @@ import unittest
 import pandas as pd
 from dash import html
 
-from map_data_logic import (
+from src.logic.map_data_logic import (
     construir_legenda_linhas,
     construir_legenda_sem_veiculos,
     construir_legenda_veiculos,
@@ -60,6 +60,17 @@ class MapDataLogicTests(unittest.TestCase):
         out = filtrar_por_veiculos(dados, ["2"])
         self.assertEqual(len(out), 1)
         self.assertEqual(out.iloc[0]["ordem"], "2")
+
+    def test_filtrar_por_veiculos_por_sufixo_numerico(self):
+        dados = pd.DataFrame(
+            [
+                {"ordem": "A50001", "linha": "100"},
+                {"ordem": "B50002", "linha": "200"},
+            ]
+        )
+        out = filtrar_por_veiculos(dados, ["50001"])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["ordem"], "A50001")
 
     def test_split_gps_por_tipo(self):
         dados = pd.DataFrame(

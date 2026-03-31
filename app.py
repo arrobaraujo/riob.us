@@ -48,7 +48,7 @@ from gtfs_static_logic import (
     carregar_dados_estaticos_service,
     recarregar_gtfs_estatico_sob_demanda_service,
 )
-from map_data_logic import (
+from src.logic.map_data_logic import (
     construir_legenda_linhas,
     construir_legenda_sem_veiculos,
     construir_legenda_veiculos,
