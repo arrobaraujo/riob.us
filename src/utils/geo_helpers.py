@@ -1,6 +1,11 @@
-# Shim de compatibilidade — módulo migrado para src/utils/geo_helpers.py
-from src.utils.geo_helpers import *  # noqa: F401, F403
+import geopandas as gpd
+import pandas as pd
 
+
+def build_point_mask(
+    df, lon_col, lat_col, polygon, prepared_polygon=None,
+    predicate="covered_by"
+):
     """Boolean mask for rows satisfying the predicate against polygon.
 
     Supported predicates:

@@ -1,10 +1,8 @@
-# Shim de compatibilidade — módulo migrado para src/utils/svg_icons.py
-from src.utils.svg_icons import *  # noqa: F401, F403
-from src.utils.svg_icons import (  # noqa: F401
-    cache_or_generate_svg, gerar_svg_usuario, make_vehicle_icon,
-    STOP_SIGN_ICON, get_svg_cache_lock, get_svg_cache,
-)
-
+"""Geração e cache de ícones SVG para marcadores do mapa."""
+import math
+import threading
+import urllib.parse
+from typing import Tuple, List, Optional, Union, Dict
 
 # Cache de SVGs pré-gerados (evita recalcular toda renderização)
 _svg_cache: Dict[Tuple[str, str], Tuple[str, List[int], List[int]]] = {}

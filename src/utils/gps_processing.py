@@ -1,24 +1,17 @@
-# Shim de compatibilidade — módulo migrado para src/utils/gps_processing.py
-from src.utils.gps_processing import *  # noqa: F401, F403
-from src.utils.gps_processing import (  # noqa: F401
-    processar_dados_gps, calcular_bearing_df,
-    atualizar_historico, limpar_historico_antigo,
-)
+"""Pipeline de processamento de dados GPS: bearing, histórico, filtragem."""
+import math
+import time
 
+import pandas as pd
+
+from typing import Dict, Any, Union, List
+from src.utils.math_helpers import haversine, bearing_between
 
 
 def processar_dados_gps(
     df: pd.DataFrame, config: Dict[str, Any]
 ) -> pd.DataFrame:
-    """Processa DataFrame GPS de acordo com configuração de mapeamento.
-
-    Args:
-        df: DataFrame com dados brutos
-        config: Dicionário com mapeamento de colunas
-
-    Returns:
-        DataFrame processado ou vazio se erro
-    """
+    """Processa DataFrame GPS de acordo com configuração de mapeamento."""
     from datetime import timedelta
 
     try:
@@ -27,7 +20,6 @@ def processar_dados_gps(
 
         df = df.copy()
 
-        # Processar timestamp
         ts_col = config["timestamp_col"]
         if ts_col in df.columns:
             df[ts_col] = pd.to_datetime(
@@ -35,11 +27,9 @@ def processar_dados_gps(
                 unit="s"
             ) - timedelta(hours=3)
 
-        # Renomear coluna ordem se necessário
         if config["ordem_col"] != "ordem":
             df = df.rename(columns={config["ordem_col"]: "ordem"})
 
-        # Processar coordenadas
         lat_col = config["lat_col"]
         lon_col = config["lon_col"]
 
@@ -59,12 +49,10 @@ def processar_dados_gps(
         else:
             df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
 
-        # Processar velocidade
         vel_col = config["velocidade_col"]
         if vel_col in df.columns:
             df[vel_col] = pd.to_numeric(df[vel_col], errors="coerce")
 
-        # Selecionar colunas finais
         colunas = [
             "ordem", ts_col, lat_col, lon_col,
             config["linha_col"], config["velocidade_col"]
@@ -75,7 +63,6 @@ def processar_dados_gps(
         colunas = [c for c in colunas if c in df.columns]
         df = df[colunas].copy()
 
-        # Renomear para nomes padrão
         rename_map = {
             ts_col: "datahora",
             lat_col: "latitude",
@@ -104,17 +91,13 @@ def calcular_bearing_df(
     hist_list: Union[Dict[str, Any], List[Dict[str, Any]]],
     dist_min: float = 20.0
 ) -> pd.DataFrame:
-    """Adiciona coluna 'direcao' ao DataFrame.
-    Só atualiza o bearing quando o veículo andou >= dist_min m;
-    caso contrário preserva o último bearing registrado.
-    """
+    """Adiciona coluna 'direcao' ao DataFrame."""
     df = df.copy()
     df["direcao"] = float("nan")
 
     if not hist_list:
         return df
 
-    # Aceita histórico no formato novo (dict) e no legado (lista de dicts)
     if isinstance(hist_list, dict):
         hist_map = hist_list
     else:
@@ -134,7 +117,6 @@ def calcular_bearing_df(
         "datahora": "datahora_prev"
     })
 
-    # Junta apenas veículos presentes no histórico para custo reduzido.
     cand = df.reset_index().merge(
         hist_df[["ordem", "lat_prev", "lng_prev", "datahora_prev", "bearing"]],
         on="ordem",
@@ -182,9 +164,7 @@ def calcular_bearing_df(
 def atualizar_historico(
     hist_dict: Dict[str, Any], df: pd.DataFrame
 ) -> Dict[str, Any]:
-    """Mantém apenas a posição mais recente por veículo no histórico.
-    Formato: {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
-    """
+    """Mantém apenas a posição mais recente por veículo no histórico."""
     ts_now = time.time()
     for row in df.itertuples(index=False):
         bearing = getattr(row, "direcao", None)
