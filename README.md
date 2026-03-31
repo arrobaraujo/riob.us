@@ -176,6 +176,20 @@ curl http://localhost:8080/status
 - Atualizar imports internos e testes para `src`.
 - Remover camada legada apos validacao completa.
 
+## Fluxo de commits recomendados
+
+Antes de publicar:
+
+1. Revisar alteracoes: `git status` e `git diff --name-only`.
+2. Revisar historico recente: `git log --oneline -5`.
+3. Validar testes impactados.
+
+Para publicar commits locais ja criados:
+
+```powershell
+git push origin main
+```
+
 ## Licenca e uso
 
 Se o projeto for publicado externamente, incluir nesta secao a licenca de distribuicao e as restricoes de uso das fontes de dados utilizadas.
