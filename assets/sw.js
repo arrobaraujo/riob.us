@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bus-rio-v3';
+const CACHE_NAME = 'riobus-v3';
 const OFFLINE_URL = '/assets/offline.html';
 const APP_SHELL_ASSETS = [
   '/',
@@ -86,7 +86,7 @@ async function networkFirstPage(request) {
       return offlinePage;
     }
 
-    return new Response('Sem conexao no momento.', {
+    return new Response('Sem conexão no momento.', {
       status: 503,
       headers: {'Content-Type': 'text/plain; charset=UTF-8'}
     });
