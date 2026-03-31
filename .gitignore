@@ -28,6 +28,8 @@ htmlcov/
 # Project specific
 gtfs/gtfs_static_cache.pkl
 *.log
+gunicorn.ctl
+gunicorn.pid
 flake8_final_check_*.txt
 pytest_results.txt
 err_map_data.txt
@@ -37,5 +39,6 @@ pytest_map_data.txt
 # Ide / system
 .vscode/
 .idea/
+.kilocode/
 .DS_Store
 Thumbs.db

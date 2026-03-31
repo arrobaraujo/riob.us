@@ -9,7 +9,7 @@ Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Ri
 - Endpoint tecnico para monitoramento: `GET /health`.
 - Pagina amigavel para suporte operacional: `GET /status`.
 - Aba Veiculos aceita busca manual de ID fora da listagem atual do dropdown.
-- Reorganizacao estrutural iniciada com pacote `src/` (migracao gradual).
+- Reorganizacao estrutural consolidada em `src/`, com shims de compatibilidade na raiz.
 
 ## Visao geral
 
@@ -35,16 +35,15 @@ Principais capacidades:
 
 ## Estrutura do repositorio
 
-Estrutura em transicao para boas praticas com `src/`:
+Estrutura atual do projeto:
 
-- `app.py`: entrypoint atual e servidor Flask/Dash.
-- `callbacks_ui.py`, `callbacks_viewport.py`: callbacks de interface e viewport.
-- `*_logic.py`, `*_helpers.py`: logica de negocio/utilitarios (legado em raiz durante migracao).
-- `src/`: pacote Python oficial em formacao (`config`, `core`, `logic`, `state`, `ui`, `utils`).
+- `app.py`: entrypoint e servidor Flask/Dash.
+- `src/`: pacote Python oficial (`config`, `core`, `logic`, `state`, `ui`, `utils`).
+- `*_logic.py`, `*_helpers.py` e arquivos de callback/layout na raiz: shims de compatibilidade temporaria para imports legados.
 - `tests/`: suite de testes automatizados.
 - `assets/`: CSS e arquivos estaticos web.
 
-> Observacao: a migracao de modulos para `src/` sera feita de forma gradual para evitar regressao funcional.
+> Observacao: os shims legados na raiz serao removidos apenas apos validacao operacional completa.
 
 ## Requisitos
 
@@ -170,11 +169,19 @@ curl http://localhost:8080/status
 
 `GET /status` expoe painel HTML amigavel para suporte e troubleshooting operacional.
 
+## Comportamento com GPS indisponivel
+
+Quando as APIs publicas de GPS estiverem fora do ar (timeouts/503):
+
+- O app continua respondendo normalmente.
+- No modo `Linhas`, o shape/itinerario e a legenda da linha selecionada continuam sendo renderizados a partir do GTFS estatico.
+- No modo `Veiculos`, a camada dinamica depende de snapshot recente e pode ficar sem pontos durante a indisponibilidade.
+
 ## Proximos passos de organizacao
 
-- Migrar modulos legados da raiz para `src/` por dominio.
-- Atualizar imports internos e testes para `src`.
-- Remover camada legada apos validacao completa.
+- Validar operacao em producao/staging apos migracao para `src`.
+- Remover camada legada de compatibilidade na raiz.
+- Manter cobertura de testes e smoke checks (`/health` e `/status`) a cada lote.
 
 ## Fluxo de commits recomendados
 

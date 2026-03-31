@@ -33,8 +33,9 @@ A aplicacao renderiza dados de onibus em tempo real no mapa, combinando:
 
 Estado atual:
 
-- Modulos legados na raiz ainda ativos.
-- Pacote `src/` inicializado para migracao progressiva.
+- Implementacao principal consolidada em `src/`.
+- Modulos na raiz permanecem como shims de compatibilidade temporarios.
+- `app.py` importa componentes diretamente de `src.*`.
 
 Pacotes alvo em `src/`:
 
@@ -56,4 +57,5 @@ Pacotes alvo em `src/`:
 - Execucao nativa via `python app.py` desativada por padrao.
 - Caminho oficial unico: container.
 - Busca manual de veiculos fora do dropdown foi habilitada para casos fora do snapshot recente.
+- Em indisponibilidade da API GPS, o modo Linhas segue renderizando shape e legenda via GTFS estatico.
 - Commits devem ser pequenos, tematicos e validaveis com testes focados.

@@ -33,6 +33,7 @@ Ao alterar comportamento funcional, atualizar:
 - `README.md`
 - `ARCHITECTURE.md` (quando a arquitetura mudar)
 - exemplos de comando e variaveis de ambiente relevantes
+- `.gitignore` e `.dockerignore` quando surgirem novos artefatos locais/runtime
 
 ## Commits separados (recomendado)
 
@@ -42,7 +43,8 @@ Exemplo de estrategia:
 
 1. `fix:` para correcao funcional isolada.
 2. `refactor:` para migracao estrutural sem alterar comportamento.
-3. `docs:` para documentacao (README/arquitetura/contribuicao).
+3. `chore:` para hygiene/infra (`.gitignore`, `.dockerignore`, compose, Dockerfile).
+4. `docs:` para documentacao (README/arquitetura/contribuicao).
 
 Comandos uteis:
 
