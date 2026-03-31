@@ -26,6 +26,9 @@
 
 - Sempre executar ao menos os testes impactados.
 - Para mudancas de runtime/infra, executar suite completa.
+- Para mudancas em callbacks, filtros ou persistencia de sessao da UI, executar ao menos:
+	- `tests/test_callbacks_ui.py`
+	- `tests/test_pipeline_smoke.py`
 
 ## Documentacao
 

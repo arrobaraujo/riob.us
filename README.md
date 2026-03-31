@@ -9,6 +9,9 @@ Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Ri
 - Endpoint tecnico para monitoramento: `GET /health`.
 - Pagina amigavel para suporte operacional: `GET /status`.
 - Aba Veiculos aceita busca manual de ID fora da listagem atual do dropdown.
+- Selecao de linhas persiste entre sessoes do navegador (localStorage).
+- Versionamento unificado por build: runtime, cache PWA e chaves de sessao.
+- Build atual exibido no topo da interface, ao lado do titulo.
 - Reorganizacao estrutural consolidada em `src/`, sem camada legada na raiz.
 
 ## Visao geral
@@ -107,7 +110,27 @@ Passos recomendados:
 | `POLL_INTERVAL_IDLE_MS` | Nao | `90000` | Poll sem selecao ativa |
 | `POLL_INTERVAL_LINES_ACTIVE_MS` | Nao | `30000` | Poll com linhas selecionadas |
 | `POLL_INTERVAL_VEHICLES_ACTIVE_MS` | Nao | `20000` | Poll com veiculos selecionados |
-| `APP_BUILD_ID` | Nao | vazio | ID de build exibido em health/status |
+| `APP_BUILD_ID` | Nao | vazio | ID de build da aplicacao (usa `RENDER_GIT_COMMIT` como fallback) |
+| `RENDER_GIT_COMMIT` | Injetada pelo Render | hash de commit | Fallback automatico de versao quando `APP_BUILD_ID` nao e definido |
+
+## Persistencia de sessao e versao
+
+Comportamento atual da UI para reduzir friccao no retorno do usuario:
+
+- O filtro de `Linhas` e persistido no `localStorage` do navegador.
+- Ao abrir o app novamente, o filtro e restaurado automaticamente.
+- Ao alternar entre as abas `Linhas` e `Veiculos`, a selecao anterior de linhas e preservada.
+- Se alguma linha salva nao existir mais nas opcoes atuais, ela e removida de forma segura.
+- Nesses casos, o app mostra um aviso curto no banner superior.
+
+Versionamento unificado no frontend:
+
+- `APP_BUILD_ID` (ou fallback `RENDER_GIT_COMMIT`) e a fonte de verdade da versao.
+- Esse build_id controla:
+  - invalidacao de estado persistido por build;
+  - registro/cache do Service Worker (PWA) por build;
+  - refresh automatico quando backend e frontend estao em builds diferentes.
+- O build atual fica visivel no topo da interface (badge ao lado de `RioB.us`).
 
 ## Busca de veiculos fora da listagem
 
@@ -153,6 +176,11 @@ Execute os testes no ambiente local (ou dentro do container de app):
 ```powershell
 pytest
 ```
+
+Para mudancas no fluxo de UI/filtros, o conjunto minimo recomendado inclui:
+
+- `tests/test_callbacks_ui.py`
+- `tests/test_pipeline_smoke.py`
 
 Smoke recomendado apos alteracoes de runtime:
 

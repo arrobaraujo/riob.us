@@ -51,6 +51,22 @@ Pacotes alvo em `src/`:
 - Hit-rate de cache exposto em `/health` e `/status`.
 - Redis opcional via `REDIS_URL`; fallback em memoria.
 
+## Versionamento de build (unificado)
+
+- Fonte de verdade: `APP_BUILD_ID` com fallback para `RENDER_GIT_COMMIT`.
+- O mesmo build_id e usado em runtime e frontend para evitar estado misto.
+- O valor e exposto em `/health` e `/status`.
+- O frontend faz refresh controlado quando detecta mudanca de build.
+- O Service Worker usa cache versionado por build para invalidacao automatica.
+
+## Persistencia de sessao no frontend
+
+- O filtro de linhas usa persistencia em `localStorage`.
+- A chave de persistencia e escopada por build para isolar deploys.
+- A selecao de linhas permanece preservada ao alternar para a aba `Veiculos` e voltar.
+- Valores restaurados sao saneados contra opcoes atuais de linha.
+- Entradas invalidas sao removidas automaticamente com aviso em banner.
+
 ## Decisoes operacionais
 
 - Execucao nativa via Python local desativada por padrao.
