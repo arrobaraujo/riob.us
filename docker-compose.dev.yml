@@ -1,10 +1,9 @@
 services:
-  gps-bus-rio:
+  riob-us:
     volumes:
       - ./:/app
     environment:
       - FLASK_ENV=development
-      - WEB_CONCURRENCY=1
       - GUNICORN_THREADS=2
       - GUNICORN_TIMEOUT=180
     command: >
