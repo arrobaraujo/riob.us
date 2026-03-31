@@ -20,7 +20,8 @@ import redis
 import sentry_sdk
 from dash import Input, Output, html
 from dash.exceptions import CallbackException
-from flask import request
+from flask import Response, request, redirect
+from urllib.parse import quote
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -204,6 +205,8 @@ _POLL_INTERVAL_LINES_ACTIVE_MS = int(
 _POLL_INTERVAL_VEHICLES_ACTIVE_MS = int(
     os.getenv("POLL_INTERVAL_VEHICLES_ACTIVE_MS", "20000")
 )
+
+_DEV_ASSETS_AUTO_RELOAD = os.getenv("DEV_ASSETS_AUTO_RELOAD", "0") == "1"
 
 # Janela curta de métricas para p95 operacional.
 _perf_metrics_lock = threading.Lock()
@@ -767,6 +770,16 @@ app = dash.Dash(
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
+if _DEV_ASSETS_AUTO_RELOAD:
+    # Em desenvolvimento no Docker, habilita hot reload também para assets.
+    app.enable_dev_tools(
+        debug=True,
+        dev_tools_ui=False,
+        dev_tools_hot_reload=True,
+        dev_tools_hot_reload_interval=1000,
+        dev_tools_hot_reload_watch_interval=1000,
+    )
+
 # Otimização Enterprise: Compressão de Respostas (Gzip/Brotli)
 # para reduzir tráfego JSON/GeoJSON
 Compress(server)
@@ -789,6 +802,12 @@ def _disable_cache_for_dash_endpoints(response):
     """Evita cache do layout para reduzir mismatch apos deploy."""
     path = request.path or ""
     if path in ("/", "/_dash-layout", "/_dash-dependencies"):
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    if _DEV_ASSETS_AUTO_RELOAD and path.startswith("/assets/"):
         response.headers["Cache-Control"] = (
             "no-store, no-cache, must-revalidate, max-age=0"
         )
@@ -822,6 +841,13 @@ def _handle_callback_exception(exc):
 def _health_check():
     """Endpoint de health check para monitoramento e deploy."""
     import json as _json
+
+    status = _build_health_status()
+    return _json.dumps(status), 200, {"Content-Type": "application/json"}
+
+
+def _build_health_status():
+    """Consolida estado de health para JSON e página amigável."""
     with _status_lock:
         last_ts = _last_update_ts
         fetch_ok = _last_fetch_had_data
@@ -859,7 +885,110 @@ def _health_check():
     except Exception:
         pass
 
-    return _json.dumps(status), 200, {"Content-Type": "application/json"}
+    return status
+
+
+@server.route("/status")
+def _status_page():
+    """Página de status legível por humanos para suporte operacional."""
+    status = _build_health_status()
+
+    gtfs_badge = "OK" if status.get("gtfs_loaded") else "PENDENTE"
+    fetch_badge = "OK" if status.get("last_fetch_had_data") else "SEM DADOS"
+    mem_text = f"{status.get('memory_mb')} MB" if "memory_mb" in status else "N/D"
+    cache = status.get("cache", {})
+
+    html_body = f"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Status | RioB.us</title>
+    <style>
+        body {{
+            margin: 0;
+            font-family: Segoe UI, Arial, sans-serif;
+            background: linear-gradient(150deg, #eef3f9, #dce7f5);
+            color: #1f2a37;
+        }}
+        .wrap {{
+            max-width: 920px;
+            margin: 20px auto;
+            padding: 0 12px;
+        }}
+        .card {{
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(26, 46, 73, 0.08);
+            border-radius: 14px;
+            box-shadow: 0 12px 28px rgba(23, 40, 64, 0.08);
+            padding: 16px;
+        }}
+        .head {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; }}
+        .badge {{
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: #e7f8ec;
+            color: #166534;
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }}
+        .item {{
+            background: #f7fbff;
+            border: 1px solid #d8e4f3;
+            border-radius: 10px;
+            padding: 10px;
+        }}
+        .k {{ font-size: 12px; color: #48607b; margin-bottom: 3px; }}
+        .v {{ font-size: 15px; font-weight: 700; }}
+        .foot {{ margin-top: 12px; font-size: 12px; color: #567; }}
+        a {{ color: #0f5cc0; text-decoration: none; }}
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <div class="head">
+                <h1 style="margin:0; font-size: 20px;">Status da aplicacao RioB.us</h1>
+                <span class="badge">{status.get('status', 'unknown').upper()}</span>
+            </div>
+            <div class="grid">
+                <div class="item"><div class="k">GTFS carregado</div><div class="v">{gtfs_badge}</div></div>
+                <div class="item"><div class="k">Ultima atualizacao GPS</div><div class="v">{status.get('last_gps_update') or 'N/D'}</div></div>
+                <div class="item"><div class="k">Ultimo fetch com dados</div><div class="v">{fetch_badge}</div></div>
+                <div class="item"><div class="k">Memoria do processo</div><div class="v">{mem_text}</div></div>
+                <div class="item"><div class="k">Cache estatico</div><div class="v">{cache.get('static_layers_items', 0)} itens</div></div>
+                <div class="item"><div class="k">Cache veiculos</div><div class="v">{cache.get('vehicle_layers_items', 0)} itens</div></div>
+                <div class="item"><div class="k">Cache SVG</div><div class="v">{cache.get('svg_items', 0)} itens</div></div>
+                <div class="item"><div class="k">Hit rate cache veiculos</div><div class="v">{cache.get('vehicle_layers_hit_rate', 0)}%</div></div>
+            </div>
+            <div class="foot">
+                Build: {status.get('build_id') or 'N/D'} | JSON tecnico: <a href="/health">/health</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    return Response(html_body, status=200, mimetype="text/html")
+
+
+@server.route("/veiculos/<vehicle_token>")
+def _deep_link_vehicle(vehicle_token):
+    """Deep link de veículos desativado: redireciona para home."""
+    return redirect("/", code=302)
+
+@server.route("/linhas/<line_token>")
+def _deep_link_line(line_token):
+    """Converte deep link por caminho para querystring estável no Dash."""
+    token = quote(str(line_token or "").strip(), safe="")
+    return redirect(f"/?linha={token}", code=302)
 
 
 app.layout = build_app_layout(
@@ -1098,12 +1227,9 @@ def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, d
         return modo, [], {}
 
     if modo == "veiculos":
-        selected_vehicles = set(str(v) for v in veiculos_sel)
-        if not selected_vehicles:
+        if not veiculos_sel:
             return modo, [], {}
-        dados_filtrados = dados[
-            dados["ordem"].astype(str).isin(selected_vehicles)
-        ].copy()
+        dados_filtrados = filtrar_por_veiculos(dados, veiculos_sel).copy()
         if dados_filtrados.empty:
             return modo, [], {}
         linhas_render = linhas_ativas_por_veiculos(
@@ -1405,6 +1531,9 @@ register_viewport_callbacks(
 # ==============================================================================
 
 if __name__ == "__main__":
-    # No Render, a porta deve vir da variável de ambiente PORT.
-    port = int(os.getenv("PORT", "8050"))
+    if os.getenv("IN_DOCKER") != "1":
+        raise RuntimeError(
+            "Execucao nativa desativada. Use Docker: 'docker compose up --build'."
+        )
+    port = int(os.getenv("PORT", "8080"))
     app.run(debug=False, host="0.0.0.0", port=port)

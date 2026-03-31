@@ -1,23 +1,150 @@
 import time
 from datetime import datetime
+from urllib.parse import unquote, parse_qs
 
 import dash
-from dash import Input, Output, State
+from dash import Input, Output
+
+
+def _normalize_multi_values(values):
+    """Normaliza valores de componente multi para lista de strings não vazias."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        candidates = [values]
+    elif isinstance(values, (list, tuple, set)):
+        candidates = list(values)
+    else:
+        candidates = [values]
+    normalized = []
+    for v in candidates:
+        if v is None:
+            continue
+        text = str(v).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _normalize_vehicle_token(value):
+    text = str(value or "").strip().upper()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return text, digits
+
+
+def _resolve_vehicle_alias(options, typed_value):
+    raw_full, raw_digits = _normalize_vehicle_token(typed_value)
+    if not raw_full:
+        return ""
+
+    for opt in options or []:
+        value = str((opt or {}).get("value", "")).strip()
+        full, _digits = _normalize_vehicle_token(value)
+        if full and full == raw_full:
+            return value
+
+    if raw_digits:
+        for opt in options or []:
+            value = str((opt or {}).get("value", "")).strip()
+            _full, digits = _normalize_vehicle_token(value)
+            if digits and digits == raw_digits:
+                return value
+
+    return str(typed_value).strip()
+
+
+def _split_vehicle_options_with_selected_fallback(options, veiculos_sel):
+    selected_list = _normalize_multi_values(veiculos_sel)
+    selected_set = set(selected_list)
+    known_values = {
+        str(o.get("value", "")).strip()
+        for o in (options or [])
+        if str(o.get("value", "")).strip()
+    }
+
+    selected_opts = [
+        o for o in (options or []) if str(o.get("value", "")) in selected_set
+    ]
+    missing_selected_opts = [
+        {
+            "label": f"{value} · selecionado",
+            "value": value,
+        }
+        for value in selected_list
+        if value not in known_values
+    ]
+    unselected_opts = [
+        o for o in (options or []) if str(o.get("value", "")) not in selected_set
+    ]
+
+    return missing_selected_opts + selected_opts, unselected_opts, known_values
+
+
+def _parse_deep_link(pathname, search=None):
+    query = str(search or "").strip()
+    if query:
+        if query.startswith("?"):
+            query = query[1:]
+        parsed_qs = parse_qs(query, keep_blank_values=False)
+
+        line_token = (parsed_qs.get("linha") or parsed_qs.get("linhas") or [""])[0]
+        if str(line_token).strip():
+            return "linhas", unquote(str(line_token).strip())
+
+    text = str(pathname or "").strip()
+    if not text:
+        return None
+
+    chunks = [unquote(chunk).strip() for chunk in text.split("/") if chunk]
+    if len(chunks) < 2:
+        return None
+
+    section = chunks[0].lower()
+    token = chunks[1]
+    if not token:
+        return None
+
+    if section == "linhas":
+        return "linhas", token
+    return None
 
 
 def register_ui_callbacks(app, get_last_update_ts):
+    @app.callback(
+        Output("tabs-filtro", "value"),
+        Input("url-router", "pathname"),
+        Input("url-router", "search"),
+        prevent_initial_call=False,
+    )
+    def sincronizar_tab_com_url(pathname, search):
+        """Permite deep link apenas para /linhas/<id>."""
+        parsed = _parse_deep_link(pathname, search)
+        if not parsed:
+            return dash.no_update
+        tab, _token = parsed
+        return tab
+
     @app.callback(
         Output("store-tab-filtro", "data"),
         Output("dropdown-linhas", "value"),
         Output("dropdown-veiculos", "value"),
         Input("tabs-filtro", "value"),
+        Input("url-router", "pathname"),
+        Input("url-router", "search"),
         prevent_initial_call=False,
     )
-    def sincronizar_tab_filtro(tab_value):
+    def sincronizar_tab_filtro(tab_value, pathname, search):
         """Mantém estado da aba ativa e limpa o outro dropdown ao trocar aba."""
-        tab = tab_value or "linhas"
-        if tab == "veiculos":
-            return tab, [], dash.no_update
+        parsed = _parse_deep_link(pathname, search)
+
+        current_tab = tab_value or "linhas"
+
+        if parsed:
+            tab, token = parsed
+            return "linhas", [token], []
+
+        if current_tab == "veiculos":
+            return current_tab, [], dash.no_update
         return "linhas", dash.no_update, []
 
     @app.callback(
@@ -68,7 +195,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         """
         Sincroniza seleção de veículos sem debounce para resposta imediata.
         """
-        return [str(v) for v in (veiculos_sel or []) if str(v).strip()]
+        return _normalize_multi_values(veiculos_sel)
 
     @app.callback(
         Output("intervalo-veiculos-recenter", "disabled"),
@@ -98,7 +225,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         Output("dropdown-veiculos", "options"),
         Input("store-veiculos-opcoes", "data"),
         Input("dropdown-veiculos", "search_value"),
-        State("dropdown-veiculos", "value"),
+        Input("dropdown-veiculos", "value"),
     )
     def atualizar_opcoes_veiculos(opcoes, search_value, veiculos_sel):
         """
@@ -106,30 +233,66 @@ def register_ui_callbacks(app, get_last_update_ts):
         com texto filtra todos.
         """
         options = opcoes or []
-        selected_set = set(
-            str(v) for v in (veiculos_sel or []) if str(v).strip()
+        selected_opts, unselected_opts, known_values = (
+            _split_vehicle_options_with_selected_fallback(options, veiculos_sel)
         )
-
-        # Veículos selecionados têm prioridade — sempre aparecem no topo
-        selected_opts = [
-            o for o in options if str(o.get("value", "")) in selected_set
-        ]
-        unselected_opts = [
-            o for o in options if str(o.get("value", "")) not in selected_set
-        ]
+        selected_set = {
+            str(v) for v in _normalize_multi_values(veiculos_sel)
+        }
 
         search = (search_value or "").strip().lower()
         if len(search) >= 2:
             search_terms = search.split()
-            # Filtra garantindo que todos os termos digitados apareçam no label
-            matched = [
-                o for o in unselected_opts
-                if all(
-                    term in str(o.get("label", "")).lower()
-                    for term in search_terms
-                )
-            ]
-            return selected_opts + matched[:200]
+            typed_full, typed_digits = _normalize_vehicle_token(search_value)
+
+            def _match_option(opt):
+                label = str(opt.get("label", "")).lower()
+                value_raw = str(opt.get("value", "")).strip()
+                value_full, value_digits = _normalize_vehicle_token(value_raw)
+
+                if all(term in label for term in search_terms):
+                    return True
+
+                lowered_value = value_raw.lower()
+                if all(term in lowered_value for term in search_terms):
+                    return True
+
+                if typed_digits and value_digits and typed_digits in value_digits:
+                    return True
+
+                if typed_full and value_full and typed_full == value_full:
+                    return True
+
+                return False
+
+            matched = [o for o in unselected_opts if _match_option(o)]
+
+            resolved_value = _resolve_vehicle_alias(options, search_value)
+            resolved_manual_opt = []
+            if resolved_value and resolved_value not in selected_set:
+                if resolved_value not in known_values:
+                    resolved_manual_opt = [
+                    {
+                        "label": f"{resolved_value} · busca manual",
+                        "value": resolved_value,
+                    }
+                    ]
+
+            # Fallback: permite selecionar um veículo digitado mesmo fora
+            # do snapshot atual do dropdown.
+            typed_value = (search_value or "").strip()
+            synthetic_opt = []
+            if (
+                typed_value
+                and resolved_value not in known_values
+                and resolved_value not in selected_set
+            ):
+                synthetic_opt = [{
+                    "label": f"{resolved_value} · busca manual",
+                    "value": resolved_value,
+                }]
+
+            return selected_opts + resolved_manual_opt + synthetic_opt + matched[:200]
 
         # Sem busca: retorna selecionados + primeiros 150 do snapshot
         return selected_opts + unselected_opts[:150]

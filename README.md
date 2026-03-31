@@ -1,228 +1,181 @@
 # GPS Bus Rio
 
-Aplicação web em Dash para visualização operacional de ônibus no município do Rio de Janeiro, com atualização em tempo real de posições GPS e sobreposição de dados estáticos de GTFS.
+Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Rio de Janeiro, com atualizacao em tempo real de posicoes GPS e sobreposicao de dados estaticos GTFS.
 
-O sistema combina dados públicos de mobilidade, geometria municipal e arquivos locais de apoio para permitir filtragem por linha ou veículo, renderização em mapa e monitoramento básico de saúde da aplicação.
+## Estado atual da entrega
 
-## Visão geral
+- Execucao oficial em desenvolvimento e producao: Docker.
+- Deploy oficial em producao: Render com runtime Docker (`render.yaml`).
+- Endpoint tecnico para monitoramento: `GET /health`.
+- Pagina amigavel para suporte operacional: `GET /status`.
+- Aba Veiculos aceita busca manual de ID fora da listagem atual do dropdown.
+- Reorganizacao estrutural iniciada com pacote `src/` (migracao gradual).
 
-Principais capacidades do projeto:
+## Visao geral
 
-- Consulta de veículos SPPO e BRT em tempo real.
-- Filtro por linhas e por veículos específicos.
-- Renderização de itinerários e pontos de parada a partir de GTFS local.
-- Exclusão de pontos fora do município e filtragem de veículos em garagem.
-- Cache de camadas estáticas e dinâmicas para reduzir custo de processamento.
-- Endpoint de health check para deploy e monitoramento.
+Principais capacidades:
+
+- Consulta de veiculos SPPO e BRT em tempo real.
+- Filtro por linhas e por veiculos especificos.
+- Renderizacao de itinerarios e pontos de parada a partir de GTFS local.
+- Exclusao de pontos fora do municipio e filtragem de veiculos em garagem.
+- Cache de camadas estaticas e dinamicas para reduzir custo de processamento.
+- Health check tecnico e status amigavel para operacao.
 - Suporte opcional a Redis e Sentry.
 
-## Arquitetura resumida
+## Stack
 
-Stack principal:
-
-- Python 3.12
+- Python 3.12.x
 - Dash + Flask
-- Dash Leaflet para visualização cartográfica
-- Pandas e GeoPandas para processamento tabular e geoespacial
-- Gunicorn para execução em produção
-- Redis opcional para cache compartilhado
+- Dash Leaflet
+- Pandas + GeoPandas
+- Gunicorn
+- Redis (opcional)
+- Docker / Docker Compose
 
-Fontes de dados utilizadas pela aplicação:
+## Estrutura do repositorio
 
-- API pública de GPS SPPO: `https://dados.mobilidade.rio/gps/sppo`
-- API pública de GPS BRT: `https://dados.mobilidade.rio/gps/brt`
-- Malha municipal do IBGE para limite do Rio de Janeiro
-- GTFS local em `gtfs/gtfs.zip`
-- Shapefile local de garagens em `garagens/`
+Estrutura em transicao para boas praticas com `src/`:
 
-## Estrutura do repositório
+- `app.py`: entrypoint atual e servidor Flask/Dash.
+- `callbacks_ui.py`, `callbacks_viewport.py`: callbacks de interface e viewport.
+- `*_logic.py`, `*_helpers.py`: logica de negocio/utilitarios (legado em raiz durante migracao).
+- `src/`: pacote Python oficial em formacao (`config`, `core`, `logic`, `state`, `ui`, `utils`).
+- `tests/`: suite de testes automatizados.
+- `assets/`: CSS e arquivos estaticos web.
 
-Arquivos e diretórios mais relevantes:
-
-- `app.py`: ponto de entrada da aplicação e servidor Flask exposto para Gunicorn.
-- `ui_layout.py`: composição do layout principal.
-- `callbacks_ui.py` e `callbacks_viewport.py`: callbacks da interface e do mapa.
-- `gps_data_logic.py`: integração e consolidação dos dados GPS em tempo real.
-- `gtfs_static_logic.py`: carga e cache dos dados estáticos de GTFS e geometrias.
-- `map_data_logic.py` e `map_layers_logic.py`: preparação das legendas, filtros e camadas do mapa.
-- `perf_logging.py`: controle dos logs de performance.
-- `tests/`: suíte de testes unitários e smoke tests.
-- `assets/`: CSS, service worker e manifesto do frontend.
+> Observacao: a migracao de modulos para `src/` sera feita de forma gradual para evitar regressao funcional.
 
 ## Requisitos
 
-Para execução local sem Docker:
+- Docker Desktop (Windows/macOS) ou Docker Engine + Compose plugin (Linux)
+- Acesso aos dados locais:
+  - `gtfs/gtfs.zip`
+  - `gtfs/dicionario_lecd.csv`
+  - shapefile de garagens em `garagens/`
 
-- Python 3.12.x recomendado
-- `pip` atualizado
-- Dependências do `requirements.txt`
+## Execucao local (Docker-only)
 
-Compatibilidade observada no repositório:
-
-- A pipeline de CI valida o projeto em Python 3.11 e 3.12.
-
-Observação:
-
-- O projeto usa bibliotecas geoespaciais como GeoPandas, Shapely, PyProj e Pyogrio. Em ambientes Windows, isso pode exigir toolchain e wheels compatíveis. Se quiser reduzir atrito de setup, prefira a execução via Docker.
-
-## Execução local
-
-### 1. Criar e ativar ambiente virtual
-
-Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-### 2. Instalar dependências
-
-```powershell
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 3. Iniciar a aplicação
-
-```powershell
-python app.py
-```
-
-Por padrão, a aplicação sobe em:
-
-- `http://localhost:8050`
-
-O endpoint de health check fica disponível em:
-
-- `http://localhost:8050/health`
-
-## Execução com Docker
-
-O repositório inclui `Dockerfile` e `docker-compose.yml` para execução containerizada.
-
-### Subir a stack
+### Subir stack
 
 ```powershell
 docker compose up --build
 ```
 
-Serviços esperados:
+Esse comando usa o perfil base (producao-like), sem hot reload.
 
-- Aplicação web em `http://localhost:8080`
-- Redis em `localhost:6379`
+### Subir stack com hot reload (desenvolvimento)
 
-Health check da aplicação em Docker:
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
 
-- `http://localhost:8080/health`
+Nesse modo, o codigo local e montado no container e o Gunicorn roda com
+`--reload`, entao alteracoes em arquivos Python sao aplicadas automaticamente.
+
+Servicos esperados:
+
+- App: `http://localhost:8080`
+- Redis: `localhost:6379`
+
+### Endpoints de operacao
+
+- Health tecnico: `http://localhost:8080/health`
+- Status amigavel: `http://localhost:8080/status`
+
+## Deploy em producao (Render Docker)
+
+O deploy e feito pelo `render.yaml` com `env: docker` e `dockerfilePath: ./Dockerfile`.
+
+Passos recomendados:
+
+1. Fazer push para o repositorio remoto.
+2. Criar/atualizar o servico no Render por Blueprint.
+3. Confirmar uso do Docker runtime e variaveis de ambiente.
+4. Validar `/health` e `/status` apos deploy.
+
+## Variaveis de ambiente
+
+| Variavel | Obrigatoria | Padrao | Finalidade |
+| --- | --- | --- | --- |
+| `PORT` | Nao | `8080` | Porta HTTP usada pelo Gunicorn |
+| `IN_DOCKER` | Sim (runtime oficial) | `1` | Garante execucao em ambiente containerizado |
+| `REDIS_URL` | Nao | vazio | Habilita cache Redis quando configurado |
+| `SENTRY_DSN` | Nao | vazio | Habilita envio de erros para Sentry |
+| `PERF_LOG_ENABLED` | Nao | `1` local / `0` sugerido em prod | Liga/desliga logs de performance |
+| `WEB_CONCURRENCY` | Nao | `2` | Workers do Gunicorn |
+| `GUNICORN_THREADS` | Nao | `2` | Threads por worker |
+| `GUNICORN_TIMEOUT` | Nao | `180` | Timeout por request |
+| `MAP_STATIC_CACHE_TTL_SECONDS` | Nao | `900` | TTL cache camadas estaticas |
+| `VEHICLE_LAYERS_CACHE_TTL_SECONDS` | Nao | `120` | TTL cache camadas de veiculos |
+| `POLL_INTERVAL_IDLE_MS` | Nao | `90000` | Poll sem selecao ativa |
+| `POLL_INTERVAL_LINES_ACTIVE_MS` | Nao | `30000` | Poll com linhas selecionadas |
+| `POLL_INTERVAL_VEHICLES_ACTIVE_MS` | Nao | `20000` | Poll com veiculos selecionados |
+| `APP_BUILD_ID` | Nao | vazio | ID de build exibido em health/status |
+
+## Busca de veiculos fora da listagem
+
+Na aba Veiculos:
+
+- O dropdown continua priorizando veiculos recentes do snapshot.
+- Ao digitar um ID nao presente na lista, aparece uma opcao de busca manual.
+- Essa opcao pode ser selecionada para filtrar o mapa sem depender da opcao pre-carregada.
+
+Regras de busca manual:
+
+- Busca por valor completo: `A50001`.
+- Busca por sufixo numerico: `50001` tambem encontra `A50001`.
+
+## Deep links (filtros via URL)
+
+Voce pode abrir filtros diretamente pela URL:
+
+- Linha: `https://riob.us/linhas/LECD137`
+
+Comportamento:
+
+- A aba `Linhas` e ativada automaticamente.
+- O filtro correspondente e aplicado no carregamento da pagina.
+
+Observacao:
+
+- Deep link de veiculos foi desativado temporariamente para estabilizacao.
 
 ## Testes
 
-As dependências de teste não estão listadas em `requirements.txt`. Se necessário, instale-as antes de executar a suíte:
-
-```powershell
-pip install pytest pytest-cov
-```
-
-Para executar a suíte de testes:
+Execute os testes no ambiente local (ou dentro do container de app):
 
 ```powershell
 pytest
 ```
 
-Se quiser rodar um arquivo específico:
+Smoke recomendado apos alteracoes de runtime:
 
 ```powershell
-pytest tests/test_pipeline_smoke.py
+curl http://localhost:8080/health
+curl http://localhost:8080/status
 ```
 
-## Variáveis de ambiente
+## Observabilidade
 
-Variáveis suportadas pelo código e pela operação em produção:
-
-| Variável | Obrigatória | Padrão | Finalidade |
-| --- | --- | --- | --- |
-| `PORT` | Não | `8050` local / fornecida pelo host em produção | Porta HTTP usada pela aplicação |
-| `REDIS_URL` | Não | vazio | Habilita cache em Redis quando configurada |
-| `SENTRY_DSN` | Não | vazio | Habilita envio de erros para o Sentry |
-| `PERF_LOG_ENABLED` | Não | `1` no código | Liga ou desliga logs de performance |
-| `MAP_STATIC_CACHE_TTL_SECONDS` | Não | `900` | TTL do cache de camadas estáticas |
-| `VEHICLE_LAYERS_CACHE_TTL_SECONDS` | Não | `120` | TTL do cache de camadas de veículos |
-| `POLL_INTERVAL_IDLE_MS` | Não | `90000` | Intervalo de polling sem seleção ativa |
-| `POLL_INTERVAL_LINES_ACTIVE_MS` | Não | `30000` | Intervalo de polling com linhas selecionadas |
-| `POLL_INTERVAL_VEHICLES_ACTIVE_MS` | Não | `20000` | Intervalo de polling com veículos selecionados |
-| `APP_BUILD_ID` | Não | vazio | Identificador de build exposto no health check |
-| `RENDER_GIT_COMMIT` | Não | vazio | Commit de deploy usado como fallback de build id |
-| `WEB_CONCURRENCY` | Não | `1` | Número de workers do Gunicorn |
-| `GUNICORN_THREADS` | Não | `2` | Threads por worker do Gunicorn |
-| `GUNICORN_TIMEOUT` | Não | `180` | Timeout por request no Gunicorn |
-
-## Health check e observabilidade
-
-O endpoint `GET /health` retorna um payload JSON com informações operacionais como:
+`GET /health` retorna JSON com:
 
 - status geral
-- indicação de carga do GTFS
-- timestamp do último update GPS
-- presença de dados no último fetch
-- estatísticas de cache
-- `build_id`
-- uso de memória do processo, quando `psutil` estiver disponível
+- GTFS carregado
+- timestamp do ultimo update GPS
+- indicador de fetch com dados
+- estatisticas de cache
+- build_id
+- uso de memoria (quando `psutil` estiver disponivel)
 
-Esse endpoint é usado tanto para monitoramento quanto para health checks de infraestrutura.
+`GET /status` expoe painel HTML amigavel para suporte e troubleshooting operacional.
 
-## Deploy no Render
+## Proximos passos de organizacao
 
-O projeto já inclui `render.yaml` com configuração pronta para deploy como Web Service.
+- Migrar modulos legados da raiz para `src/` por dominio.
+- Atualizar imports internos e testes para `src`.
+- Remover camada legada apos validacao completa.
 
-Configuração declarada atualmente:
+## Licenca e uso
 
-- `buildCommand`: `pip install -r requirements.txt`
-- `startCommand`: `gunicorn app:server --bind 0.0.0.0:${PORT:-10000} --workers ${WEB_CONCURRENCY:-1} --threads ${GUNICORN_THREADS:-2} --timeout ${GUNICORN_TIMEOUT:-180} --access-logfile - --error-logfile - --log-level info`
-- `PYTHON_VERSION`: `3.12.8`
-
-### Passos recomendados
-
-1. Faça push do código para o repositório remoto.
-2. No Render, crie o serviço a partir de `Blueprints` usando o `render.yaml`.
-3. Confirme que o serviço foi provisionado com o `startCommand` definido no arquivo.
-4. Execute o deploy completo.
-
-### Observação operacional importante
-
-Se o serviço for criado por Blueprint, evite sobrescrever manualmente o Start Command no painel do Render. Isso reduz o risco de regressão de bind de porta, incluindo erros como `No open HTTP ports detected on 0.0.0.0`.
-
-### Perfil inicial sugerido para produção
-
-Use estes valores como ponto de partida e ajuste com base em consumo real de CPU, memória e latência:
-
-- `WEB_CONCURRENCY=1`
-- `GUNICORN_THREADS=2`
-- `GUNICORN_TIMEOUT=180`
-- `PERF_LOG_ENABLED=0`
-
-Para staging ou troubleshooting:
-
-- `PERF_LOG_ENABLED=1`
-
-## Dados locais esperados
-
-O funcionamento completo da aplicação depende destes artefatos versionados ou disponibilizados no ambiente:
-
-- `gtfs/gtfs.zip`
-- `gtfs/dicionario_lecd.csv`
-- shapefile de garagens em `garagens/`
-
-Além disso, o projeto pode gerar ou reutilizar cache local em:
-
-- `gtfs/gtfs_static_cache.pkl`
-
-## Observações de manutenção
-
-- O cache estático de GTFS depende da assinatura dos arquivos de origem. Alterações em `gtfs/gtfs.zip` ou no shapefile de garagens invalidam automaticamente o cache persistido.
-- Sem `REDIS_URL`, a aplicação opera com fallback para cache em memória do processo.
-- Sem `SENTRY_DSN`, o envio de erros para Sentry permanece desabilitado.
-
-## Licença e uso
-
-Se este projeto for publicado externamente, vale incluir nesta seção a licença de distribuição e eventuais restrições de uso dos dados consumidos.
+Se o projeto for publicado externamente, incluir nesta secao a licenca de distribuicao e as restricoes de uso das fontes de dados utilizadas.
