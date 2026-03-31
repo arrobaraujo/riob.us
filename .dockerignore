@@ -1,0 +1,16 @@
+__pycache__/
+.pytest_cache/
+.git/
+.github/
+.venv/
+venv/
+.vscode/
+.kilocode/
+tests/
+scripts/debug/
+*.pyc
+*.pyo
+*.pyd
+*.log
+gunicorn.ctl
+gunicorn.pid

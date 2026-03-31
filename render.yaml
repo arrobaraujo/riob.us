@@ -1,14 +1,18 @@
 services:
   - type: web
     name: gps-bus-rio
-    env: python
-    runtime: python
+    env: docker
     plan: free
     autoDeploy: true
-    buildCommand: pip install -r requirements.txt
-    startCommand: sh -c 'gunicorn app:server --bind 0.0.0.0:${PORT:-10000} --workers ${WEB_CONCURRENCY:-1} --threads ${GUNICORN_THREADS:-2} --timeout ${GUNICORN_TIMEOUT:-180} --access-logfile - --error-logfile - --log-level info'
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.8
+      - key: IN_DOCKER
+        value: "1"
       - key: PERF_LOG_ENABLED
         value: "0"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "2"
+      - key: GUNICORN_TIMEOUT
+        value: "180"

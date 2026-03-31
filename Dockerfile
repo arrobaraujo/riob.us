@@ -1,22 +1,21 @@
-FROM python:3.11-slim
+FROM python:3.12.8-slim
 
 WORKDIR /app
 
-# Instalar dependências de sistema (caso necessário para extensões C)
+# Dependências de sistema para libs geoespaciais e healthcheck local
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Adicionar gevent para workers assíncronos mais eficientes no gunicorn (opcional, recomendado para SSE/Dash)
-RUN pip install --no-cache-dir gevent
-
 COPY . .
 
-# Expor porta 8080 configurada no docker-compose
+ENV IN_DOCKER=1
+
 EXPOSE 8080
 
-# Usar Gunicorn com gevent workers
-CMD ["gunicorn", "-w", "4", "-k", "gevent", "--timeout", "120", "-b", "0.0.0.0:8080", "app:server"]
+# Gunicorn usa a porta provida pelo ambiente (Render) ou 8080 local.
+CMD ["sh", "-c", "gunicorn app:server --workers ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} --timeout ${GUNICORN_TIMEOUT:-180} --bind 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile - --log-level info"]
