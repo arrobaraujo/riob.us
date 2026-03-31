@@ -32,7 +32,7 @@ def _fetch_sppo(
         f"&dataFinal={agora.strftime(fmt)}"
     )
     try:
-        resp = http_session_sppo.get(url_sppo, headers=headers, timeout=20)
+        resp = http_session_sppo.get(url_sppo, headers=headers, timeout=(5, 15))
         if resp.status_code != 200:
             return pd.DataFrame()
         data = resp.json()
@@ -58,7 +58,7 @@ def _fetch_sppo(
 def _fetch_brt(http_session_brt, headers, selected_lines):
     try:
         url_brt = "https://dados.mobilidade.rio/gps/brt"
-        resp = http_session_brt.get(url_brt, headers=headers, timeout=20)
+        resp = http_session_brt.get(url_brt, headers=headers, timeout=(5, 15))
         if resp.status_code != 200:
             return pd.DataFrame()
         veiculos = resp.json().get("veiculos") or []

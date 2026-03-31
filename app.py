@@ -255,10 +255,10 @@ def _build_retry_session():
     """Cria sessão HTTP com retry/backoff e pool de conexões."""
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        backoff_factor=0.4,
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=0.3,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
     )
