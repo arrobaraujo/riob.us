@@ -129,9 +129,9 @@ class GtfsStaticLogicTests(unittest.TestCase):
             os.chdir(tmp)
             try:
                 res = _FakeIbgeResponse()
-                with patch("gtfs_static_logic.requests.get", return_value=res):
+                with patch("src.logic.gtfs_static_logic.requests.get", return_value=res):
                     gdf = _FakeGaragensGdf()
-                    with patch("gtfs_static_logic.gpd.read_file",
+                    with patch("src.logic.gtfs_static_logic.gpd.read_file",
                                return_value=gdf):
                         out = carregar_dados_estaticos_service(
                             empty_shapes_gdf_fn=lambda: pd.DataFrame(
@@ -158,9 +158,9 @@ class GtfsStaticLogicTests(unittest.TestCase):
             os.chdir(tmp)
             try:
                 res = _FakeIbgeResponse()
-                with patch("gtfs_static_logic.requests.get", return_value=res):
+                with patch("src.logic.gtfs_static_logic.requests.get", return_value=res):
                     gdf = _FakeGaragensGdf()
-                    with patch("gtfs_static_logic.gpd.read_file",
+                    with patch("src.logic.gtfs_static_logic.gpd.read_file",
                                return_value=gdf):
                         out = carregar_dados_estaticos_service(
                             empty_shapes_gdf_fn=lambda: pd.DataFrame(
@@ -231,9 +231,9 @@ class GtfsStaticLogicTests(unittest.TestCase):
             os.chdir(tmp)
             try:
                 res = _FakeIbgeResponse()
-                with patch("gtfs_static_logic.requests.get", return_value=res):
+                with patch("src.logic.gtfs_static_logic.requests.get", return_value=res):
                     gdf = _FakeGaragensGdf()
-                    with patch("gtfs_static_logic.gpd.read_file",
+                    with patch("src.logic.gtfs_static_logic.gpd.read_file",
                                return_value=gdf):
                         out = carregar_dados_estaticos_service(
                             empty_shapes_gdf_fn=lambda: pd.DataFrame(
@@ -260,11 +260,11 @@ class GtfsStaticLogicTests(unittest.TestCase):
             os.chdir(tmp)
             cache_file = os.path.join(tmp, "gtfs_static_cache.pkl")
             try:
-                with patch("gtfs_static_logic.GTFS_STATIC_CACHE_PATH",
+                with patch("src.logic.gtfs_static_logic.GTFS_STATIC_CACHE_PATH",
                            cache_file):
-                    with patch("gtfs_static_logic.requests.get",
+                    with patch("src.logic.gtfs_static_logic.requests.get",
                                return_value=_FakeIbgeResponse()):
-                        with patch("gtfs_static_logic.gpd.read_file",
+                        with patch("src.logic.gtfs_static_logic.gpd.read_file",
                                    return_value=_FakeGaragensGdf()):
                             first = carregar_dados_estaticos_service(
                                 empty_shapes_gdf_fn=lambda: pd.DataFrame(
@@ -276,7 +276,7 @@ class GtfsStaticLogicTests(unittest.TestCase):
                             )
 
                     err_msg = "cache nao foi utilizado"
-                    with patch("gtfs_static_logic.pd.read_csv",
+                    with patch("src.logic.gtfs_static_logic.pd.read_csv",
                                side_effect=AssertionError(err_msg)):
                         second = carregar_dados_estaticos_service(
                             empty_shapes_gdf_fn=lambda: pd.DataFrame(

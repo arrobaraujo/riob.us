@@ -1,6 +1,6 @@
 import unittest
 
-from callbacks_ui import (
+from src.ui.callbacks_ui import (
     _normalize_multi_values,
     _parse_deep_link,
     _resolve_vehicle_alias,

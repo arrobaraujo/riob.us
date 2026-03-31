@@ -75,7 +75,7 @@ class ViewportLogicTests(unittest.TestCase):
         fake_ctx = SimpleNamespace(
             triggered=[{"prop_id": "store-localizacao.data"}]
         )
-        with patch("viewport_logic.dash.callback_context", fake_ctx):
+        with patch("src.logic.viewport_logic.dash.callback_context", fake_ctx):
             command, marker_layer = resolver_comando_viewport(
                 data_localizacao={"lat": -22.9, "lon": -43.2},
                 gps_ts=0,
@@ -110,7 +110,7 @@ class ViewportLogicTests(unittest.TestCase):
             "ordem": "A1", "lat": -22.9, "lng": -43.2, "linha": "100"
         }])
 
-        with patch("viewport_logic.dash.callback_context", fake_ctx):
+        with patch("src.logic.viewport_logic.dash.callback_context", fake_ctx):
             command, marker_layer = resolver_comando_viewport(
                 data_localizacao=None,
                 gps_ts=1,
