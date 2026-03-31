@@ -100,6 +100,21 @@ body[data-theme="riob"] {
     flex-wrap: wrap;
 }
 
+.header-build-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.68rem;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: rgba(236, 245, 255, 0.9);
+    border: 1px solid rgba(236, 245, 255, 0.24);
+    background: rgba(255, 255, 255, 0.08);
+}
+
 .header-titulo {
     margin: 0;
     font-size: clamp(0.94rem, 1.55vw, 1.12rem);
@@ -550,6 +565,11 @@ body[data-theme="riob"] {
 
     .header-subtitulo {
         font-size: 0.68rem;
+    }
+
+    .header-build-badge {
+        font-size: 0.62rem;
+        padding: 0.18rem 0.46rem;
     }
 
     .controles {

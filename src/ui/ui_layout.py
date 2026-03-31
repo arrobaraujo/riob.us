@@ -1,5 +1,6 @@
 import dash_leaflet as dl
 from dash import dcc, html
+from urllib.parse import quote
 
 
 APP_INDEX_STRING = """
@@ -375,6 +376,14 @@ APP_INDEX_STRING = """
 
 
 def build_app_layout(linhas_short, linha_exibicao, app_build_id):
+    sw_build_id = quote(str(app_build_id or "dev"), safe="")
+    sw_script_url = f"/assets/sw.js?v={sw_build_id}"
+    app_build_text = str(app_build_id or "dev").strip()
+    if len(app_build_text) > 12:
+        app_build_label = f"versão: {app_build_text[:7]}"
+    else:
+        app_build_label = f"versão: {app_build_text}"
+
     dropdown_opts = [
         {"label": linha_exibicao(ln), "value": ln}
         for ln in linhas_short
@@ -484,6 +493,11 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                             html.H1(
                                                 "RioB.us",
                                                 className="header-titulo"
+                                            ),
+                                            html.Span(
+                                                app_build_label,
+                                                className="header-build-badge",
+                                                title=f"Build ID: {app_build_text}",
                                             ),
                                         ],
                                         className="header-title-row"
@@ -772,7 +786,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 window.addEventListener('load', function() {
                     bindInstallButton();
                     navigator.serviceWorker.register(
-                        '/assets/sw.js'
+                        '__SW_SCRIPT_URL__'
                     ).then(function(reg) {
                         console.log(
                             'SW registration successful '
@@ -785,7 +799,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                     });
                 });
             }
-        ''')
+        '''.replace('__SW_SCRIPT_URL__', sw_script_url))
 
     children = app_layout.children
     if children is None:

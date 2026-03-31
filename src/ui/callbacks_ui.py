@@ -120,45 +120,58 @@ def _parse_deep_link(pathname, search=None):
     return None
 
 
-def register_ui_callbacks(app, get_last_update_ts):
-    @app.callback(
-        Output("dropdown-linhas", "value"),
-        Output("store-session-warning", "data"),
-        Input("dropdown-linhas", "value"),
-        State("dropdown-linhas", "options"),
-        prevent_initial_call=False,
+def _resolve_tab_filter_state(
+    tab_value,
+    pathname,
+    search,
+    linhas_sel,
+    linhas_opts,
+    triggers,
+):
+    """Resolve o estado de tabs e filtros sem depender do runtime do Dash."""
+    url_triggered = bool(
+        triggers & {"url-router"}
+        or any("url-router" in trigger for trigger in triggers)
     )
-    def validar_linhas_persistidas(linhas_sel, linhas_opts):
-        """Remove linhas inválidas restauradas do localStorage."""
-        selected, valid, allowed = _filter_values_in_options(
-            linhas_sel,
-            linhas_opts,
-        )
+    if url_triggered:
+        parsed = _parse_deep_link(pathname, search)
+        if parsed:
+            _tab, token = parsed
+            return "linhas", [token], [], None
 
-        if not selected:
-            return dash.no_update, None
+    current_tab = tab_value or "linhas"
 
-        if selected == valid:
-            return dash.no_update, None
+    # Troca de aba pelo usuário: preserva linhas ao ir para veículos
+    # para manter o contexto ao retornar para a aba Linhas.
+    if current_tab == "veiculos":
+        return current_tab, dash.no_update, dash.no_update, None
 
+    selected, valid, allowed = _filter_values_in_options(
+        linhas_sel,
+        linhas_opts,
+    )
+    if selected and selected != valid:
         if not allowed:
-            return [], (
-                "Aviso: não foi possível restaurar as linhas da última sessão "
-                "porque as opções ainda não estão disponíveis."
+            return "linhas", [], [], (
+                "Aviso: não foi possível restaurar as linhas da última "
+                "sessão porque as opções ainda não estão disponíveis."
             )
 
         removed_count = len(selected) - len(valid)
         if valid:
-            return valid, (
+            return "linhas", valid, [], (
                 "Aviso: algumas linhas da última sessão não estão mais "
                 "disponíveis e foram removidas."
             )
-
-        return [], (
-            "Aviso: as linhas salvas da última sessão não estão disponíveis "
-            f"({removed_count} removida(s))."
+        return "linhas", [], [], (
+            "Aviso: as linhas salvas da última sessão não estão "
+            f"disponíveis ({removed_count} removida(s))."
         )
 
+    return "linhas", dash.no_update, [], None
+
+
+def register_ui_callbacks(app, get_last_update_ts):
     @app.callback(
         Output("tabs-filtro", "value"),
         Input("url-router", "pathname"),
@@ -177,33 +190,32 @@ def register_ui_callbacks(app, get_last_update_ts):
         Output("store-tab-filtro", "data"),
         Output("dropdown-linhas", "value"),
         Output("dropdown-veiculos", "value"),
+        Output("store-session-warning", "data"),
         Input("tabs-filtro", "value"),
         Input("url-router", "pathname"),
         Input("url-router", "search"),
+        State("dropdown-linhas", "value"),
+        State("dropdown-linhas", "options"),
         prevent_initial_call=False,
     )
-    def sincronizar_tab_filtro(tab_value, pathname, search):
+    def sincronizar_tab_filtro(
+        tab_value,
+        pathname,
+        search,
+        linhas_sel,
+        linhas_opts,
+    ):
         """Mantém estado da aba ativa e limpa o outro dropdown ao trocar aba."""
         ctx = dash.callback_context
         triggers = {t["prop_id"].split(".")[0] for t in (ctx.triggered or [])}
-
-        # Deep link via URL: aplica apenas quando a URL mudou
-        url_triggered = bool(
-            triggers & {"url-router"}
-            or any("url-router" in t for t in triggers)
+        return _resolve_tab_filter_state(
+            tab_value,
+            pathname,
+            search,
+            linhas_sel,
+            linhas_opts,
+            triggers,
         )
-        if url_triggered:
-            parsed = _parse_deep_link(pathname, search)
-            if parsed:
-                tab, token = parsed
-                return "linhas", [token], []
-
-        current_tab = tab_value or "linhas"
-
-        # Troca de aba pelo usuário: limpa o dropdown oposto
-        if current_tab == "veiculos":
-            return current_tab, [], dash.no_update
-        return "linhas", dash.no_update, []
 
     @app.callback(
         Output("store-linhas-debounce", "data"),

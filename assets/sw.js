@@ -1,4 +1,14 @@
-const CACHE_NAME = 'riobus-v3';
+const buildIdRaw = (() => {
+  try {
+    const swUrl = new URL(self.location.href);
+    return swUrl.searchParams.get('v') || 'dev';
+  } catch (e) {
+    return 'dev';
+  }
+})();
+
+const buildId = String(buildIdRaw).replace(/[^a-zA-Z0-9._-]/g, '-');
+const CACHE_NAME = `riobus-${buildId}`;
 const OFFLINE_URL = '/assets/offline.html';
 const APP_SHELL_ASSETS = [
   '/',
