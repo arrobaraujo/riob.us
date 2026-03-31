@@ -37,7 +37,6 @@ Principais capacidades:
 
 Estrutura atual do projeto:
 
-- `app.py`: wrapper de compatibilidade para import legado.
 - `src/core/app_runtime.py`: entrypoint oficial Flask/Dash usado por Gunicorn.
 - `src/`: pacote Python oficial (`config`, `core`, `logic`, `state`, `ui`, `utils`).
 - `tests/`: suite de testes automatizados.

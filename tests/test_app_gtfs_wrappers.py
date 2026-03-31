@@ -8,8 +8,9 @@ import pandas as pd
 
 
 def _import_app_module_safely():
-    if "app" in sys.modules:
-        return sys.modules["app"]
+    module_name = "src.core.app_runtime"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
 
     original_thread = threading.Thread
 
@@ -21,7 +22,7 @@ def _import_app_module_safely():
             return super().start()
 
     with patch("threading.Thread", MockThread):
-        return importlib.import_module("app")
+        return importlib.import_module(module_name)
 
 
 class AppGtfsWrappersTests(unittest.TestCase):
