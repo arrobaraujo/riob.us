@@ -1322,11 +1322,23 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
     secao_icones = construir_secao_icones(_cache_or_generate_svg)
 
     if dados.empty:
-        legenda = construir_legenda_vazia(
-            modo=modo,
-            fetch_ok=fetch_ok,
-            secao_icones=secao_icones,
-        )
+        if modo == "linhas":
+            linhas_render = [str(ln) for ln in linhas_sel] if linhas_sel else []
+            cores = get_linha_cores(linhas_render) if linhas_render else {}
+            legenda = construir_legenda_linhas(
+                linhas_render=linhas_render,
+                cores=cores,
+                linhas_dict=linhas_dict,
+                linha_exibicao_fn=linha_exibicao,
+                secao_icones=secao_icones,
+                contagem_por_linha={},
+            )
+        else:
+            legenda = construir_legenda_vazia(
+                modo=modo,
+                fetch_ok=fetch_ok,
+                secao_icones=secao_icones,
+            )
         return [], [], legenda
 
     if modo == "veiculos":
