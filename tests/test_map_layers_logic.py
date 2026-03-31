@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from map_layers_logic import (
+from src.logic.map_layers_logic import (
     construir_camadas_estaticas, construir_camadas_veiculos
 )
 

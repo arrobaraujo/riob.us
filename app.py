@@ -59,7 +59,7 @@ from src.logic.map_data_logic import (
     montar_opcoes_veiculos,
     split_gps_por_tipo,
 )
-from map_layers_logic import (
+from src.logic.map_layers_logic import (
     construir_camadas_estaticas,
     construir_camadas_veiculos
 )

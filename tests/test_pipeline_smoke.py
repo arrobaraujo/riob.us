@@ -5,7 +5,7 @@ import pandas as pd
 
 from gps_data_logic import fetch_gps_data_service
 from src.logic.map_data_logic import split_gps_por_tipo
-from map_layers_logic import construir_camadas_veiculos
+from src.logic.map_layers_logic import construir_camadas_veiculos
 
 
 class _FakeResponse:
