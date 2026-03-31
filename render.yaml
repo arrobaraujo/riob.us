@@ -1,7 +1,7 @@
 services:
   - type: web
     name: gps-bus-rio
-    env: docker
+    runtime: docker
     plan: free
     autoDeploy: true
     dockerfilePath: ./Dockerfile
