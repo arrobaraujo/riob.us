@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from gps_data_logic import fetch_gps_data_service
+from src.logic.gps_data_logic import fetch_gps_data_service
 from src.logic.map_data_logic import split_gps_por_tipo
 from src.logic.map_layers_logic import construir_camadas_veiculos
 

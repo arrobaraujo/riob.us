@@ -3,7 +3,7 @@ import unittest
 import pandas as pd
 from shapely.geometry import Polygon
 
-from geo_helpers import build_point_mask
+from src.utils.geo_helpers import build_point_mask
 
 
 class GeoHelpersTests(unittest.TestCase):

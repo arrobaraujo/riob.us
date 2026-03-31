@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from perf_logging import perf_log, perf_logging_enabled
+from src.utils.perf_logging import perf_log, perf_logging_enabled
 
 
 class PerfLoggingTests(unittest.TestCase):

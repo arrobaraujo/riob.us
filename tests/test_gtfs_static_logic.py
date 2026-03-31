@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from gtfs_static_logic import (
+from src.logic.gtfs_static_logic import (
     carregar_dados_estaticos_service,
     recarregar_gtfs_estatico_sob_demanda_service,
 )

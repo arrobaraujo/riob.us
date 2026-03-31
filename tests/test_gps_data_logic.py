@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from gps_data_logic import fetch_gps_data_service, sanitize_selection
+from src.logic.gps_data_logic import fetch_gps_data_service, sanitize_selection
 
 
 class _FakeResponse:

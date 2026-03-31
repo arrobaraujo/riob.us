@@ -1,18 +1,8 @@
-# shim de compatibilidade — código real em src/ui/callbacks_viewport.py
-from src.ui.callbacks_viewport import *  # noqa: F401, F403
-from src.ui.callbacks_viewport import register_viewport_callbacks  # noqa: F401
+import dash
+from dash import Input, Output
 
 
-def __getattr__(name):
-    import src.ui.callbacks_viewport as _m
-    return getattr(_m, name)
-
-
-if False:
-    import dash
-    from dash import Input, Output, State
-
-    def register_viewport_callbacks(
+def register_viewport_callbacks(
     app, map_supports_viewport,
     resolver_comando_viewport, normalize_map_center
 ):

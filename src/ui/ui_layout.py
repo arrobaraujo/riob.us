@@ -1,16 +1,5 @@
-# shim de compatibilidade — código real em src/ui/ui_layout.py
-from src.ui.ui_layout import *  # noqa: F401, F403
-from src.ui.ui_layout import build_app_layout  # noqa: F401
-
-
-def __getattr__(name):
-    import src.ui.ui_layout as _m
-    return getattr(_m, name)
-
-
-if False:
-    import dash_leaflet as dl
-    from dash import dcc, html
+import dash_leaflet as dl
+from dash import dcc, html
 
 
 APP_INDEX_STRING = """

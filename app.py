@@ -29,22 +29,22 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from callbacks_ui import register_ui_callbacks
-from callbacks_viewport import register_viewport_callbacks
-from constants import (
+from src.ui.callbacks_ui import register_ui_callbacks
+from src.ui.callbacks_viewport import register_viewport_callbacks
+from src.config.constants import (
     PALETA_CORES, GPS_CONFIG,
     MARKER_LIMITS_BY_ZOOM, LIGHTWEIGHT_MARKER_THRESHOLD, MAX_STOPS_PER_RENDER,
 )
-from geo_helpers import build_point_mask
-from gps_data_logic import fetch_gps_data_service
-from gps_processing import (
+from src.utils.geo_helpers import build_point_mask
+from src.logic.gps_data_logic import fetch_gps_data_service
+from src.utils.gps_processing import (
     processar_dados_gps as _processar_dados_gps,
     calcular_bearing_df,
     atualizar_historico,
     limpar_historico_antigo as _limpar_historico_antigo,
 )
 from src.logic.interval_logic import compute_poll_interval_ms
-from gtfs_static_logic import (
+from src.logic.gtfs_static_logic import (
     carregar_dados_estaticos_service,
     recarregar_gtfs_estatico_sob_demanda_service,
 )
@@ -63,8 +63,8 @@ from src.logic.map_layers_logic import (
     construir_camadas_estaticas,
     construir_camadas_veiculos
 )
-from perf_logging import perf_log
-from svg_icons import (
+from src.utils.perf_logging import perf_log
+from src.utils.svg_icons import (
     cache_or_generate_svg as _cache_or_generate_svg,
     gerar_svg_usuario as _gerar_svg_usuario,
     make_vehicle_icon,
@@ -72,8 +72,8 @@ from svg_icons import (
     get_svg_cache_lock as _get_svg_cache_lock,
     get_svg_cache as _get_svg_cache,
 )
-from ui_layout import APP_INDEX_STRING, build_app_layout
-from viewport_logic import (
+from src.ui.ui_layout import APP_INDEX_STRING, build_app_layout
+from src.logic.viewport_logic import (
     calcular_viewport_linhas as viewport_logic_calcular_viewport_linhas,
     calcular_viewport_veiculos as viewport_logic_calcular_viewport_veiculos,
     resolver_comando_viewport as viewport_logic_resolver_comando_viewport,

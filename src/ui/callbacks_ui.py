@@ -1,19 +1,9 @@
-# shim de compatibilidade — código real em src/ui/callbacks_ui.py
-from src.ui.callbacks_ui import *  # noqa: F401, F403
-from src.ui.callbacks_ui import register_ui_callbacks  # noqa: F401
+import time
+from datetime import datetime
+from urllib.parse import unquote, parse_qs
 
-
-def __getattr__(name):
-    import src.ui.callbacks_ui as _m
-    return getattr(_m, name)
-
-
-if False:
-    import time
-    from datetime import datetime
-    from urllib.parse import unquote, parse_qs
-    import dash
-    from dash import Input, Output, State
+import dash
+from dash import Input, Output, State
 
 
 def _normalize_multi_values(values):

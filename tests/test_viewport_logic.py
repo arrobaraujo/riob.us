@@ -5,7 +5,7 @@ from unittest.mock import patch
 import dash
 import pandas as pd
 
-from viewport_logic import (
+from src.logic.viewport_logic import (
     calcular_viewport_linhas,
     calcular_viewport_veiculos,
     normalize_map_center,
