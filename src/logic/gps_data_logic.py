@@ -1,9 +1,11 @@
-# Shim de compatibilidade — módulo migrado para src/logic/gps_data_logic.py
-from src.logic.gps_data_logic import *  # noqa: F401, F403
-from src.logic.gps_data_logic import (  # noqa: F401
-    fetch_gps_data_service, sanitize_selection,
-)
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
+import pandas as pd
+import requests
+
+BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 DEFAULT_HEADERS = {

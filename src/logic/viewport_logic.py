@@ -1,10 +1,9 @@
-# Shim de compatibilidade — módulo migrado para src/logic/viewport_logic.py
-from src.logic.viewport_logic import *  # noqa: F401, F403
-from src.logic.viewport_logic import (  # noqa: F401
-    calcular_viewport_linhas, calcular_viewport_veiculos,
-    resolver_comando_viewport, normalize_map_center,
-)
+import math
+import time
 
+import dash
+import dash_leaflet as dl
+import pandas as pd
 
 
 def calcular_viewport_linhas(

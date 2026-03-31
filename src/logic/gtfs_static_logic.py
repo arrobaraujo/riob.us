@@ -1,10 +1,12 @@
-# Shim de compatibilidade — módulo migrado para src/logic/gtfs_static_logic.py
-from src.logic.gtfs_static_logic import *  # noqa: F401, F403
-from src.logic.gtfs_static_logic import (  # noqa: F401
-    carregar_dados_estaticos_service,
-    recarregar_gtfs_estatico_sob_demanda_service,
-)
+import os
+import pickle
+import zipfile
 
+import geopandas as gpd
+import pandas as pd
+import requests
+from shapely.geometry import LineString, MultiPolygon, shape as shapely_shape
+from shapely.prepared import prep
 
 
 GTFS_STATIC_CACHE_PATH = "gtfs/gtfs_static_cache.pkl"
