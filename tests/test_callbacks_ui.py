@@ -21,7 +21,13 @@ class CallbacksUiHelpersTests(unittest.TestCase):
     def test_parse_deep_link_linhas(self):
         self.assertEqual(
             _parse_deep_link("/linhas/LECD137", None),
-            ("linhas", "LECD137"),
+            ("linhas", ["LECD137"]),
+        )
+
+    def test_parse_deep_link_linhas_multiplas_por_path(self):
+        self.assertEqual(
+            _parse_deep_link("/linhas/LECD137,LECD138", None),
+            ("linhas", ["LECD137", "LECD138"]),
         )
 
     def test_parse_deep_link_veiculos_desabilitado(self):
@@ -33,7 +39,25 @@ class CallbacksUiHelpersTests(unittest.TestCase):
     def test_parse_deep_link_query_linha(self):
         self.assertEqual(
             _parse_deep_link("/", "?linha=LECD137"),
-            ("linhas", "LECD137"),
+            ("linhas", ["LECD137"]),
+        )
+
+    def test_parse_deep_link_query_multiplas_linhas_repetidas(self):
+        self.assertEqual(
+            _parse_deep_link("/", "?linha=LECD137&linha=LECD138"),
+            ("linhas", ["LECD137", "LECD138"]),
+        )
+
+    def test_parse_deep_link_query_multiplas_linhas_csv(self):
+        self.assertEqual(
+            _parse_deep_link("/", "?linhas=LECD137,LECD138"),
+            ("linhas", ["LECD137", "LECD138"]),
+        )
+
+    def test_parse_deep_link_query_remove_duplicados(self):
+        self.assertEqual(
+            _parse_deep_link("/", "?linha=LECD137&linhas=LECD137,LECD138"),
+            ("linhas", ["LECD137", "LECD138"]),
         )
 
     def test_parse_deep_link_query_veiculo_desabilitado(self):
@@ -86,6 +110,23 @@ class CallbacksUiHelpersTests(unittest.TestCase):
         self.assertEqual(result[0], "veiculos")
         self.assertIs(result[1], dash.no_update)
         self.assertIs(result[2], dash.no_update)
+        self.assertIsNone(result[3])
+
+    def test_url_triggered_can_restore_multiple_lines(self):
+        result = _resolve_tab_filter_state(
+            tab_value="linhas",
+            pathname="/",
+            search="?linhas=LECD137,LECD138",
+            linhas_sel=[],
+            linhas_opts=[
+                {"label": "137", "value": "LECD137"},
+                {"label": "138", "value": "LECD138"},
+            ],
+            triggers={"url-router"},
+        )
+        self.assertEqual(result[0], "linhas")
+        self.assertEqual(result[1], ["LECD137", "LECD138"])
+        self.assertEqual(result[2], [])
         self.assertIsNone(result[3])
 
     def test_invalid_persisted_lines_are_removed_with_warning(self):

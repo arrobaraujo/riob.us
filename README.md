@@ -166,11 +166,14 @@ Regras de busca manual:
 Voce pode abrir filtros diretamente pela URL:
 
 - Linha: `https://riob.us/linhas/LECD137`
+- Multiplas linhas (query CSV): `https://riob.us/?linhas=LECD137,LECD138`
+- Multiplas linhas (query repetida): `https://riob.us/?linha=LECD137&linha=LECD138`
 
 Comportamento:
 
 - A aba `Linhas` e ativada automaticamente.
 - O filtro correspondente e aplicado no carregamento da pagina.
+- Quando houver mais de uma linha no deep link, todas sao aplicadas no filtro de `Linhas`.
 
 Observacao:
 

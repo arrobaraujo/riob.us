@@ -91,16 +91,41 @@ def _split_vehicle_options_with_selected_fallback(options, veiculos_sel):
     return missing_selected_opts + selected_opts, unselected_opts, known_values
 
 
+def _extract_line_tokens_from_query(parsed_qs):
+    raw_values = []
+    raw_values.extend(parsed_qs.get("linha") or [])
+    raw_values.extend(parsed_qs.get("linhas") or [])
+
+    tokens = []
+    for raw in raw_values:
+        text = unquote(str(raw or "")).strip()
+        if not text:
+            continue
+        for part in text.split(","):
+            token = part.strip()
+            if token:
+                tokens.append(token)
+
+    # Remove duplicados preservando ordem de aparicao.
+    deduped = []
+    seen = set()
+    for token in tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    return deduped
+
+
 def _parse_deep_link(pathname, search=None):
     query = str(search or "").strip()
     if query:
         if query.startswith("?"):
             query = query[1:]
         parsed_qs = parse_qs(query, keep_blank_values=False)
-
-        line_token = (parsed_qs.get("linha") or parsed_qs.get("linhas") or [""])[0]
-        if str(line_token).strip():
-            return "linhas", unquote(str(line_token).strip())
+        line_tokens = _extract_line_tokens_from_query(parsed_qs)
+        if line_tokens:
+            return "linhas", line_tokens
 
     text = str(pathname or "").strip()
     if not text:
@@ -116,7 +141,10 @@ def _parse_deep_link(pathname, search=None):
         return None
 
     if section == "linhas":
-        return "linhas", token
+        tokens = [part.strip() for part in token.split(",") if part.strip()]
+        if not tokens:
+            return None
+        return "linhas", tokens
     return None
 
 
@@ -136,8 +164,8 @@ def _resolve_tab_filter_state(
     if url_triggered:
         parsed = _parse_deep_link(pathname, search)
         if parsed:
-            _tab, token = parsed
-            return "linhas", [token], [], None
+            _tab, tokens = parsed
+            return "linhas", tokens, [], None
 
     current_tab = tab_value or "linhas"
 
@@ -183,7 +211,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         parsed = _parse_deep_link(pathname, search)
         if not parsed:
             return dash.no_update
-        tab, _token = parsed
+        tab, _tokens = parsed
         return tab
 
     @app.callback(
