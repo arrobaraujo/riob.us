@@ -34,6 +34,10 @@ APP_INDEX_STRING = """
                 background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
             }
 
+            body[data-theme="dark-riob"] {
+                background: linear-gradient(165deg, #0f1726 0%, #111d31 100%);
+            }
+
             #boot-loader {
                 position: fixed;
                 inset: 0;
@@ -43,6 +47,10 @@ APP_INDEX_STRING = """
                 justify-content: center;
                 background: linear-gradient(165deg, #eef2f7 0%, #dfe8f5 100%);
                 transition: opacity .35s ease, visibility .35s ease;
+            }
+
+            body[data-theme="dark-riob"] #boot-loader {
+                background: linear-gradient(165deg, #0f1726 0%, #111d31 100%);
             }
 
             #boot-loader.hide {
@@ -64,6 +72,13 @@ APP_INDEX_STRING = """
                 color: #1f2a37;
             }
 
+            body[data-theme="dark-riob"] .boot-card {
+                background: rgba(17, 31, 51, 0.92);
+                border-color: rgba(93, 132, 189, 0.3);
+                box-shadow: 0 22px 46px rgba(2, 8, 20, 0.55);
+                color: #dce8fa;
+            }
+
             .boot-title {
                 margin: 0 0 10px 0;
                 font-size: 15px;
@@ -74,6 +89,10 @@ APP_INDEX_STRING = """
                 margin: 8px 0 0 0;
                 font-size: 12px;
                 color: #4d5f73;
+            }
+
+            body[data-theme="dark-riob"] .boot-subtitle {
+                color: #a4b8d4;
             }
 
             .boot-spinner {
@@ -178,6 +197,37 @@ APP_INDEX_STRING = """
         </style>
     </head>
     <body data-theme="riob">
+        <script>
+            (function () {
+                var mode = null;
+                try {
+                    mode = window.localStorage.getItem('riobus_theme_mode');
+                } catch (e) {
+                    mode = null;
+                }
+
+                if (mode !== 'light' && mode !== 'dark') {
+                    var prefersDark = false;
+                    if (window.matchMedia) {
+                        prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    }
+                    mode = prefersDark ? 'dark' : 'light';
+                    try {
+                        window.localStorage.setItem('riobus_theme_mode', mode);
+                    } catch (e) {
+                        // sem-op
+                    }
+                }
+
+                var themeName = mode === 'dark' ? 'dark-riob' : 'riob';
+                document.body.setAttribute('data-theme', themeName);
+
+                var metaThemeColor = document.querySelector('meta[name="theme-color"]');
+                if (metaThemeColor) {
+                    metaThemeColor.setAttribute('content', mode === 'dark' ? '#0f1726' : '#1f2a37');
+                }
+            })();
+        </script>
         <div id="boot-loader" aria-live="polite"
              aria-label="Carregando aplicação">
             <div class="boot-card">
@@ -466,6 +516,8 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
             dcc.Store(id="store-build-sync", data=None),
+            dcc.Store(id="store-theme-mode", data=None),
+            dcc.Store(id="store-theme-dom-sync", data=None),
 
             dcc.Store(id="store-force-map-view", data=None),
             dcc.Store(id="store-force-map-view-ack", data=None),
@@ -485,29 +537,47 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                 [
                     html.Div(
                         [
-                            html.Span("🚍", className="header-icon"),
                             html.Div(
                                 [
+                                    html.Span("🚍", className="header-icon"),
                                     html.Div(
                                         [
-                                            html.H1(
-                                                "RioB.us",
-                                                className="header-titulo"
+                                            html.Div(
+                                                [
+                                                    html.H1(
+                                                        "RioB.us",
+                                                        className="header-titulo"
+                                                    ),
+                                                    html.Span(
+                                                        app_build_label,
+                                                        className="header-build-badge",
+                                                        title=f"Build ID: {app_build_text}",
+                                                    ),
+                                                ],
+                                                className="header-title-row"
                                             ),
-                                            html.Span(
-                                                app_build_label,
-                                                className="header-build-badge",
-                                                title=f"Build ID: {app_build_text}",
+                                            html.P(
+                                                "Consulta em tempo real dos ônibus",
+                                                className="header-subtitulo"
                                             ),
                                         ],
-                                        className="header-title-row"
-                                    ),
-                                    html.P(
-                                        "Consulta em tempo real dos ônibus",
-                                        className="header-subtitulo"
+                                        className="header-copy"
                                     ),
                                 ],
-                                className="header-copy"
+                                className="header-brand"
+                            ),
+                            html.Div(
+                                [
+                                    html.Button(
+                                        "🌙",
+                                        id="btn-toggle-theme",
+                                        n_clicks=0,
+                                        className="btn-theme-toggle",
+                                        title="Alternar para tema escuro",
+                                        **{"aria-label": "Alternar tema"},
+                                    ),
+                                ],
+                                className="header-actions"
                             ),
                         ],
                         className="navbar shell-navbar"
@@ -624,31 +694,25 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                             dl.BaseLayer(
                                                 dl.TileLayer(
                                                     url=(
-                                                        "https://server"
-                                                        ".arcgisonline.com"
-                                                        "/ArcGIS/rest/services"
-                                                        "/World_Street_Map"
-                                                        "/MapServer/tile/"
-                                                        "{z}/{y}/{x}"
+                                                        "https://cartodb-basemaps-{s}"
+                                                        ".global.ssl.fastly.net"
+                                                        "/light_all/{z}/{x}/{y}.png"
                                                     ),
-                                                    attribution="Esri"
+                                                    attribution="© CartoDB contributors"
                                                 ),
-                                                name="ESRI Padrão",
+                                                name="Carto Claro",
                                                 checked=True,
                                             ),
                                             dl.BaseLayer(
                                                 dl.TileLayer(
                                                     url=(
-                                                        "https://server"
-                                                        ".arcgisonline.com"
-                                                        "/ArcGIS/rest/services"
-                                                        "/Canvas/World_Light_Gra"
-                                                        "y_Base/MapServer"
-                                                        "/tile/{z}/{y}/{x}"
+                                                        "https://cartodb-basemaps-{s}"
+                                                        ".global.ssl.fastly.net"
+                                                        "/dark_all/{z}/{x}/{y}.png"
                                                     ),
-                                                    attribution="Esri"
+                                                    attribution="© CartoDB contributors"
                                                 ),
-                                                name="ESRI P&B",
+                                                name="Carto Escuro",
                                                 checked=False,
                                             ),
                                             dl.Overlay(

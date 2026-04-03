@@ -67,6 +67,16 @@ Pacotes alvo em `src/`:
 - Valores restaurados sao saneados contra opcoes atuais de linha.
 - Entradas invalidas sao removidas automaticamente com aviso em banner.
 
+## Tema e mapa base no frontend
+
+- A interface possui alternador de tema claro/escuro no cabecalho.
+- A escolha de tema e persistida em `localStorage`.
+- Sem preferencia salva, o frontend usa `prefers-color-scheme` como comportamento inicial.
+- O mapa base e sincronizado com o tema:
+	- tema claro -> `Carto Claro`
+	- tema escuro -> `Carto Escuro`
+- O usuario continua podendo selecionar manualmente outras bases (ex.: `OSM`).
+
 ## Decisoes operacionais
 
 - Execucao nativa via Python local desativada por padrao.

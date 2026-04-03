@@ -18,7 +18,7 @@ import pandas as pd
 import requests
 import redis
 import sentry_sdk
-from dash import Input, Output, html
+from dash import Input, Output, State, html
 from dash.exceptions import CallbackException
 from flask import Response, request, redirect
 from urllib.parse import quote
@@ -1034,6 +1034,134 @@ app.clientside_callback(
     """,
     Output("store-build-sync", "data"),
     Input("store-build-id", "data"),
+)
+
+
+app.clientside_callback(
+    """
+    function(nClicks, _buildId, currentMode) {
+        var valid = currentMode === 'light' || currentMode === 'dark';
+        var mode = valid ? currentMode : null;
+
+        if (!mode) {
+            try {
+                mode = window.localStorage.getItem('riobus_theme_mode');
+            } catch (e) {
+                mode = null;
+            }
+        }
+
+        if (mode !== 'light' && mode !== 'dark') {
+            var prefersDark = false;
+            if (window.matchMedia) {
+                prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+            mode = prefersDark ? 'dark' : 'light';
+        }
+
+        var triggered = [];
+        try {
+            triggered = (window.dash_clientside && window.dash_clientside.callback_context)
+                ? (window.dash_clientside.callback_context.triggered || [])
+                : [];
+        } catch (e) {
+            triggered = [];
+        }
+
+        var clicked = false;
+        for (var i = 0; i < triggered.length; i += 1) {
+            var propId = String(triggered[i].prop_id || '');
+            if (propId.indexOf('btn-toggle-theme.n_clicks') === 0) {
+                clicked = true;
+                break;
+            }
+        }
+
+        if (clicked && Number(nClicks || 0) > 0) {
+            mode = mode === 'dark' ? 'light' : 'dark';
+        }
+
+        return mode;
+    }
+    """,
+    Output("store-theme-mode", "data"),
+    Input("btn-toggle-theme", "n_clicks"),
+    Input("store-build-id", "data"),
+    State("store-theme-mode", "data"),
+    prevent_initial_call=False,
+)
+
+
+app.clientside_callback(
+    """
+    function(mode) {
+        var resolved = mode === 'dark' ? 'dark' : 'light';
+        var bodyTheme = resolved === 'dark' ? 'dark-riob' : 'riob';
+
+        function selectThemeBasemap(attempt) {
+            var targetLabel = resolved === 'dark' ? 'Carto Escuro' : 'Carto Claro';
+            var control = document.querySelector('.leaflet-control-layers');
+            if (!control) {
+                if (attempt < 8) {
+                    setTimeout(function () {
+                        selectThemeBasemap(attempt + 1);
+                    }, 160);
+                }
+                return;
+            }
+
+            var labels = control.querySelectorAll('label');
+            for (var i = 0; i < labels.length; i += 1) {
+                var label = labels[i];
+                var text = (label.textContent || '').trim();
+                if (text !== targetLabel) {
+                    continue;
+                }
+                var input = label.querySelector('input');
+                if (!input) {
+                    return;
+                }
+                if (!input.checked) {
+                    input.click();
+                }
+                return;
+            }
+
+            if (attempt < 8) {
+                setTimeout(function () {
+                    selectThemeBasemap(attempt + 1);
+                }, 160);
+            }
+        }
+
+        if (document && document.body) {
+            document.body.setAttribute('data-theme', bodyTheme);
+        }
+
+        selectThemeBasemap(0);
+
+        var metaThemeColor = document.querySelector('meta[name="theme-color"]');
+        if (metaThemeColor) {
+            metaThemeColor.setAttribute('content', resolved === 'dark' ? '#0f1726' : '#1f2a37');
+        }
+
+        try {
+            window.localStorage.setItem('riobus_theme_mode', resolved);
+        } catch (e) {
+            // sem-op
+        }
+
+        if (resolved === 'dark') {
+            return [Date.now(), '☀️', 'Alternar para tema claro'];
+        }
+        return [Date.now(), '🌙', 'Alternar para tema escuro'];
+    }
+    """,
+    Output("store-theme-dom-sync", "data"),
+    Output("btn-toggle-theme", "children"),
+    Output("btn-toggle-theme", "title"),
+    Input("store-theme-mode", "data"),
+    prevent_initial_call=False,
 )
 
 

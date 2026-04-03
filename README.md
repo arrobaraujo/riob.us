@@ -10,6 +10,9 @@ Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Ri
 - Pagina amigavel para suporte operacional: `GET /status`.
 - Aba Veiculos aceita busca manual de ID fora da listagem atual do dropdown.
 - Selecao de linhas persiste entre sessoes do navegador (localStorage).
+- Tema claro/escuro com alternancia no topo da interface.
+- Preferencia de tema persiste entre sessoes no navegador.
+- Camada base do mapa sincroniza automaticamente com o tema ativo.
 - Versionamento unificado por build: runtime, cache PWA e chaves de sessao.
 - Build atual exibido no topo da interface, ao lado do titulo.
 - Reorganizacao estrutural consolidada em `src/`, sem camada legada na raiz.
@@ -21,6 +24,7 @@ Principais capacidades:
 - Consulta de veiculos SPPO e BRT em tempo real.
 - Filtro por linhas e por veiculos especificos.
 - Renderizacao de itinerarios e pontos de parada a partir de GTFS local.
+- Basemaps: OSM, Carto Claro e Carto Escuro.
 - Exclusao de pontos fora do municipio e filtragem de veiculos em garagem.
 - Cache de camadas estaticas e dinamicas para reduzir custo de processamento.
 - Health check tecnico e status amigavel para operacao.
@@ -132,6 +136,18 @@ Versionamento unificado no frontend:
   - refresh automatico quando backend e frontend estao em builds diferentes.
 - O build atual fica visivel no topo da interface (badge ao lado de `RioB.us`).
 
+Persistencia de tema no frontend:
+
+- O alternador de tema (claro/escuro) fica no topo da interface.
+- A preferencia de tema e salva no `localStorage`.
+- Na primeira abertura sem preferencia salva, o app segue `prefers-color-scheme` do navegador/sistema.
+
+Sincronizacao de tema com mapa base:
+
+- Tema claro seleciona automaticamente `Carto Claro`.
+- Tema escuro seleciona automaticamente `Carto Escuro`.
+- O usuario pode trocar manualmente para outra camada base (ex.: `OSM`) a qualquer momento.
+
 ## Busca de veiculos fora da listagem
 
 Na aba Veiculos:
@@ -181,6 +197,12 @@ Para mudancas no fluxo de UI/filtros, o conjunto minimo recomendado inclui:
 
 - `tests/test_callbacks_ui.py`
 - `tests/test_pipeline_smoke.py`
+
+Cobertura estrutural recente de layout:
+
+- Presenca do botao de tema no cabecalho.
+- Presenca dos basemaps `Carto Claro` e `Carto Escuro`.
+- Ausencia das opcoes antigas `ESRI Padrão` e `ESRI P&B`.
 
 Smoke recomendado apos alteracoes de runtime:
 

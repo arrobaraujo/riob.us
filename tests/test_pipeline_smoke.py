@@ -1,11 +1,13 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
+import dash_leaflet as dl
 import pandas as pd
 
 from src.logic.gps_data_logic import fetch_gps_data_service
 from src.logic.map_data_logic import split_gps_por_tipo
 from src.logic.map_layers_logic import construir_camadas_veiculos
+from src.ui.ui_layout import build_app_layout
 
 
 class _FakeResponse:
@@ -26,6 +28,20 @@ class _FakeSession:
 
 
 class PipelineSmokeTests(unittest.TestCase):
+    @staticmethod
+    def _walk_components(node):
+        if node is None:
+            return
+        yield node
+        children = getattr(node, "children", None)
+        if children is None:
+            return
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                yield from PipelineSmokeTests._walk_components(child)
+            return
+        yield from PipelineSmokeTests._walk_components(children)
+
     def test_fetch_split_and_vehicle_layers_pipeline(self):
         hoje_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         agora = hoje_utc - timedelta(hours=3)
@@ -100,6 +116,31 @@ class PipelineSmokeTests(unittest.TestCase):
         self.assertEqual(len(brt_df), 1)
         self.assertEqual(onibus[0], "geojson-sppo")
         self.assertEqual(brt[0], "geojson-brt")
+
+    def test_layout_contains_theme_toggle_and_carto_basemaps(self):
+        layout = build_app_layout(
+            linhas_short=["LECD137"],
+            linha_exibicao=lambda token: token,
+            app_build_id="test-build",
+        )
+
+        components = list(self._walk_components(layout))
+        self.assertTrue(
+            any(getattr(component, "id", None) == "btn-toggle-theme"
+                for component in components)
+        )
+
+        base_layer_names = {
+            getattr(component, "name", None)
+            for component in components
+            if isinstance(component, dl.BaseLayer)
+        }
+
+        self.assertIn("OSM", base_layer_names)
+        self.assertIn("Carto Claro", base_layer_names)
+        self.assertIn("Carto Escuro", base_layer_names)
+        self.assertNotIn("ESRI Padrão", base_layer_names)
+        self.assertNotIn("ESRI P&B", base_layer_names)
 
 
 if __name__ == "__main__":
