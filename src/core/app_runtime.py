@@ -1,4 +1,5 @@
 import hashlib
+import html as py_html
 import math
 import os
 import re
@@ -21,7 +22,7 @@ import sentry_sdk
 from dash import Input, Output, State, html
 from dash.exceptions import CallbackException
 from flask import Response, request, redirect
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -768,6 +769,7 @@ _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 _ASSETS_DIR = os.path.join(_PROJECT_ROOT, "assets")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://riob.us").rstrip("/")
 
 app = dash.Dash(
     __name__,
@@ -818,7 +820,31 @@ def _disable_cache_for_dash_endpoints(response):
         )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    if path.startswith("/_dash") or path in ("/health", "/status"):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
+
+
+@server.before_request
+def _canonicalize_single_line_query():
+    """Padroniza URL de linha para caminho amigável quando houver 1 linha."""
+    if (request.path or "") != "/":
+        return None
+
+    arg_keys = set(request.args.keys())
+    if not arg_keys or arg_keys != {"linha"}:
+        return None
+
+    line_values = [
+        str(value or "").strip()
+        for value in request.args.getlist("linha")
+        if str(value or "").strip()
+    ]
+    if len(line_values) != 1:
+        return None
+
+    token = quote(line_values[0], safe="")
+    return redirect(f"/linhas/{token}", code=301)
 
 
 @server.errorhandler(CallbackException)
@@ -840,6 +866,36 @@ def _handle_callback_exception(exc):
         print(log_msg)
         return ("", 204)
     raise exc
+
+
+@server.route("/robots.txt")
+def _robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /assets/\n"
+        "Disallow: /_dash-\n"
+        "Disallow: /health\n"
+        "Disallow: /status\n\n"
+        f"Sitemap: {PUBLIC_BASE_URL}/sitemap.xml\n"
+    )
+    return Response(body, status=200, mimetype="text/plain")
+
+
+@server.route("/sitemap.xml")
+def _sitemap_xml():
+    today = datetime.now(BRT_TZ).date().isoformat()
+    xml = f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">
+    <url>
+        <loc>{PUBLIC_BASE_URL}/</loc>
+        <lastmod>{today}</lastmod>
+        <changefreq>hourly</changefreq>
+        <priority>1.0</priority>
+    </url>
+</urlset>
+"""
+    return Response(xml, status=200, mimetype="application/xml")
 
 
 @server.route("/health")
@@ -991,9 +1047,62 @@ def _deep_link_vehicle(vehicle_token):
 
 @server.route("/linhas/<line_token>")
 def _deep_link_line(line_token):
-    """Converte deep link por caminho para querystring estável no Dash."""
+    """Renderiza shell do Dash mantendo URL canônica por caminho."""
     token = quote(str(line_token or "").strip(), safe="")
-    return redirect(f"/?linha={token}", code=302)
+    token_text = py_html.escape(unquote(str(line_token or "").strip()))
+    canonical_url = f"{PUBLIC_BASE_URL}/linhas/{token}"
+    page_title = f"RioB.us | Linha {token_text} em tempo real"
+    page_description = (
+        f"Acompanhe a linha {token_text} em tempo real no Rio de Janeiro, "
+        "com mapa interativo e dados operacionais de ônibus."
+    )
+    html_index = app.index()
+    html_index = html_index.replace(
+        "<title>🚍 RioB.us 🚍</title>",
+        f"<title>{page_title}</title>",
+        1,
+    )
+    html_index = html_index.replace(
+        'name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT."',
+        f'name="description" content="{page_description}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+        f'property="og:title" content="{page_title}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'property="og:description" content="Mapa em tempo real com ônibus SPPO e BRT no Rio de Janeiro, filtros por linha e monitoramento operacional."',
+        f'property="og:description" content="{page_description}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+        f'name="twitter:title" content="{page_title}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'name="twitter:description" content="Veja posições de ônibus SPPO e BRT no mapa em tempo real."',
+        f'name="twitter:description" content="{page_description}"',
+        1,
+    )
+    html_index = html_index.replace(
+        '"url": "https://riob.us/"',
+        f'"url": "{canonical_url}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'id="canonical-link" rel="canonical" href="https://riob.us/"',
+        f'id="canonical-link" rel="canonical" href="{canonical_url}"',
+        1,
+    )
+    html_index = html_index.replace(
+        'id="og-url" property="og:url" content="https://riob.us/"',
+        f'id="og-url" property="og:url" content="{canonical_url}"',
+        1,
+    )
+    return Response(html_index, status=200, mimetype="text/html")
 
 
 app.layout = build_app_layout(

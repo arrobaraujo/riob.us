@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Allow: /assets/
+Disallow: /_dash-
+Disallow: /health
+Disallow: /status
+
+Sitemap: https://riob.us/sitemap.xml

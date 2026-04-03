@@ -7,8 +7,24 @@ APP_INDEX_STRING = """
 <!DOCTYPE html>
 <html lang="pt-BR">
     <head>
+        <meta charset="utf-8">
         {%metas%}
         <title>{%title%}</title>
+        <meta name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT.">
+        <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+        <meta name="author" content="RioB.us">
+        <meta property="og:site_name" content="RioB.us">
+        <meta property="og:locale" content="pt_BR">
+        <meta property="og:type" content="website">
+        <meta property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro">
+        <meta property="og:description" content="Mapa em tempo real com ônibus SPPO e BRT no Rio de Janeiro, filtros por linha e monitoramento operacional.">
+        <meta property="og:image" content="https://riob.us/assets/screenshot-wide.png">
+        <meta id="og-url" property="og:url" content="https://riob.us/">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro">
+        <meta name="twitter:description" content="Veja posições de ônibus SPPO e BRT no mapa em tempo real.">
+        <meta name="twitter:image" content="https://riob.us/assets/screenshot-wide.png">
+        <link id="canonical-link" rel="canonical" href="https://riob.us/">
         <link
             rel="stylesheet"
             href="https://cdn.jsdelivr.net/npm/daisyui@latest"
@@ -22,6 +38,22 @@ APP_INDEX_STRING = """
           <link rel="apple-touch-icon" href="/assets/icon-192.png">
         {%favicon%}
         {%css%}
+                <script type="application/ld+json">
+                        {
+                            "@context": "https://schema.org",
+                            "@type": "WebApplication",
+                            "name": "RioB.us",
+                            "description": "Acompanhamento operacional de ônibus em tempo real no Rio de Janeiro.",
+                            "url": "https://riob.us/",
+                            "applicationCategory": "TravelApplication",
+                            "operatingSystem": "Web",
+                            "offers": {
+                                "@type": "Offer",
+                                "price": "0",
+                                "priceCurrency": "BRL"
+                            }
+                        }
+                </script>
         <style>
             html, body, #react-entry-point {
                 height: 100%;
@@ -238,6 +270,18 @@ APP_INDEX_STRING = """
                 <p class="boot-subtitle">Carregando mapa e dados...</p>
             </div>
         </div>
+        <noscript>
+            <main style="padding:16px;font-family:Segoe UI,Arial,sans-serif;line-height:1.45;">
+                <h1 style="margin:0 0 8px 0;font-size:20px;">RioB.us - Ônibus em tempo real no Rio de Janeiro</h1>
+                <p style="margin:0 0 8px 0;">
+                    O RioB.us permite acompanhar linhas e veículos SPPO e BRT em mapa interativo,
+                    com atualização operacional frequente.
+                </p>
+                <p style="margin:0;">
+                    Ative o JavaScript para carregar o mapa e os filtros da aplicação.
+                </p>
+            </main>
+        </noscript>
         {%app_entry%}
         <script>
             (function () {

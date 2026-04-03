@@ -85,6 +85,74 @@ Servicos esperados:
 
 - Health tecnico: `http://localhost:8080/health`
 - Status amigavel: `http://localhost:8080/status`
+- Robots: `http://localhost:8080/robots.txt`
+- Sitemap: `http://localhost:8080/sitemap.xml`
+
+## SEO tecnico implementado
+
+Melhorias aplicadas para aumentar indexacao e CTR em buscadores:
+
+- Metadados de SEO no HTML base (`description`, `robots`, `canonical`).
+- Metadados sociais (`Open Graph` e `Twitter Cards`) com imagem de preview.
+- JSON-LD (`WebApplication`) para dados estruturados.
+- Canonicalizacao de URL de linha:
+  - `/?linha=LECD137` -> redireciona para `/linhas/LECD137` (301).
+  - `/linhas/<token>` responde com shell do app mantendo URL canonica.
+- Endpoints dedicados para crawler:
+  - `/robots.txt`
+  - `/sitemap.xml`
+- Protecao de indexacao de endpoints tecnicos via `X-Robots-Tag: noindex`
+  para `/_dash*`, `/health` e `/status`.
+
+## Operacao SEO (deploy e validacao)
+
+### 1) Validar endpoints apos deploy
+
+Execute localmente (ou em CI) para validar respostas esperadas:
+
+```powershell
+curl.exe -sS https://riob.us/robots.txt
+curl.exe -sS https://riob.us/sitemap.xml
+curl.exe -I "https://riob.us/?linha=LECD137"
+curl.exe -sS https://riob.us/linhas/LECD137 | findstr /I "canonical og:url"
+```
+
+Resultado esperado:
+
+- `/robots.txt` retorna regras de crawler e `Sitemap:`.
+- `/sitemap.xml` retorna XML valido com `<urlset>`.
+- `/?linha=LECD137` responde `301` para `/linhas/LECD137`.
+- HTML de `/linhas/LECD137` contem canonical e `og:url` da propria linha.
+
+Atalho: script de smoke test SEO
+
+```powershell
+./scripts/seo_smoke.ps1 -BaseUrl http://localhost:8080 -CanonicalBaseUrl https://riob.us -LineToken LECD137
+./scripts/seo_smoke.ps1 -BaseUrl https://www.riob.us -CanonicalBaseUrl https://riob.us -LineToken LECD137
+```
+
+### 2) Submeter sitemap no Google Search Console
+
+1. Abrir a propriedade `https://riob.us` no Search Console.
+2. Ir em `Sitemaps`.
+3. Informar `sitemap.xml` e enviar.
+4. Confirmar status `Success` e ausencia de erro de fetch.
+
+Observacao: a submissao exige autenticacao da conta proprietaria do dominio.
+
+### 3) URL Inspection e Rich Results Test
+
+URLs recomendadas para inspecao:
+
+- `https://riob.us/`
+- `https://riob.us/linhas/LECD137`
+
+Checklist:
+
+- URL canônica reconhecida pelo Google corresponde a URL publicada.
+- Pagina esta `Indexable`.
+- Metadados (`title`, `description`, `og:*`, `twitter:*`) presentes.
+- JSON-LD (`WebApplication`) detectado no Rich Results Test.
 
 ## Deploy em producao (Render Docker)
 

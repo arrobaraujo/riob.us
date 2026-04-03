@@ -2,7 +2,6 @@
 venv/
 .venv/
 env/
-scripts/
 
 # Python caching
 __pycache__/
