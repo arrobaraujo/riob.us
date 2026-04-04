@@ -2,7 +2,7 @@
   "id": "/",
   "name": "RioB.us",
   "short_name": "RioB.us",
-  "description": "Rastreie ônibus em tempo real no mapa.",
+  "description": "Ônibus em tempo real",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -11,18 +11,18 @@ APP_INDEX_STRING = """
         <meta charset="utf-8">
         {%metas%}
         <title>{%title%}</title>
-        <meta name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT.">
+        <meta name="description" content="Ônibus em tempo real">
         <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
         <meta name="author" content="RioB.us">
         <meta property="og:site_name" content="RioB.us">
         <meta property="og:locale" content="pt_BR">
         <meta property="og:type" content="website">
-        <meta property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro">
+        <meta property="og:title" content="RioB.us | Ônibus em tempo real">
         <meta property="og:description" content="Mapa em tempo real com ônibus SPPO e BRT no Rio de Janeiro, filtros por linha e monitoramento operacional.">
         <meta property="og:image" content="https://riob.us/assets/screenshot-wide.png">
         <meta id="og-url" property="og:url" content="https://riob.us/">
         <meta name="twitter:card" content="summary_large_image">
-        <meta name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro">
+        <meta name="twitter:title" content="RioB.us | Ônibus em tempo real">
         <meta name="twitter:description" content="Veja posições de ônibus SPPO e BRT no mapa em tempo real.">
         <meta name="twitter:image" content="https://riob.us/assets/screenshot-wide.png">
         <link id="canonical-link" rel="canonical" href="https://riob.us/">
@@ -44,7 +44,7 @@ APP_INDEX_STRING = """
                             "@context": "https://schema.org",
                             "@type": "WebApplication",
                             "name": "RioB.us",
-                            "description": "Acompanhamento operacional de ônibus em tempo real no Rio de Janeiro.",
+                            "description": "Ônibus em tempo real",
                             "url": "https://riob.us/",
                             "applicationCategory": "TravelApplication",
                             "operatingSystem": "Web",
@@ -273,7 +273,7 @@ APP_INDEX_STRING = """
         </div>
         <noscript>
             <main style="padding:16px;font-family:Segoe UI,Arial,sans-serif;line-height:1.45;">
-                <h1 style="margin:0 0 8px 0;font-size:20px;">RioB.us - Ônibus em tempo real no Rio de Janeiro</h1>
+                <h1 style="margin:0 0 8px 0;font-size:20px;">RioB.us - Ônibus em tempo real</h1>
                 <p style="margin:0 0 8px 0;">
                     O RioB.us permite acompanhar linhas e veículos SPPO e BRT em mapa interativo,
                     com atualização operacional frequente.
@@ -476,12 +476,12 @@ def get_localized_index_string(locale="pt-BR"):
     replacements = [
         ('<html lang="pt-BR">', f'<html lang="{locale}">'),
         (
-            'name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT."',
+            'name="description" content="Ônibus em tempo real"',
             f'name="description" content="{t(locale, "seo.description")}"',
         ),
         ('property="og:locale" content="pt_BR"', f'property="og:locale" content="{t(locale, "seo.og_locale")}"'),
         (
-            'property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+            'property="og:title" content="RioB.us | Ônibus em tempo real"',
             f'property="og:title" content="{t(locale, "seo.title")}"',
         ),
         (
@@ -489,7 +489,7 @@ def get_localized_index_string(locale="pt-BR"):
             f'property="og:description" content="{t(locale, "seo.description")}"',
         ),
         (
-            'name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+            'name="twitter:title" content="RioB.us | Ônibus em tempo real"',
             f'name="twitter:title" content="{t(locale, "seo.title")}"',
         ),
         (
@@ -501,14 +501,14 @@ def get_localized_index_string(locale="pt-BR"):
             f'name="apple-mobile-web-app-title" content="{t(locale, "seo.apple_title")}"',
         ),
         (
-            '"description": "Acompanhamento operacional de ônibus em tempo real no Rio de Janeiro."',
+            '"description": "Ônibus em tempo real"',
             f'"description": "{t(locale, "index.ld_description")}"',
         ),
         ('aria-label="Carregando aplicação"', f'aria-label="{t(locale, "index.loading_aria")}"'),
         ('Consulta de ônibus - Rio de Janeiro', t(locale, "index.boot_title")),
         ('Carregando mapa e dados...', t(locale, "index.boot_subtitle")),
         (
-            'RioB.us - Ônibus em tempo real no Rio de Janeiro',
+            'RioB.us - Ônibus em tempo real',
             t(locale, "index.noscript.h1"),
         ),
         (

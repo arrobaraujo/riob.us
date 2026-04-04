@@ -1429,8 +1429,8 @@ app.clientside_callback(
         var loc = normalize(locale);
         var i18n = {
             'pt-BR': {
-                title: 'RioB.us | Ônibus em tempo real no Rio de Janeiro',
-                description: 'Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT.',
+                title: 'RioB.us | Ônibus em tempo real',
+                description: 'Ônibus em tempo real',
                 ogLocale: 'pt_BR',
                 appleTitle: 'Ônibus RJ',
                 layerLabels: {
