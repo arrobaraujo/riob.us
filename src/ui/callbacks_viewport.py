@@ -58,11 +58,40 @@ def register_viewport_callbacks(
 
     app.clientside_callback(
         """
-        function(n_clicks) {
+        function(n_clicks, locale) {
+            function normalizeLocale(value) {
+                var raw = String(value || '').trim().toLowerCase();
+                if (raw === 'en') return 'en';
+                if (raw === 'es') return 'es';
+                return 'pt-BR';
+            }
+
+            function text(key) {
+                var table = {
+                    'pt-BR': {
+                        unsupported: 'Geolocalização não suportada neste navegador.',
+                        errorPrefix: 'Erro ao obter localização: ',
+                        unknownError: 'erro desconhecido'
+                    },
+                    en: {
+                        unsupported: 'Geolocation is not supported in this browser.',
+                        errorPrefix: 'Error getting location: ',
+                        unknownError: 'unknown error'
+                    },
+                    es: {
+                        unsupported: 'La geolocalización no es compatible con este navegador.',
+                        errorPrefix: 'Error al obtener ubicación: ',
+                        unknownError: 'error desconocido'
+                    }
+                };
+                var loc = normalizeLocale(locale);
+                return table[loc][key];
+            }
+
             if (!n_clicks) return window.dash_clientside.no_update;
             return new Promise(function(resolve) {
                 if (!navigator.geolocation) {
-                    alert("Geolocalização não suportada neste navegador.");
+                    alert(text('unsupported'));
                     resolve(window.dash_clientside.no_update);
                     return;
                 }
@@ -125,9 +154,9 @@ def register_viewport_callbacks(
                                 var msg = (
                                     (err2 && err2.message)
                                     || (err && err.message)
-                                    || "erro desconhecido"
+                                    || text('unknownError')
                                 );
-                                alert("Erro ao obter localização: " + msg);
+                                alert(text('errorPrefix') + msg);
                                 resolve(window.dash_clientside.no_update);
                             },
                             preciseOpts
@@ -140,6 +169,7 @@ def register_viewport_callbacks(
         """,
         Output("store-localizacao", "data"),
         Input("btn-localizar", "n_clicks"),
+        Input("store-locale", "data"),
         prevent_initial_call=True,
     )
 

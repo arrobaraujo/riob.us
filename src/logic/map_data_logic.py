@@ -1,5 +1,6 @@
 import pandas as pd
 from dash import html
+from src.i18n import normalize_locale, t
 
 
 def _normalize_vehicle_token(value):
@@ -61,7 +62,8 @@ def split_gps_por_tipo(dados):
     return sppo_df, brt_df
 
 
-def construir_secao_icones(cache_or_generate_svg_fn):
+def construir_secao_icones(cache_or_generate_svg_fn, locale="pt-BR"):
+    locale = normalize_locale(locale)
     icone_seta = cache_or_generate_svg_fn("#888", float("nan"))
     icone_circulo = cache_or_generate_svg_fn("#888", 0)
     label_style = {"fontSize": "clamp(9px, 1vw, 11px)"}
@@ -73,7 +75,7 @@ def construir_secao_icones(cache_or_generate_svg_fn):
     return html.Div(
         [
             html.B(
-                "Ícones:",
+                t(locale, "legend.icons"),
                 style={
                     "display": "block",
                     "marginBottom": "4px",
@@ -83,7 +85,7 @@ def construir_secao_icones(cache_or_generate_svg_fn):
             html.Div(
                 [
                     html.Img(src=icone_seta[0], style=img_style),
-                    html.Span("Parado/Não atualizado", style=label_style),
+                    html.Span(t(locale, "legend.stopped"), style=label_style),
                 ],
                 style={
                     "display": "flex",
@@ -95,7 +97,7 @@ def construir_secao_icones(cache_or_generate_svg_fn):
             html.Div(
                 [
                     html.Img(src=icone_circulo[0], style=img_style),
-                    html.Span("Em movimento", style=label_style),
+                    html.Span(t(locale, "legend.moving"), style=label_style),
                 ],
                 style={
                     "display": "flex", "alignItems": "center", "gap": "5px"
@@ -110,8 +112,9 @@ def construir_secao_icones(cache_or_generate_svg_fn):
     )
 
 
-def construir_legenda_vazia(modo, fetch_ok, secao_icones):
-    titulo = "Veículos no mapa:" if modo == "veiculos" else "Linhas no mapa:"
+def construir_legenda_vazia(modo, fetch_ok, secao_icones, locale="pt-BR"):
+    locale = normalize_locale(locale)
+    titulo = t(locale, "legend.vehicles") if modo == "veiculos" else t(locale, "legend.lines")
     return html.Div(
         [
             html.B(
@@ -130,12 +133,15 @@ def construir_legenda_vazia(modo, fetch_ok, secao_icones):
 
 
 def construir_legenda_sem_veiculos(
-    secao_icones, mensagem="Nenhum veículo selecionado"
+    secao_icones, mensagem=None, locale="pt-BR"
 ):
+    locale = normalize_locale(locale)
+    if mensagem is None:
+        mensagem = t(locale, "legend.none_selected_vehicle")
     return html.Div(
         [
             html.B(
-                "Veículos no mapa:",
+                t(locale, "legend.vehicles"),
                 style={
                     "display": "block",
                     "marginBottom": "3px",
@@ -165,8 +171,9 @@ def linhas_ativas_por_veiculos(dados_filtrados, linhas_short):
 
 def construir_legenda_veiculos(
     dados_filtrados, cores, linhas_dict,
-    linha_exibicao_fn, secao_icones
+    linha_exibicao_fn, secao_icones, locale="pt-BR"
 ):
+    locale = normalize_locale(locale)
     itens = []
     base_legenda = (
         dados_filtrados.sort_values("datahora", ascending=False)
@@ -180,7 +187,7 @@ def construir_legenda_veiculos(
         if linha_val:
             linha_label = linha_exibicao_fn(linha_val)
         else:
-            linha_label = "Sem linha"
+            linha_label = t(locale, "legend.no_line")
         cor = cores.get(linha_val, "#9aa3ad")
         itens.append(
             html.Div(
@@ -198,10 +205,10 @@ def construir_legenda_veiculos(
                     ),
                     html.Span(
                         [
-                            html.B(f"Veículo {ordem_val}"),
+                            html.B(t(locale, "legend.vehicle", ordem=ordem_val)),
                             html.Br(),
                             html.Span(
-                                f"Linha {linha_label}",
+                                t(locale, "legend.line", linha=linha_label),
                                 style={
                                     "color": "#4f5b68",
                                     "fontSize": "clamp(9px, 1vw, 11px)"
@@ -236,7 +243,7 @@ def construir_legenda_veiculos(
     return html.Div(
         [
             html.B(
-                "Veículos no mapa:",
+                t(locale, "legend.vehicles"),
                 style={
                     "display": "block",
                     "marginBottom": "4px",
@@ -258,7 +265,9 @@ def construir_legenda_linhas(
     linhas_render, cores, linhas_dict,
     linha_exibicao_fn, secao_icones,
     contagem_por_linha=None,
+    locale="pt-BR",
 ):
+    locale = normalize_locale(locale)
     contagem_por_linha = contagem_por_linha or {}
     itens = []
     for ln in linhas_render:
@@ -266,8 +275,8 @@ def construir_legenda_linhas(
         nome_long = linhas_dict.get(ln, "")
         linha_label = linha_exibicao_fn(ln)
         total = int(contagem_por_linha.get(ln, 0) or 0)
-        sufixo = "Veículo" if total == 1 else "Veículos"
-        linha_titulo = f"{linha_label} - {total} {sufixo}"
+        sufixo = t(locale, "legend.count.one") if total == 1 else t(locale, "legend.count.other")
+        linha_titulo = t(locale, "legend.count", linha=linha_label, total=total, suffix=sufixo)
         itens.append(
             html.Div(
                 [
@@ -312,7 +321,7 @@ def construir_legenda_linhas(
     return html.Div(
         [
             html.B(
-                "Linhas no mapa:",
+                t(locale, "legend.lines"),
                 style={
                     "display": "block",
                     "marginBottom": "4px",

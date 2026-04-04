@@ -2,6 +2,7 @@ import dash_leaflet as dl
 from dash import html
 import pandas as pd
 import time
+from src.i18n import normalize_locale, t
 
 
 def _dataframe_fingerprint_strong(df):
@@ -119,7 +120,9 @@ def construir_camadas_estaticas(
     map_static_cache_ttl_seconds=None,
     viewport_bounds=None,
     viewport_padding_degrees=0.01,
+    locale="pt-BR",
 ):
+    locale = normalize_locale(locale)
     recarregar_gtfs_estatico_sob_demanda(linhas_render)
 
     with gtfs_data_lock:
@@ -144,6 +147,7 @@ def construir_camadas_estaticas(
     normalized_bounds = _normalize_bounds(viewport_bounds)
     cache_key = (
         modo,
+        locale,
         tuple(sorted(str(ln) for ln in linhas_render)),
         tuple(sorted(cores.items())),
     )
@@ -244,19 +248,19 @@ def construir_camadas_estaticas(
                 popup_parada = html.Div(
                     [
                         html.P(
-                            f"Nome: {_texto_stop_valor(stop_name)}",
+                            t(locale, "popup.stop.name", valor=_texto_stop_valor(stop_name)),
                             style=style_m2
                         ),
                         html.P(
-                            f"Código: {_texto_stop_valor(stop_code)}",
+                            t(locale, "popup.stop.code", valor=_texto_stop_valor(stop_code)),
                             style=style_m2
                         ),
                         html.P(
-                            f"Descrição: {_texto_stop_valor(stop_desc)}",
+                            t(locale, "popup.stop.description", valor=_texto_stop_valor(stop_desc)),
                             style=style_m2
                         ),
                         html.P(
-                            f"Plataforma: {_texto_stop_valor(platform_code)}",
+                            t(locale, "popup.stop.platform", valor=_texto_stop_valor(platform_code)),
                             style=style_m2
                         ),
                     ]
@@ -308,7 +312,9 @@ def construir_camadas_veiculos(
     vehicle_layers_cache_max_items=128,
     vehicle_layers_cache_ttl_seconds=None,
     emit_cache_meta=False,
+    locale="pt-BR",
 ):
+    locale = normalize_locale(locale)
     line_to_fares = line_to_fares or {}
 
     def _format_popup_fare(value):
@@ -329,7 +335,7 @@ def construir_camadas_veiculos(
         ordem = row.get('ordem', '')
         linha = linha_publica_fn(row.get('linha', ''))
         return dl.Tooltip(
-            f"🚍 {ordem}  •  Linha: {linha}",
+            t(locale, "tooltip.vehicle", ordem=ordem, linha=linha),
             permanent=False,
             sticky=True,
         )
@@ -346,29 +352,29 @@ def construir_camadas_veiculos(
         style_m2 = {"margin": "2px 0"}
         items = [
             html.P(
-                f"Número do veículo: {row.get('ordem', '')}",
+                t(locale, "popup.vehicle_number", ordem=row.get('ordem', '')),
                 style=style_m2
             ),
             html.P(
-                f"Serviço: {linha_publica_fn(row.get('linha', ''))}",
+                t(locale, "popup.service", servico=linha_publica_fn(row.get('linha', ''))),
                 style=style_m2
             ),
             html.P(
-                f"Vista: {linhas_dict.get(row.get('linha', ''), '')}",
+                t(locale, "popup.view", vista=linhas_dict.get(row.get('linha', ''), '')),
                 style=style_m2
             ),
             html.P(
-                f"Tarifa: {tarifa}",
+                t(locale, "popup.fare", tarifa=tarifa),
                 style=style_m2
             ),
             html.P(
-                f"Velocidade: {vel} km/h",
+                t(locale, "popup.speed", vel=vel),
                 style=style_m2
             ),
         ]
         if extra:
             items.append(html.P(extra, style=style_m2))
-        items.append(html.P(f"Hora: {hora}", style=style_m2))
+        items.append(html.P(t(locale, "popup.time", hora=hora), style=style_m2))
         return [_tooltip(row), dl.Popup(html.Div(items))]
 
     num_total = len(sppo_df) + len(brt_df)
@@ -387,6 +393,7 @@ def construir_camadas_veiculos(
         fp_mode_brt, fp_brt = _build_fingerprint(brt_df)
         cache_meta["fingerprint_mode"] = f"{fp_mode_sppo}+{fp_mode_brt}"
         cache_key = (
+            locale,
             tuple(sorted(str(ln) for ln in (linhas_render or []))),
             tuple(sorted(
                 (
@@ -476,7 +483,7 @@ def construir_camadas_veiculos(
                 icon=icon_dict,
                 children=_popup(
                     row_dict,
-                    extra=f"Sentido: {row_dict.get('sentido', '')}"
+                    extra=t(locale, "popup.direction", sentido=row_dict.get('sentido', ''))
                 ),
             )
         )

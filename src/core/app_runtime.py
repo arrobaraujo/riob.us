@@ -22,7 +22,7 @@ import sentry_sdk
 from dash import Input, Output, State, html
 from dash.exceptions import CallbackException
 from flask import Response, request, redirect
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, parse_qs, urlencode
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -73,7 +73,14 @@ from src.utils.svg_icons import (
     get_svg_cache_lock as _get_svg_cache_lock,
     get_svg_cache as _get_svg_cache,
 )
-from src.ui.ui_layout import APP_INDEX_STRING, build_app_layout
+from src.ui.ui_layout import APP_INDEX_STRING, build_app_layout, get_localized_index_string
+from src.i18n.localization import (
+    normalize_locale,
+    locale_from_search,
+    locale_from_accept_language,
+    is_locale_token,
+    t,
+)
 from src.logic.viewport_logic import (
     calcular_viewport_linhas as viewport_logic_calcular_viewport_linhas,
     calcular_viewport_veiculos as viewport_logic_calcular_viewport_veiculos,
@@ -804,6 +811,38 @@ MAP_SUPPORTS_VIEWPORT = "viewport" in getattr(dl.Map, "_prop_names", [])
 app.index_string = APP_INDEX_STRING
 
 
+def _resolve_request_locale():
+    try:
+        locale_query = locale_from_search(request.query_string.decode("utf-8"))
+        if locale_query:
+            return normalize_locale(locale_query)
+
+        path = request.path or ""
+        segments = [segment for segment in path.split("/") if segment]
+        if len(segments) >= 2 and segments[1].lower() == "linhas":
+            first = segments[0]
+            if is_locale_token(first):
+                return normalize_locale(first)
+
+        locale_header = locale_from_accept_language(
+            request.headers.get("Accept-Language", "")
+        )
+        if locale_header:
+            return normalize_locale(locale_header)
+    except Exception:
+        pass
+    return "pt-BR"
+
+
+def _serve_layout():
+    return build_app_layout(
+        linhas_short=linhas_short,
+        linha_exibicao=linha_exibicao,
+        app_build_id=APP_BUILD_ID,
+        locale=_resolve_request_locale(),
+    )
+
+
 @server.after_request
 def _disable_cache_for_dash_endpoints(response):
     """Evita cache do layout para reduzir mismatch apos deploy."""
@@ -832,7 +871,7 @@ def _canonicalize_single_line_query():
         return None
 
     arg_keys = set(request.args.keys())
-    if not arg_keys or arg_keys != {"linha"}:
+    if not arg_keys or not arg_keys.issubset({"linha", "lang"}):
         return None
 
     line_values = [
@@ -844,7 +883,20 @@ def _canonicalize_single_line_query():
         return None
 
     token = quote(line_values[0], safe="")
+    locale_query = locale_from_search(request.query_string.decode("utf-8"))
+    if locale_query in {"en", "es"}:
+        return redirect(f"/{locale_query}/linhas/{token}", code=301)
     return redirect(f"/linhas/{token}", code=301)
+
+
+@server.before_request
+def _set_localized_index_string():
+    """Aplica index_string localizado para a requisição atual."""
+    path = request.path or ""
+    if path.startswith("/_dash") or path in ("/assets", "/robots.txt", "/sitemap.xml", "/health", "/status"):
+        return None
+    app.index_string = get_localized_index_string(_resolve_request_locale())
+    return None
 
 
 @server.errorhandler(CallbackException)
@@ -953,19 +1005,20 @@ def _build_health_status():
 def _status_page():
     """Página de status legível por humanos para suporte operacional."""
     status = _build_health_status()
+    locale = _resolve_request_locale()
 
-    gtfs_badge = "OK" if status.get("gtfs_loaded") else "PENDENTE"
-    fetch_badge = "OK" if status.get("last_fetch_had_data") else "SEM DADOS"
-    mem_text = f"{status.get('memory_mb')} MB" if "memory_mb" in status else "N/D"
+    gtfs_badge = "OK" if status.get("gtfs_loaded") else t(locale, "status.value.pending")
+    fetch_badge = "OK" if status.get("last_fetch_had_data") else t(locale, "status.value.no_data")
+    mem_text = f"{status.get('memory_mb')} MB" if "memory_mb" in status else t(locale, "status.value.na")
     cache = status.get("cache", {})
 
     html_body = f"""
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="{locale}">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Status | RioB.us</title>
+    <title>{t(locale, "status.title")}</title>
     <style>
         body {{
             margin: 0;
@@ -1016,21 +1069,21 @@ def _status_page():
     <div class="wrap">
         <div class="card">
             <div class="head">
-                <h1 style="margin:0; font-size: 20px;">Status da aplicacao RioB.us</h1>
+                <h1 style="margin:0; font-size: 20px;">{t(locale, "status.header")}</h1>
                 <span class="badge">{status.get('status', 'unknown').upper()}</span>
             </div>
             <div class="grid">
-                <div class="item"><div class="k">GTFS carregado</div><div class="v">{gtfs_badge}</div></div>
-                <div class="item"><div class="k">Ultima atualizacao GPS</div><div class="v">{status.get('last_gps_update') or 'N/D'}</div></div>
-                <div class="item"><div class="k">Ultimo fetch com dados</div><div class="v">{fetch_badge}</div></div>
-                <div class="item"><div class="k">Memoria do processo</div><div class="v">{mem_text}</div></div>
-                <div class="item"><div class="k">Cache estatico</div><div class="v">{cache.get('static_layers_items', 0)} itens</div></div>
-                <div class="item"><div class="k">Cache veiculos</div><div class="v">{cache.get('vehicle_layers_items', 0)} itens</div></div>
-                <div class="item"><div class="k">Cache SVG</div><div class="v">{cache.get('svg_items', 0)} itens</div></div>
-                <div class="item"><div class="k">Hit rate cache veiculos</div><div class="v">{cache.get('vehicle_layers_hit_rate', 0)}%</div></div>
+                <div class="item"><div class="k">{t(locale, "status.gtfs_loaded")}</div><div class="v">{gtfs_badge}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.last_gps_update")}</div><div class="v">{status.get('last_gps_update') or t(locale, "status.value.na")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.last_fetch")}</div><div class="v">{fetch_badge}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.process_memory")}</div><div class="v">{mem_text}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_static")}</div><div class="v">{cache.get('static_layers_items', 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_vehicles")}</div><div class="v">{cache.get('vehicle_layers_items', 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_svg")}</div><div class="v">{cache.get('svg_items', 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_hit_rate")}</div><div class="v">{cache.get('vehicle_layers_hit_rate', 0)}%</div></div>
             </div>
             <div class="foot">
-                Build: {status.get('build_id') or 'N/D'} | JSON tecnico: <a href="/health">/health</a>
+                Build: {status.get('build_id') or t(locale, "status.value.na")} | {t(locale, "status.foot_json")}: <a href="/health">/health</a>
             </div>
         </div>
     </div>
@@ -1047,45 +1100,77 @@ def _deep_link_vehicle(vehicle_token):
 
 @server.route("/linhas/<line_token>")
 def _deep_link_line(line_token):
+    return _render_deep_link_line(line_token, forced_locale=None)
+
+
+@server.route("/<locale_token>/linhas/<line_token>")
+def _deep_link_line_with_locale(locale_token, line_token):
+    if not is_locale_token(locale_token):
+        token = quote(str(line_token or "").strip(), safe="")
+        return redirect(f"/linhas/{token}", code=302)
+    return _render_deep_link_line(
+        line_token,
+        forced_locale=normalize_locale(locale_token),
+    )
+
+
+def _render_deep_link_line(line_token, forced_locale=None):
     """Renderiza shell do Dash mantendo URL canônica por caminho."""
     token = quote(str(line_token or "").strip(), safe="")
     token_text = py_html.escape(unquote(str(line_token or "").strip()))
     canonical_url = f"{PUBLIC_BASE_URL}/linhas/{token}"
-    page_title = f"RioB.us | Linha {token_text} em tempo real"
-    page_description = (
-        f"Acompanhe a linha {token_text} em tempo real no Rio de Janeiro, "
-        "com mapa interativo e dados operacionais de ônibus."
-    )
+    locale = normalize_locale(forced_locale or _resolve_request_locale())
+    page_title = t(locale, "seo.line.title", token=token_text)
+    page_description = t(locale, "seo.line.description", token=token_text)
     html_index = app.index()
-    html_index = html_index.replace(
-        "<title>🚍 RioB.us 🚍</title>",
+    html_index = re.sub(
+        r"<title>.*?</title>",
         f"<title>{page_title}</title>",
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
     )
-    html_index = html_index.replace(
-        'name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT."',
+    html_index = re.sub(
+        r'name="description"\s+content="[^"]*"',
         f'name="description" content="{page_description}"',
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
     )
-    html_index = html_index.replace(
-        'property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+    html_index = re.sub(
+        r'property="og:locale"\s+content="[^"]*"',
+        f'property="og:locale" content="{t(locale, "seo.og_locale")}"',
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    html_index = re.sub(
+        r'property="og:title"\s+content="[^"]*"',
         f'property="og:title" content="{page_title}"',
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
     )
-    html_index = html_index.replace(
-        'property="og:description" content="Mapa em tempo real com ônibus SPPO e BRT no Rio de Janeiro, filtros por linha e monitoramento operacional."',
+    html_index = re.sub(
+        r'property="og:description"\s+content="[^"]*"',
         f'property="og:description" content="{page_description}"',
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
     )
-    html_index = html_index.replace(
-        'name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+    html_index = re.sub(
+        r'name="twitter:title"\s+content="[^"]*"',
         f'name="twitter:title" content="{page_title}"',
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
     )
-    html_index = html_index.replace(
-        'name="twitter:description" content="Veja posições de ônibus SPPO e BRT no mapa em tempo real."',
+    html_index = re.sub(
+        r'name="twitter:description"\s+content="[^"]*"',
         f'name="twitter:description" content="{page_description}"',
-        1,
+        html_index,
+        count=1,
+        flags=re.IGNORECASE,
     )
     html_index = html_index.replace(
         '"url": "https://riob.us/"',
@@ -1105,11 +1190,7 @@ def _deep_link_line(line_token):
     return Response(html_index, status=200, mimetype="text/html")
 
 
-app.layout = build_app_layout(
-    linhas_short=linhas_short,
-    linha_exibicao=linha_exibicao,
-    app_build_id=APP_BUILD_ID,
-)
+app.layout = _serve_layout
 
 
 # ==============================================================================
@@ -1143,6 +1224,392 @@ app.clientside_callback(
     """,
     Output("store-build-sync", "data"),
     Input("store-build-id", "data"),
+)
+
+
+app.clientside_callback(
+    """
+    function(localeValue, search, pathname, _buildId, currentLocale) {
+        function normalize(input) {
+            var raw = String(input || '').trim().toLowerCase();
+            if (raw === 'pt' || raw === 'pt-br') return 'pt-BR';
+            if (raw === 'en' || raw === 'en-us' || raw === 'en-gb') return 'en';
+            if (raw === 'es' || raw === 'es-es' || raw === 'es-ar' || raw === 'es-mx') return 'es';
+            return null;
+        }
+
+        function localeFromPath(path) {
+            var text = String(path || '');
+            var parts = text.split('/').filter(Boolean);
+            if (parts.length >= 2 && parts[1] === 'linhas') {
+                return normalize(parts[0]);
+            }
+            return null;
+        }
+
+        var resolved = null;
+        var triggered = [];
+        try {
+            triggered = (window.dash_clientside && window.dash_clientside.callback_context)
+                ? (window.dash_clientside.callback_context.triggered || [])
+                : [];
+        } catch (e) {
+            triggered = [];
+        }
+        var triggeredByDropdown = false;
+        for (var i = 0; i < triggered.length; i += 1) {
+            var propId = String(triggered[i].prop_id || '');
+            if (propId.indexOf('dropdown-locale.value') === 0) {
+                triggeredByDropdown = true;
+                break;
+            }
+        }
+
+        if (triggeredByDropdown) {
+            resolved = normalize(localeValue);
+        }
+
+        if (!resolved) {
+            try {
+                var params = new URLSearchParams(String(search || '').replace(/^\\?/, ''));
+                resolved = normalize(params.get('lang'));
+            } catch (e) {
+                resolved = null;
+            }
+        }
+
+        if (!resolved) {
+            resolved = localeFromPath(pathname);
+        }
+
+        if (!resolved) {
+            try {
+                resolved = normalize(window.localStorage.getItem('riobus_locale'));
+            } catch (e) {
+                resolved = null;
+            }
+        }
+
+        if (!resolved) {
+            try {
+                var nav = (navigator.languages && navigator.languages.length)
+                    ? navigator.languages[0]
+                    : (navigator.language || '');
+                resolved = normalize(nav);
+            } catch (e) {
+                resolved = null;
+            }
+        }
+
+        if (!resolved) {
+            resolved = normalize(currentLocale) || 'pt-BR';
+        }
+        if (!resolved) {
+            resolved = 'pt-BR';
+        }
+
+        try {
+            window.localStorage.setItem('riobus_locale', resolved);
+        } catch (e) {
+            // sem-op
+        }
+
+        if (document && document.documentElement) {
+            document.documentElement.setAttribute('lang', resolved);
+        }
+        return [resolved, resolved];
+    }
+    """,
+    Output("store-locale", "data"),
+    Output("dropdown-locale", "value"),
+    Input("dropdown-locale", "value"),
+    Input("url-router", "search"),
+    Input("url-router", "pathname"),
+    Input("store-build-id", "data"),
+    State("store-locale", "data"),
+    prevent_initial_call=False,
+)
+
+
+@app.callback(
+    Output("url-router", "pathname"),
+    Output("url-router", "search"),
+    Input("store-locale", "data"),
+    State("url-router", "pathname"),
+    State("url-router", "search"),
+    prevent_initial_call=False,
+)
+def sincronizar_lang_na_url(locale, pathname, current_search):
+    locale = normalize_locale(locale)
+    path_text = str(pathname or "/").strip() or "/"
+    if not path_text.startswith("/"):
+        path_text = f"/{path_text}"
+
+    raw_parts = [p for p in path_text.split("/") if p]
+    token = None
+    if len(raw_parts) >= 2 and raw_parts[0] == "linhas":
+        token = raw_parts[1]
+    elif len(raw_parts) >= 3 and raw_parts[1] == "linhas" and is_locale_token(raw_parts[0]):
+        token = raw_parts[2]
+
+    next_path = path_text
+    if token is not None:
+        token_norm = quote(unquote(token), safe="")
+        if locale in {"en", "es"}:
+            next_path = f"/{locale}/linhas/{token_norm}"
+        else:
+            next_path = f"/linhas/{token_norm}"
+
+    text = str(current_search or "").strip()
+    if text.startswith("?"):
+        text = text[1:]
+    parsed = parse_qs(text, keep_blank_values=False)
+
+    parsed.pop("lang", None)
+
+    encoded = urlencode(parsed, doseq=True)
+    next_search = f"?{encoded}" if encoded else ""
+
+    out_path = dash.no_update if next_path == path_text else next_path
+    out_search = dash.no_update if next_search == (current_search or "") else next_search
+    return out_path, out_search
+
+
+@app.callback(
+    Output("header-subtitle", "children"),
+    Output("tab-linhas", "label"),
+    Output("tab-veiculos", "label"),
+    Output("span-refresh-label", "children"),
+    Output("update-label-full", "children"),
+    Output("update-label-short", "children"),
+    Output("dropdown-linhas", "placeholder"),
+    Output("dropdown-veiculos", "placeholder"),
+    Output("btn-localizar", "title"),
+    Output("btn-localizar", "aria-label"),
+    Output("btn-instalar-pwa", "children"),
+    Output("btn-instalar-pwa", "title"),
+    Output("btn-instalar-pwa", "aria-label"),
+    Output("btn-toggle-theme", "aria-label"),
+    Output("legenda", "aria-label"),
+    Input("store-locale", "data"),
+    prevent_initial_call=False,
+)
+def atualizar_textos_ui_por_locale(locale):
+    locale = normalize_locale(locale)
+    locate_text = t(locale, "map.locate")
+    install_title = t(locale, "pwa.install_title")
+    return (
+        t(locale, "header.subtitle"),
+        t(locale, "tab.lines"),
+        t(locale, "tab.vehicles"),
+        t(locale, "toolbar.refresh"),
+        t(locale, "toolbar.last_update"),
+        t(locale, "toolbar.updated"),
+        t(locale, "line.placeholder"),
+        t(locale, "vehicle.placeholder"),
+        locate_text,
+        locate_text,
+        t(locale, "pwa.install"),
+        install_title,
+        install_title,
+        t(locale, "theme.aria"),
+        t(locale, "legend.aria"),
+    )
+
+
+app.clientside_callback(
+    """
+    function(locale, pathname) {
+        function normalize(input) {
+            var raw = String(input || '').trim().toLowerCase();
+            if (raw === 'en') return 'en';
+            if (raw === 'es') return 'es';
+            return 'pt-BR';
+        }
+        var loc = normalize(locale);
+        var i18n = {
+            'pt-BR': {
+                title: 'RioB.us | Ônibus em tempo real no Rio de Janeiro',
+                description: 'Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT.',
+                ogLocale: 'pt_BR',
+                appleTitle: 'Ônibus RJ',
+                layerLabels: {
+                    osm: 'OSM',
+                    cartoLight: 'Carto Claro',
+                    cartoDark: 'Carto Escuro',
+                    itineraries: 'Itinerários',
+                    stops: 'Paradas',
+                    buses: 'Ônibus',
+                    brt: 'BRT',
+                    position: 'Minha posição'
+                }
+            },
+            en: {
+                title: 'RioB.us | Real-time buses in Rio de Janeiro',
+                description: 'Track buses in real time in Rio de Janeiro with an interactive map, GPS data, and SPPO and BRT lines.',
+                ogLocale: 'en_US',
+                appleTitle: 'Rio Bus',
+                layerLabels: {
+                    osm: 'OSM',
+                    cartoLight: 'Carto Light',
+                    cartoDark: 'Carto Dark',
+                    itineraries: 'Routes',
+                    stops: 'Stops',
+                    buses: 'Buses',
+                    brt: 'BRT',
+                    position: 'My position'
+                }
+            },
+            es: {
+                title: 'RioB.us | Autobuses en tiempo real en Río de Janeiro',
+                description: 'Sigue los autobuses en tiempo real en Río de Janeiro con mapa interactivo, datos GPS y líneas SPPO y BRT.',
+                ogLocale: 'es_ES',
+                appleTitle: 'Buses Rio',
+                layerLabels: {
+                    osm: 'OSM',
+                    cartoLight: 'Carto Claro',
+                    cartoDark: 'Carto Oscuro',
+                    itineraries: 'Itinerarios',
+                    stops: 'Paradas',
+                    buses: 'Autobuses',
+                    brt: 'BRT',
+                    position: 'Mi posición'
+                }
+            }
+        };
+        var text = i18n[loc] || i18n['pt-BR'];
+
+        function detectLayerKey(labelText) {
+            var aliases = {
+                osm: ['OSM'],
+                cartoLight: ['Carto Claro', 'Carto Light'],
+                cartoDark: ['Carto Escuro', 'Carto Dark', 'Carto Oscuro'],
+                itineraries: ['Itinerários', 'Itinerarios', 'Routes'],
+                stops: ['Paradas', 'Stops'],
+                buses: ['Ônibus', 'Autobuses', 'Buses'],
+                brt: ['BRT'],
+                position: ['Minha posição', 'Mi posición', 'My position']
+            };
+            for (var key in aliases) {
+                if (!Object.prototype.hasOwnProperty.call(aliases, key)) {
+                    continue;
+                }
+                var values = aliases[key];
+                for (var i = 0; i < values.length; i += 1) {
+                    if (labelText === values[i]) {
+                        return key;
+                    }
+                }
+            }
+            return null;
+        }
+
+        function replaceLabelText(labelEl, nextText) {
+            var span = labelEl.querySelector('.leaflet-layer-label-text');
+            if (!span) {
+                span = labelEl.querySelector('span');
+            }
+
+            if (!span) {
+                var input = labelEl.querySelector('input');
+                if (!input) {
+                    return;
+                }
+
+                var nodes = labelEl.childNodes || [];
+                var existingText = '';
+                for (var i = nodes.length - 1; i >= 0; i -= 1) {
+                    var node = nodes[i];
+                    if (node && node.nodeType === Node.TEXT_NODE) {
+                        var textValue = String(node.textContent || '').trim();
+                        if (textValue) {
+                            existingText = textValue;
+                        }
+                        labelEl.removeChild(node);
+                    }
+                }
+
+                span = document.createElement('span');
+                span.className = 'leaflet-layer-label-text';
+                span.textContent = existingText || nextText;
+                labelEl.appendChild(span);
+            }
+
+            if (String(span.textContent || '').trim() === nextText) {
+                return;
+            }
+
+            span.classList.add('locale-fade');
+            setTimeout(function () {
+                span.textContent = nextText;
+                span.classList.remove('locale-fade');
+            }, 90);
+        }
+
+        function relabelLeafletControl(attempt) {
+            var control = document.querySelector('.leaflet-control-layers');
+            if (!control) {
+                if (attempt < 8) {
+                    setTimeout(function () {
+                        relabelLeafletControl(attempt + 1);
+                    }, 160);
+                }
+                return;
+            }
+
+            var labels = control.querySelectorAll('label');
+            var table = text.layerLabels || {};
+            for (var idx = 0; idx < labels.length; idx += 1) {
+                var labelEl = labels[idx];
+                var current = String(labelEl.textContent || '').trim();
+                var key = detectLayerKey(current);
+                if (!key) {
+                    continue;
+                }
+                var target = table[key];
+                if (!target || target === current) {
+                    continue;
+                }
+                replaceLabelText(labelEl, target);
+            }
+        }
+
+        var isLinePage = String(pathname || '').indexOf('/linhas/') === 0;
+        if (!isLinePage && document) {
+            document.title = text.title;
+            var selectors = {
+                description: 'meta[name="description"]',
+                ogTitle: 'meta[property="og:title"]',
+                ogDescription: 'meta[property="og:description"]',
+                ogLocale: 'meta[property="og:locale"]',
+                twitterTitle: 'meta[name="twitter:title"]',
+                twitterDescription: 'meta[name="twitter:description"]',
+                appleTitle: 'meta[name="apple-mobile-web-app-title"]'
+            };
+            var desc = document.querySelector(selectors.description);
+            if (desc) desc.setAttribute('content', text.description);
+            var ogTitle = document.querySelector(selectors.ogTitle);
+            if (ogTitle) ogTitle.setAttribute('content', text.title);
+            var ogDescription = document.querySelector(selectors.ogDescription);
+            if (ogDescription) ogDescription.setAttribute('content', text.description);
+            var ogLocale = document.querySelector(selectors.ogLocale);
+            if (ogLocale) ogLocale.setAttribute('content', text.ogLocale);
+            var twitterTitle = document.querySelector(selectors.twitterTitle);
+            if (twitterTitle) twitterTitle.setAttribute('content', text.title);
+            var twitterDescription = document.querySelector(selectors.twitterDescription);
+            if (twitterDescription) twitterDescription.setAttribute('content', text.description);
+            var appleTitle = document.querySelector(selectors.appleTitle);
+            if (appleTitle) appleTitle.setAttribute('content', text.appleTitle);
+        }
+
+        relabelLeafletControl(0);
+        return Date.now();
+    }
+    """,
+    Output("store-locale-dom-sync", "data"),
+    Input("store-locale", "data"),
+    Input("url-router", "pathname"),
+    prevent_initial_call=False,
 )
 
 
@@ -1203,12 +1670,44 @@ app.clientside_callback(
 
 app.clientside_callback(
     """
-    function(mode) {
+    function(mode, locale) {
         var resolved = mode === 'dark' ? 'dark' : 'light';
         var bodyTheme = resolved === 'dark' ? 'dark-riob' : 'riob';
 
+        function normalizeLocale(value) {
+            var raw = String(value || '').trim().toLowerCase();
+            if (raw === 'en') return 'en';
+            if (raw === 'es') return 'es';
+            return 'pt-BR';
+        }
+        var loc = normalizeLocale(locale);
+
+        function msg(key) {
+            var table = {
+                'pt-BR': {
+                    dark: 'Alternar para tema claro',
+                    light: 'Alternar para tema escuro'
+                },
+                en: {
+                    dark: 'Switch to light theme',
+                    light: 'Switch to dark theme'
+                },
+                es: {
+                    dark: 'Cambiar a tema claro',
+                    light: 'Cambiar a tema oscuro'
+                }
+            };
+            return table[loc][key];
+        }
+
         function selectThemeBasemap(attempt) {
-            var targetLabel = resolved === 'dark' ? 'Carto Escuro' : 'Carto Claro';
+            var labelsByLocale = {
+                'pt-BR': { dark: 'Carto Escuro', light: 'Carto Claro' },
+                en: { dark: 'Carto Dark', light: 'Carto Light' },
+                es: { dark: 'Carto Oscuro', light: 'Carto Claro' }
+            };
+            var langLabels = labelsByLocale[loc] || labelsByLocale['pt-BR'];
+            var targetLabel = resolved === 'dark' ? langLabels.dark : langLabels.light;
             var control = document.querySelector('.leaflet-control-layers');
             if (!control) {
                 if (attempt < 8) {
@@ -1261,15 +1760,16 @@ app.clientside_callback(
         }
 
         if (resolved === 'dark') {
-            return [Date.now(), '☀️', 'Alternar para tema claro'];
+            return [Date.now(), '☀️', msg('dark')];
         }
-        return [Date.now(), '🌙', 'Alternar para tema escuro'];
+        return [Date.now(), '🌙', msg('light')];
     }
     """,
     Output("store-theme-dom-sync", "data"),
     Output("btn-toggle-theme", "children"),
     Output("btn-toggle-theme", "title"),
     Input("store-theme-mode", "data"),
+    Input("store-locale", "data"),
     prevent_initial_call=False,
 )
 
@@ -1493,10 +1993,11 @@ def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, d
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
     Input("mapa", "bounds"),
+    Input("store-locale", "data"),
     prevent_initial_call=False,
 )
 def atualizar_camadas_estaticas(
-    _ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds
+    _ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds, locale
 ):
     """Reconstrói apenas camadas estáticas, reagindo ao viewport atual."""
     t0 = time.perf_counter()
@@ -1530,6 +2031,7 @@ def atualizar_camadas_estaticas(
         limit_list_for_render_fn=_limit_list_for_render,
         max_stops_per_render=MAX_STOPS_PER_RENDER,
         viewport_bounds=map_bounds,
+        locale=locale,
     )
     total_ms = (time.perf_counter() - t0) * 1000
     _perf_record("atualizar_mapa_static_ms", total_ms)
@@ -1551,9 +2053,10 @@ def atualizar_camadas_estaticas(
     Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
+    Input("store-locale", "data"),
     prevent_initial_call=False,
 )
-def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
+def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, locale):
     """Reconstrói camadas dinâmicas e legenda sem depender do viewport."""
     t0 = time.perf_counter()
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
@@ -1567,7 +2070,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
     with _status_lock:
         fetch_ok = _last_fetch_had_data
 
-    secao_icones = construir_secao_icones(_cache_or_generate_svg)
+    secao_icones = construir_secao_icones(_cache_or_generate_svg, locale=locale)
 
     if dados.empty:
         if modo == "linhas":
@@ -1580,12 +2083,14 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
                 linha_exibicao_fn=linha_exibicao,
                 secao_icones=secao_icones,
                 contagem_por_linha={},
+                locale=locale,
             )
         else:
             legenda = construir_legenda_vazia(
                 modo=modo,
                 fetch_ok=fetch_ok,
                 secao_icones=secao_icones,
+                locale=locale,
             )
         return [], [], legenda
 
@@ -1595,6 +2100,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
                 modo=modo,
                 fetch_ok=fetch_ok,
                 secao_icones=secao_icones,
+                locale=locale,
             )
             return [], [], legenda
 
@@ -1604,7 +2110,8 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
         if dados_filtrados.empty:
             legenda = construir_legenda_sem_veiculos(
                 secao_icones,
-                mensagem="Veículo não encontrado nos dados recentes",
+                mensagem=t(locale, "warning.vehicle_not_found"),
+                locale=locale,
             )
             return [], [], legenda
 
@@ -1618,6 +2125,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
             linhas_dict=linhas_dict,
             linha_exibicao_fn=linha_exibicao,
             secao_icones=secao_icones,
+            locale=locale,
         )
     else:
         if not linhas_sel:
@@ -1628,6 +2136,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
                 linha_exibicao_fn=linha_exibicao,
                 secao_icones=secao_icones,
                 contagem_por_linha={},
+                locale=locale,
             )
             return [], [], legenda
 
@@ -1656,6 +2165,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
             linha_exibicao_fn=linha_exibicao,
             secao_icones=secao_icones,
             contagem_por_linha=contagem_por_linha,
+            locale=locale,
         )
 
     sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
@@ -1681,6 +2191,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel):
         vehicle_layers_cache_max_items=_VEHICLE_LAYERS_CACHE_MAX_ITEMS,
         vehicle_layers_cache_ttl_seconds=_VEHICLE_LAYERS_CACHE_TTL_SECONDS,
         emit_cache_meta=True,
+        locale=locale,
     )
     onibus_children = camadas_dinamicas[0]
     brt_children = camadas_dinamicas[1]

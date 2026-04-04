@@ -97,7 +97,10 @@ Melhorias aplicadas para aumentar indexacao e CTR em buscadores:
 - JSON-LD (`WebApplication`) para dados estruturados.
 - Canonicalizacao de URL de linha:
   - `/?linha=LECD137` -> redireciona para `/linhas/LECD137` (301).
-  - `/linhas/<token>` responde com shell do app mantendo URL canonica.
+  - `/?linha=LECD137&lang=en` -> redireciona para `/en/linhas/LECD137` (301).
+  - `/linhas/<token>` e a URL canonica de compatibilidade.
+  - Rotas com prefixo de idioma (`/en/linhas/<token>`, `/es/linhas/<token>`) sao suportadas, mas o canonical continua em `/linhas/<token>`.
+  - Quando `lang` nao e informado, o idioma e resolvido por `Accept-Language` do navegador com fallback para `pt-BR`.
 - Endpoints dedicados para crawler:
   - `/robots.txt`
   - `/sitemap.xml`
@@ -114,6 +117,7 @@ Execute localmente (ou em CI) para validar respostas esperadas:
 curl.exe -sS https://riob.us/robots.txt
 curl.exe -sS https://riob.us/sitemap.xml
 curl.exe -I "https://riob.us/?linha=LECD137"
+curl.exe -I "https://riob.us/?linha=LECD137&lang=en"
 curl.exe -sS https://riob.us/linhas/LECD137 | findstr /I "canonical og:url"
 ```
 
@@ -122,6 +126,7 @@ Resultado esperado:
 - `/robots.txt` retorna regras de crawler e `Sitemap:`.
 - `/sitemap.xml` retorna XML valido com `<urlset>`.
 - `/?linha=LECD137` responde `301` para `/linhas/LECD137`.
+- `/?linha=LECD137&lang=en` responde `301` para `/en/linhas/LECD137`.
 - HTML de `/linhas/LECD137` contem canonical e `og:url` da propria linha.
 
 Atalho: script de smoke test SEO
@@ -146,6 +151,8 @@ URLs recomendadas para inspecao:
 
 - `https://riob.us/`
 - `https://riob.us/linhas/LECD137`
+- `https://riob.us/en/linhas/LECD137`
+- `https://riob.us/es/linhas/LECD137`
 
 Checklist:
 
@@ -234,6 +241,8 @@ Regras de busca manual:
 Voce pode abrir filtros diretamente pela URL:
 
 - Linha: `https://riob.us/linhas/LECD137`
+- Linha com idioma explicito (ingles): `https://riob.us/en/linhas/LECD137`
+- Linha com idioma explicito (espanhol): `https://riob.us/es/linhas/LECD137`
 - Multiplas linhas (query CSV): `https://riob.us/?linhas=LECD137,LECD138`
 - Multiplas linhas (query repetida): `https://riob.us/?linha=LECD137&linha=LECD138`
 
@@ -242,6 +251,13 @@ Comportamento:
 - A aba `Linhas` e ativada automaticamente.
 - O filtro correspondente e aplicado no carregamento da pagina.
 - Quando houver mais de uma linha no deep link, todas sao aplicadas no filtro de `Linhas`.
+
+Idioma nos deep links:
+
+- Politica recomendada de compartilhamento: manter `/linhas/<token>` como base de compatibilidade.
+- Para idioma explicito, usar `/en/linhas/<token>` ou `/es/linhas/<token>`.
+- Sem `lang`, o app tenta resolver idioma pelo header `Accept-Language` e, se necessario, usa fallback `pt-BR`.
+- Rotas com prefixo (`/en/linhas/<token>`, `/es/linhas/<token>`) continuam funcionando por compatibilidade, com canonical apontando para `/linhas/<token>`.
 
 Observacao:
 

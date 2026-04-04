@@ -193,6 +193,7 @@ class MapLayersLogicTests(unittest.TestCase):
         self.assertEqual(len(cache), 3)
         expected_key = (
             "linhas",
+            "pt-BR",
             ("100",),
             (("100", "#123456"),),
         )

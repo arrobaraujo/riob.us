@@ -4,6 +4,7 @@ from urllib.parse import unquote, parse_qs
 
 import dash
 from dash import Input, Output, State
+from src.i18n import normalize_locale, t
 
 
 def _normalize_multi_values(values):
@@ -155,8 +156,10 @@ def _resolve_tab_filter_state(
     linhas_sel,
     linhas_opts,
     triggers,
+    locale="pt-BR",
 ):
     """Resolve o estado de tabs e filtros sem depender do runtime do Dash."""
+    locale = normalize_locale(locale)
     url_triggered = bool(
         triggers & {"url-router"}
         or any("url-router" in trigger for trigger in triggers)
@@ -181,19 +184,16 @@ def _resolve_tab_filter_state(
     if selected and selected != valid:
         if not allowed:
             return "linhas", [], [], (
-                "Aviso: não foi possível restaurar as linhas da última "
-                "sessão porque as opções ainda não estão disponíveis."
+                t(locale, "warning.restore.pending")
             )
 
         removed_count = len(selected) - len(valid)
         if valid:
             return "linhas", valid, [], (
-                "Aviso: algumas linhas da última sessão não estão mais "
-                "disponíveis e foram removidas."
+                t(locale, "warning.restore.partial")
             )
         return "linhas", [], [], (
-            "Aviso: as linhas salvas da última sessão não estão "
-            f"disponíveis ({removed_count} removida(s))."
+            t(locale, "warning.restore.none", removed_count=removed_count)
         )
 
     return "linhas", dash.no_update, [], None
@@ -224,6 +224,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         Input("url-router", "search"),
         State("dropdown-linhas", "value"),
         State("dropdown-linhas", "options"),
+        State("store-locale", "data"),
         prevent_initial_call=False,
     )
     def sincronizar_tab_filtro(
@@ -232,6 +233,7 @@ def register_ui_callbacks(app, get_last_update_ts):
         search,
         linhas_sel,
         linhas_opts,
+        locale,
     ):
         """Mantém estado da aba ativa e limpa o outro dropdown ao trocar aba."""
         ctx = dash.callback_context
@@ -243,6 +245,7 @@ def register_ui_callbacks(app, get_last_update_ts):
             linhas_sel,
             linhas_opts,
             triggers,
+            locale=locale,
         )
 
     @app.callback(

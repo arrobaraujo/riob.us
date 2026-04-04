@@ -110,6 +110,111 @@ body[data-theme="dark-riob"] {
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 8px;
+}
+
+.dropdown-locale {
+    min-width: 96px;
+    font-size: 0.76rem;
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+.dropdown-locale .Select-control {
+    min-height: 2.3rem;
+    height: 2.3rem;
+    border-radius: 999px;
+    border: 1px solid rgba(236, 245, 255, 0.26);
+    background: rgba(255, 255, 255, 0.11);
+}
+
+.dropdown-locale .Select-value-label,
+.dropdown-locale .Select-placeholder {
+    color: #ecf5ff !important;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+.dropdown-locale .Select-option {
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+.dropdown-locale .locale-option-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dropdown-locale .locale-flag-icon {
+    width: 16px;
+    height: 11px;
+    border-radius: 2px;
+    border: 1px solid rgba(15, 29, 49, 0.24);
+    object-fit: cover;
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .locale-flag-icon {
+    border-color: rgba(220, 234, 252, 0.3);
+}
+
+.dropdown-locale .locale-flag-text {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.dropdown-locale .Select-arrow {
+    border-top-color: rgba(236, 245, 255, 0.92) !important;
+}
+
+.dropdown-locale .Select-menu-outer {
+    margin-top: 8px;
+    z-index: 12050 !important;
+    border-radius: 0.9rem;
+    border: 1px solid #d6e2f0;
+    background: #ffffff;
+    box-shadow: 0 18px 34px rgba(17, 31, 51, 0.2);
+}
+
+.dropdown-locale .Select-option {
+    background: #ffffff;
+    color: #102034;
+}
+
+.dropdown-locale .Select-option.is-focused {
+    background: #eaf2fd;
+    color: #102034;
+}
+
+.dropdown-locale .Select-option.is-selected {
+    background: #dbeaff;
+    color: #0d1b2e;
+    font-weight: 700;
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-control {
+    border-color: rgba(160, 190, 227, 0.34);
+    background: rgba(21, 42, 70, 0.62);
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-menu-outer {
+    border-color: rgba(113, 149, 197, 0.35);
+    background: rgba(15, 29, 49, 0.98);
+    box-shadow: 0 18px 34px rgba(2, 8, 20, 0.56);
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-option {
+    background: rgba(15, 29, 49, 0.98);
+    color: #dce8fa;
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-option.is-focused {
+    background: rgba(31, 58, 94, 0.92);
+    color: #e9f2ff;
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-option.is-selected {
+    background: rgba(45, 85, 132, 0.92);
+    color: #ffffff;
 }
 
 .btn-theme-toggle {
@@ -432,6 +537,16 @@ body[data-theme="dark-riob"] .update-status-chip {
     overflow: hidden;
 }
 
+.leaflet-control-layers label .leaflet-layer-label-text {
+    display: inline-block;
+    transition: opacity 0.18s ease, color 0.18s ease;
+    opacity: 1;
+}
+
+.leaflet-control-layers label .leaflet-layer-label-text.locale-fade {
+    opacity: 0.2;
+}
+
 .caixa-legenda {
     background: rgba(255, 255, 255, 0.96);
     padding: 10px 12px;
@@ -707,6 +822,16 @@ body[data-theme="dark-riob"] .dropdown .Select-option.is-focused {
         width: 2rem;
         height: 2rem;
         font-size: 0.92rem;
+    }
+
+    .dropdown-locale {
+        min-width: 88px;
+        font-size: 0.7rem;
+    }
+
+    .dropdown-locale .Select-control {
+        min-height: 2rem;
+        height: 2rem;
     }
 
     .header-titulo {

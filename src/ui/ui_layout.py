@@ -1,6 +1,7 @@
 import dash_leaflet as dl
 from dash import dcc, html
 from urllib.parse import quote
+from src.i18n import normalize_locale, t
 
 
 APP_INDEX_STRING = """
@@ -469,21 +470,113 @@ APP_INDEX_STRING = """
 """
 
 
-def build_app_layout(linhas_short, linha_exibicao, app_build_id):
+def get_localized_index_string(locale="pt-BR"):
+    locale = normalize_locale(locale)
+    html_index = APP_INDEX_STRING
+    replacements = [
+        ('<html lang="pt-BR">', f'<html lang="{locale}">'),
+        (
+            'name="description" content="Acompanhe ônibus em tempo real no Rio de Janeiro com mapa interativo, dados GPS e linhas SPPO e BRT."',
+            f'name="description" content="{t(locale, "seo.description")}"',
+        ),
+        ('property="og:locale" content="pt_BR"', f'property="og:locale" content="{t(locale, "seo.og_locale")}"'),
+        (
+            'property="og:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+            f'property="og:title" content="{t(locale, "seo.title")}"',
+        ),
+        (
+            'property="og:description" content="Mapa em tempo real com ônibus SPPO e BRT no Rio de Janeiro, filtros por linha e monitoramento operacional."',
+            f'property="og:description" content="{t(locale, "seo.description")}"',
+        ),
+        (
+            'name="twitter:title" content="RioB.us | Ônibus em tempo real no Rio de Janeiro"',
+            f'name="twitter:title" content="{t(locale, "seo.title")}"',
+        ),
+        (
+            'name="twitter:description" content="Veja posições de ônibus SPPO e BRT no mapa em tempo real."',
+            f'name="twitter:description" content="{t(locale, "seo.description")}"',
+        ),
+        (
+            'name="apple-mobile-web-app-title" content="Ônibus RJ"',
+            f'name="apple-mobile-web-app-title" content="{t(locale, "seo.apple_title")}"',
+        ),
+        (
+            '"description": "Acompanhamento operacional de ônibus em tempo real no Rio de Janeiro."',
+            f'"description": "{t(locale, "index.ld_description")}"',
+        ),
+        ('aria-label="Carregando aplicação"', f'aria-label="{t(locale, "index.loading_aria")}"'),
+        ('Consulta de ônibus - Rio de Janeiro', t(locale, "index.boot_title")),
+        ('Carregando mapa e dados...', t(locale, "index.boot_subtitle")),
+        (
+            'RioB.us - Ônibus em tempo real no Rio de Janeiro',
+            t(locale, "index.noscript.h1"),
+        ),
+        (
+            'O RioB.us permite acompanhar linhas e veículos SPPO e BRT em mapa interativo,\n                    com atualização operacional frequente.',
+            t(locale, "index.noscript.p1"),
+        ),
+        (
+            'Ative o JavaScript para carregar o mapa e os filtros da aplicação.',
+            t(locale, "index.noscript.p2"),
+        ),
+    ]
+    for old_text, new_text in replacements:
+        html_index = html_index.replace(old_text, new_text, 1)
+    return html_index
+
+
+def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR"):
+    locale = normalize_locale(locale)
     sw_build_id = quote(str(app_build_id or "dev"), safe="")
     sw_script_url = f"/assets/sw.js?v={sw_build_id}"
     app_build_text = str(app_build_id or "dev").strip()
     if len(app_build_text) > 12:
-        app_build_label = f"versão: {app_build_text[:7]}"
+        app_build_label = f"build: {app_build_text[:7]}"
     else:
-        app_build_label = f"versão: {app_build_text}"
+        app_build_label = f"build: {app_build_text}"
+
+    locale_options = [
+        {
+            "label": html.Span(
+                [
+                    html.Img(src="/assets/flags/br.svg", className="locale-flag-icon"),
+                    html.Span("PT", className="locale-flag-text"),
+                ],
+                className="locale-option-label",
+            ),
+            "value": "pt-BR",
+            "search": "PT Brazil",
+        },
+        {
+            "label": html.Span(
+                [
+                    html.Img(src="/assets/flags/gb.svg", className="locale-flag-icon"),
+                    html.Span("EN", className="locale-flag-text"),
+                ],
+                className="locale-option-label",
+            ),
+            "value": "en",
+            "search": "EN United Kingdom",
+        },
+        {
+            "label": html.Span(
+                [
+                    html.Img(src="/assets/flags/es.svg", className="locale-flag-icon"),
+                    html.Span("ES", className="locale-flag-text"),
+                ],
+                className="locale-option-label",
+            ),
+            "value": "es",
+            "search": "ES Spain",
+        },
+    ]
 
     dropdown_opts = [
         {"label": linha_exibicao(ln), "value": ln}
         for ln in linhas_short
     ]
-    line_placeholder = "Selecione uma ou mais linhas..."
-    vehicle_placeholder = "Selecione um ou mais veículos..."
+    line_placeholder = t(locale, "line.placeholder")
+    vehicle_placeholder = t(locale, "vehicle.placeholder")
 
     def _build_filter_dropdown(
         dropdown_id,
@@ -508,12 +601,14 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
     def _build_filter_tab(
         label,
         value,
+        tab_id,
         dropdown_id,
         options,
         placeholder,
         persistence_key=None,
     ):
         return dcc.Tab(
+            id=tab_id,
             label=label,
             value=value,
             className="tabs-filtro-item",
@@ -560,6 +655,8 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
             dcc.Store(id="store-hist-brt", data={}),
             dcc.Store(id="store-build-id", data=app_build_id),
             dcc.Store(id="store-build-sync", data=None),
+            dcc.Store(id="store-locale", data=locale),
+            dcc.Store(id="store-locale-dom-sync", data=None),
             dcc.Store(id="store-theme-mode", data=None),
             dcc.Store(id="store-theme-dom-sync", data=None),
 
@@ -601,7 +698,8 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                                 className="header-title-row"
                                             ),
                                             html.P(
-                                                "Consulta em tempo real dos ônibus",
+                                                t(locale, "header.subtitle"),
+                                                id="header-subtitle",
                                                 className="header-subtitulo"
                                             ),
                                         ],
@@ -612,13 +710,24 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                             ),
                             html.Div(
                                 [
+                                    dcc.Dropdown(
+                                        id="dropdown-locale",
+                                        options=locale_options,
+                                        value=locale,
+                                        clearable=False,
+                                        searchable=False,
+                                        className="dropdown-locale",
+                                        persistence="ui::locale",
+                                        persistence_type="local",
+                                        persisted_props=["value"],
+                                    ),
                                     html.Button(
                                         "🌙",
                                         id="btn-toggle-theme",
                                         n_clicks=0,
                                         className="btn-theme-toggle",
-                                        title="Alternar para tema escuro",
-                                        **{"aria-label": "Alternar tema"},
+                                        title=t(locale, "theme.to_dark"),
+                                        **{"aria-label": t(locale, "theme.aria")},
                                     ),
                                 ],
                                 className="header-actions"
@@ -641,8 +750,9 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                 className="tabs-filtro-container",
                                 children=[
                                     _build_filter_tab(
-                                        label="Linhas",
+                                        label=t(locale, "tab.lines"),
                                         value="linhas",
+                                        tab_id="tab-linhas",
                                         dropdown_id="dropdown-linhas",
                                         options=dropdown_opts,
                                         placeholder=line_placeholder,
@@ -651,8 +761,9 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                         ),
                                     ),
                                     _build_filter_tab(
-                                        label="Veículos",
+                                        label=t(locale, "tab.vehicles"),
                                         value="veiculos",
+                                        tab_id="tab-veiculos",
                                         dropdown_id="dropdown-veiculos",
                                         options=[],
                                         placeholder=vehicle_placeholder,
@@ -666,7 +777,10 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                         [
                             html.Button(
                                 [
-                                    html.Span("Atualizar"),
+                                    html.Span(
+                                        t(locale, "toolbar.refresh"),
+                                        id="span-refresh-label",
+                                    ),
                                     html.Span(
                                         "⟳",
                                         className="refresh-button-icon"
@@ -680,11 +794,13 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                     html.Span(
                                         [
                                             html.Span(
-                                                "Última atualização",
+                                                t(locale, "toolbar.last_update"),
+                                                id="update-label-full",
                                                 className="update-label-full"
                                             ),
                                             html.Span(
-                                                "Atualizado",
+                                                t(locale, "toolbar.updated"),
+                                                id="update-label-short",
                                                 className="update-label-short"
                                             ),
                                         ],
@@ -744,7 +860,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                                     ),
                                                     attribution="© CartoDB contributors"
                                                 ),
-                                                name="Carto Claro",
+                                                name=t(locale, "map.basemap.light"),
                                                 checked=True,
                                             ),
                                             dl.BaseLayer(
@@ -756,20 +872,20 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                                     ),
                                                     attribution="© CartoDB contributors"
                                                 ),
-                                                name="Carto Escuro",
+                                                name=t(locale, "map.basemap.dark"),
                                                 checked=False,
                                             ),
                                             dl.Overlay(
                                                 dl.LayerGroup(id="layer-itinerarios"),
-                                                name="Itinerários", checked=True
+                                                name=t(locale, "map.overlay.itineraries"), checked=True
                                             ),
                                             dl.Overlay(
                                                 dl.LayerGroup(id="layer-paradas"),
-                                                name="Paradas", checked=False
+                                                name=t(locale, "map.overlay.stops"), checked=False
                                             ),
                                             dl.Overlay(
                                                 dl.LayerGroup(id="layer-onibus"),
-                                                name="Ônibus", checked=True
+                                                name=t(locale, "map.overlay.buses"), checked=True
                                             ),
                                             dl.Overlay(
                                                 dl.LayerGroup(id="layer-brt"),
@@ -777,7 +893,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                                             ),
                                             dl.Overlay(
                                                 dl.LayerGroup(id="layer-localizacao"),
-                                                name="Minha posição", checked=True
+                                                name=t(locale, "map.overlay.my_position"), checked=True
                                             ),
                                         ],
                                         position="topright",
@@ -791,28 +907,28 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id):
                     html.Div(
                         html.Button(
                             "📍", id="btn-localizar", n_clicks=0,
-                            title="Ir para minha localização",
+                            title=t(locale, "map.locate"),
                             className="botao-localizacao",
-                            **{"aria-label": "Ir para minha localização"}
+                            **{"aria-label": t(locale, "map.locate")}
                         ),
                         className="botao-localizacao-container",
                     ),
                     html.Div(
                         html.Button(
-                            "Instalar app",
+                            t(locale, "pwa.install"),
                             id="btn-instalar-pwa",
                             n_clicks=0,
-                            title="Instalar aplicativo",
+                            title=t(locale, "pwa.install_title"),
                             className="botao-instalar",
                             style={"display": "none"},
-                            **{"aria-label": "Instalar aplicativo"}
+                            **{"aria-label": t(locale, "pwa.install_title")}
                         ),
                         className="botao-instalar-container",
                     ),
                     html.Div(
                         id="legenda", className="legenda-container",
                         role="complementary",
-                        **{"aria-label": "Legenda do mapa"}
+                        **{"aria-label": t(locale, "legend.aria")}
                     ),
                 ],
 
