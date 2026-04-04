@@ -1505,44 +1505,55 @@ app.clientside_callback(
         }
 
         function replaceLabelText(labelEl, nextText) {
-            var span = labelEl.querySelector('.leaflet-layer-label-text');
-            if (!span) {
-                span = labelEl.querySelector('span');
-            }
-
-            if (!span) {
-                var input = labelEl.querySelector('input');
-                if (!input) {
-                    return;
-                }
-
-                var nodes = labelEl.childNodes || [];
-                var existingText = '';
-                for (var i = nodes.length - 1; i >= 0; i -= 1) {
-                    var node = nodes[i];
-                    if (node && node.nodeType === Node.TEXT_NODE) {
-                        var textValue = String(node.textContent || '').trim();
-                        if (textValue) {
-                            existingText = textValue;
-                        }
-                        labelEl.removeChild(node);
-                    }
-                }
-
-                span = document.createElement('span');
-                span.className = 'leaflet-layer-label-text';
-                span.textContent = existingText || nextText;
-                labelEl.appendChild(span);
-            }
-
-            if (String(span.textContent || '').trim() === nextText) {
+            var input = labelEl.querySelector('input');
+            if (!input) {
                 return;
             }
 
-            span.classList.add('locale-fade');
+            var targetSpan = null;
+
+            var explicit = labelEl.querySelector('.leaflet-layer-label-text');
+            if (explicit) {
+                targetSpan = explicit;
+            }
+
+            if (!targetSpan) {
+                var sibling = input.nextSibling;
+                while (sibling && sibling.nodeType === Node.TEXT_NODE && !String(sibling.textContent || '').trim()) {
+                    sibling = sibling.nextSibling;
+                }
+
+                if (sibling && sibling.nodeType === Node.ELEMENT_NODE) {
+                    if (sibling.classList && sibling.classList.contains('leaflet-layer-label-text')) {
+                        targetSpan = sibling;
+                    } else {
+                        var textInside = String(sibling.textContent || '').trim();
+                        if (textInside) {
+                            var wrapper = document.createElement('span');
+                            wrapper.className = 'leaflet-layer-label-text';
+                            wrapper.textContent = textInside;
+                            sibling.textContent = '';
+                            sibling.appendChild(wrapper);
+                            targetSpan = wrapper;
+                        }
+                    }
+                }
+
+                if (!targetSpan) {
+                    targetSpan = document.createElement('span');
+                    targetSpan.className = 'leaflet-layer-label-text';
+                    input.insertAdjacentElement('afterend', targetSpan);
+                }
+            }
+
+            if (String(targetSpan.textContent || '').trim() === nextText) {
+                return;
+            }
+
+            targetSpan.classList.add('locale-fade');
             setTimeout(function () {
-                span.textContent = nextText;
-                span.classList.remove('locale-fade');
+                targetSpan.textContent = nextText;
+                targetSpan.classList.remove('locale-fade');
             }, 90);
         }
 
