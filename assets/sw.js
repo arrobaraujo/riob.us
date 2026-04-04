@@ -13,7 +13,6 @@ const OFFLINE_URL = '/assets/offline.html';
 const APP_SHELL_ASSETS = [
   '/',
   OFFLINE_URL,
-  '/assets/manifest.json',
   '/assets/styles.css',
   '/assets/icon-192.png',
   '/assets/icon-512.png',
@@ -63,9 +62,15 @@ self.addEventListener('fetch', event => {
 
   const isSameOrigin = url.origin === self.location.origin;
   const isAsset = url.pathname.startsWith('/assets/');
+  const isManifest = url.pathname === '/assets/manifest.json';
 
   if (event.request.mode === 'navigate') {
     event.respondWith(networkFirstPage(event.request));
+    return;
+  }
+
+  if (isSameOrigin && isManifest) {
+    event.respondWith(networkOnlyWithCacheFallback(event.request));
     return;
   }
 
@@ -133,6 +138,18 @@ async function networkFirstWithCacheFallback(request) {
     const cache = await caches.open(CACHE_NAME);
     cache.put(request, networkResponse.clone());
     return networkResponse;
+  } catch (err) {
+    const cached = await caches.match(request);
+    if (cached) {
+      return cached;
+    }
+    return new Response('', {status: 504});
+  }
+}
+
+async function networkOnlyWithCacheFallback(request) {
+  try {
+    return await fetch(request, {cache: 'no-store'});
   } catch (err) {
     const cached = await caches.match(request);
     if (cached) {
