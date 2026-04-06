@@ -34,6 +34,7 @@ pytest_results.txt
 err_map_data.txt
 err_viewport.txt
 pytest_map_data.txt
+scripts/debug/
 
 # Ide / system
 .vscode/

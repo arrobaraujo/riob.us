@@ -160,6 +160,21 @@ body[data-theme="dark-riob"] .dropdown-locale .locale-flag-icon {
 .dropdown-locale .locale-flag-text {
     font-weight: 700;
     letter-spacing: 0.02em;
+    color: #102034;
+}
+
+.dropdown-locale .Select-value-label,
+.dropdown-locale .Select-placeholder,
+.dropdown-locale .Select-input > input,
+.dropdown-locale .locale-flag-text {
+    color: #102034;
+}
+
+body[data-theme="dark-riob"] .dropdown-locale .Select-value-label,
+body[data-theme="dark-riob"] .dropdown-locale .Select-placeholder,
+body[data-theme="dark-riob"] .dropdown-locale .Select-input > input,
+body[data-theme="dark-riob"] .dropdown-locale .locale-flag-text {
+    color: #f5f9ff;
 }
 
 .dropdown-locale .Select-arrow {
