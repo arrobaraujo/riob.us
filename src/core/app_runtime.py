@@ -22,7 +22,7 @@ import sentry_sdk
 from dash import Input, Output, State, html
 from dash.exceptions import CallbackException
 from flask import Response, request, redirect
-from urllib.parse import quote, unquote, parse_qs, urlencode
+from urllib.parse import quote, unquote, parse_qs, urlencode, urlparse
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -851,6 +851,10 @@ def _canonicalize_single_line_query():
         return None
 
     token = quote(raw_line, safe="")
+    token = token.replace("\\", "")
+    if urlparse(token).netloc or urlparse(token).scheme:
+        return None
+
     locale_query = locale_from_search(request.query_string.decode("utf-8"))
     if locale_query in {"en", "es"}:
         return redirect(f"/{locale_query}/linhas/{token}", code=301)
@@ -1093,7 +1097,10 @@ def _deep_link_line(line_token):
 def _deep_link_line_with_locale(locale_token, line_token):
     if not is_locale_token(locale_token):
         token = quote(str(line_token or "").strip(), safe="")
-        return redirect(f"/linhas/{token}", code=302)
+        token = token.replace("\\", "")
+        if urlparse(token).netloc or urlparse(token).scheme:
+            token = ""
+        return redirect(f"/linhas/{token}" if token else "/", code=302)
     return _render_deep_link_line(
         line_token,
         forced_locale=normalize_locale(locale_token),
