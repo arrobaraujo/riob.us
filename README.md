@@ -1,6 +1,6 @@
 # RioB.us
 
-Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Rio de Janeiro, com atualizacao em tempo real de posicoes GPS e sobreposicao de dados estaticos GTFS.
+Aplicacao web em Dash para visualizacao operacional de onibus, com atualizacao em tempo real de posicoes GPS e sobreposicao de dados estaticos GTFS.
 
 ## Estado atual da entrega
 
@@ -21,7 +21,7 @@ Aplicacao web em Dash para visualizacao operacional de onibus no municipio do Ri
 
 Principais capacidades:
 
-- Consulta de veiculos SPPO e BRT em tempo real.
+- Consulta de veiculos em tempo real.
 - Filtro por linhas e por veiculos especificos.
 - Renderizacao de itinerarios e pontos de parada a partir de GTFS local.
 - Basemaps: OSM, Carto Claro e Carto Escuro.
@@ -259,10 +259,6 @@ Idioma nos deep links:
 - Sem `lang`, o app tenta resolver idioma pelo header `Accept-Language` e, se necessario, usa fallback `pt-BR`.
 - Rotas com prefixo (`/en/linhas/<token>`, `/es/linhas/<token>`) continuam funcionando por compatibilidade, com canonical apontando para `/linhas/<token>`.
 
-Observacao:
-
-- Deep link de veiculos foi desativado temporariamente para estabilizacao.
-
 ## Testes
 
 Fluxo recomendado para ambiente Python local (fora de Docker):
@@ -356,7 +352,5 @@ Veja o arquivo [LICENSE](LICENSE) para detalhes completos.
 
 Este projeto utiliza dados publicos do sistema de transporte do Rio de Janeiro:
 
-- Dados GPS: Fornecidos pela API publica da RIOTRANSRIO (SPPO) e BRT.
-- Dados estaticos: Formato GTFS.
-
-Os dados de transporte sao de propriedade da RiotransRio/Detro e sao usados apenas para fins de visualizacao operacional. Este projeto nao afilia-se, endossa ou e controlado pela RiotransRio ou qualquer orgao gubernamental.
+- Dados GPS: Fornecidos pela API publica do Data.Rio.
+- Dados estaticos: Formato GTFS, fornecido pelo Data.Rio.
