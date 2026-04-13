@@ -33,8 +33,11 @@ from urllib3.util.retry import Retry
 from src.ui.callbacks_ui import register_ui_callbacks
 from src.ui.callbacks_viewport import register_viewport_callbacks
 from src.config.constants import (
-    PALETA_CORES, GPS_CONFIG,
-    MARKER_LIMITS_BY_ZOOM, LIGHTWEIGHT_MARKER_THRESHOLD, MAX_STOPS_PER_RENDER,
+    PALETA_CORES,
+    GPS_CONFIG,
+    MARKER_LIMITS_BY_ZOOM,
+    LIGHTWEIGHT_MARKER_THRESHOLD,
+    MAX_STOPS_PER_RENDER,
 )
 from src.utils.geo_helpers import build_point_mask
 from src.logic.gps_data_logic import fetch_gps_data_service
@@ -62,7 +65,7 @@ from src.logic.map_data_logic import (
 )
 from src.logic.map_layers_logic import (
     construir_camadas_estaticas,
-    construir_camadas_veiculos
+    construir_camadas_veiculos,
 )
 from src.utils.perf_logging import perf_log
 from src.utils.svg_icons import (
@@ -73,7 +76,11 @@ from src.utils.svg_icons import (
     get_svg_cache_lock as _get_svg_cache_lock,
     get_svg_cache as _get_svg_cache,
 )
-from src.ui.ui_layout import APP_INDEX_STRING, build_app_layout, get_localized_index_string
+from src.ui.ui_layout import (
+    APP_INDEX_STRING,
+    build_app_layout,
+    get_localized_index_string,
+)
 from src.i18n.localization import (
     normalize_locale,
     locale_from_search,
@@ -97,7 +104,7 @@ warnings.filterwarnings("ignore")
 
 # Cache GPS server-side — evita trafegar dados pesados para o browser
 _gps_lock = threading.Lock()
-_gps_cache = pd.DataFrame()   # último fetch processado
+_gps_cache = pd.DataFrame()  # último fetch processado
 _last_update_ts = None  # timestamp da última atualização bem-sucedida
 _last_fetch_had_data = True
 _status_lock = threading.Lock()  # protege _last_update_ts
@@ -110,9 +117,7 @@ _gtfs_data_lock = threading.Lock()  # protege estruturas GTFS compartilhadas
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
     sentry_sdk.init(
-        dsn=sentry_dsn,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.5
+        dsn=sentry_dsn, integrations=[FlaskIntegration()], traces_sample_rate=0.5
     )
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -130,6 +135,7 @@ else:
 
 class RedisDict:
     """Um wrapper simples para Redis."""
+
     def __init__(self, client, prefix):
         self.client = client
         self.prefix = prefix
@@ -185,19 +191,13 @@ class RedisDict:
 
 
 # Se o Redis falhar, caímos em dicionários locais pra não travar o app.
-_map_static_cache = (
-    RedisDict(redis_client, "map_static") if redis_client else {}
-)
-_vehicle_layers_cache = (
-    RedisDict(redis_client, "map_vehicles") if redis_client else {}
-)
+_map_static_cache = RedisDict(redis_client, "map_static") if redis_client else {}
+_vehicle_layers_cache = RedisDict(redis_client, "map_vehicles") if redis_client else {}
 
 # Cache das camadas estáticas (itinerários/paradas) por conjunto de linhas
 _map_static_cache_lock = threading.Lock()
 _MAP_STATIC_CACHE_MAX_ITEMS = 64
-_MAP_STATIC_CACHE_TTL_SECONDS = int(
-    os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900")
-)
+_MAP_STATIC_CACHE_TTL_SECONDS = int(os.getenv("MAP_STATIC_CACHE_TTL_SECONDS", "900"))
 
 # Cache das camadas dinâmicas de veículos por fingerprint do snapshot.
 _vehicle_layers_cache_lock = threading.Lock()
@@ -238,7 +238,7 @@ _gtfs_load_event.clear()
 _hist_lock = threading.Lock()
 # {ordem: {"lat", "lng", "datahora", "bearing", "ts_add"}}
 _hist_sppo_bygps = {}
-_hist_brt_bygps = {}   # Mesmo para BRT
+_hist_brt_bygps = {}  # Mesmo para BRT
 _HIST_MAX_AGE_SECONDS = 300  # 5 minutos — remove histórico antigo
 rio_polygon = None
 garagens_polygon = None
@@ -271,9 +271,7 @@ def _build_retry_session():
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
     )
-    adapter = HTTPAdapter(
-        max_retries=retry, pool_connections=8, pool_maxsize=8
-    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -284,11 +282,7 @@ _http_session_sppo = _build_retry_session()
 _http_session_brt = _build_retry_session()
 
 # Versao de build para invalidacao de cache do frontend apos deploy.
-APP_BUILD_ID = (
-    os.getenv("APP_BUILD_ID")
-    or os.getenv("RENDER_GIT_COMMIT")
-    or "dev"
-)
+APP_BUILD_ID = os.getenv("APP_BUILD_ID") or os.getenv("RENDER_GIT_COMMIT") or "dev"
 
 
 def _perf_record(metric_name, value_ms):
@@ -309,17 +303,18 @@ def _perf_p95(metric_name):
 
 def _empty_shapes_gdf():
     return gpd.GeoDataFrame(
-        {"shape_id": [], "geometry": []},
-        geometry="geometry",
-        crs="EPSG:4326"
+        {"shape_id": [], "geometry": []}, geometry="geometry", crs="EPSG:4326"
     )
 
 
 def _empty_stops_gdf():
     return gpd.GeoDataFrame(
         {
-            "stop_id": [], "stop_name": [],
-            "stop_lat": [], "stop_lon": [], "geometry": []
+            "stop_id": [],
+            "stop_name": [],
+            "stop_lat": [],
+            "stop_lon": [],
+            "geometry": [],
         },
         geometry="geometry",
         crs="EPSG:4326",
@@ -359,9 +354,7 @@ def _natural_text_key(value):
         return (1, ())
     parts = re.split(r"(\d+)", txt)
     key = tuple(
-        (0, int(p)) if p.isdigit() else (1, p.casefold())
-        for p in parts
-        if p != ""
+        (0, int(p)) if p.isdigit() else (1, p.casefold()) for p in parts if p != ""
     )
     return (0, key)
 
@@ -411,10 +404,7 @@ def _carregar_dicionario_lecd():
 
         lecd_public_map = mapping
     except FileNotFoundError:
-        msg = (
-            "AVISO: gtfs/dicionario_lecd.csv não encontrado; "
-            "usando códigos originais"
-        )
+        msg = "AVISO: gtfs/dicionario_lecd.csv não encontrado; usando códigos originais"
         print(msg)
         lecd_public_map = {}
     except Exception as e:
@@ -428,19 +418,15 @@ def _carregar_dicionario_lecd():
 _carregar_dicionario_lecd()
 try:
     with zipfile.ZipFile("gtfs/gtfs.zip") as _z:
-        _names = [
-            n for n in _z.namelist()
-            if n.endswith("routes.txt")
-        ]
+        _names = [n for n in _z.namelist() if n.endswith("routes.txt")]
         if _names:
             with _z.open(_names[0]) as _f:
                 _routes_df = pd.read_csv(_f, dtype=str)
             _cols = {"route_short_name", "route_long_name"}
             if _cols.issubset(_routes_df.columns):
-                linhas_dict = dict(zip(
-                    _routes_df["route_short_name"],
-                    _routes_df["route_long_name"]
-                ))
+                linhas_dict = dict(
+                    zip(_routes_df["route_short_name"], _routes_df["route_long_name"])
+                )
                 linhas_short = sorted(
                     _routes_df["route_short_name"].dropna().unique().tolist(),
                     key=linha_sort_key,
@@ -469,9 +455,7 @@ def _carregar_dados_estaticos():
     except Exception as exc:
         ms = (time.perf_counter() - t0) * 1000
         print(
-            f"ERRO _carregar_dados_estaticos "
-            f"({type(exc).__name__}): {exc} "
-            f"ms={ms:.1f}"
+            f"ERRO _carregar_dados_estaticos ({type(exc).__name__}): {exc} ms={ms:.1f}"
         )
         _gtfs_load_event.set()
         return
@@ -490,9 +474,7 @@ def _carregar_dados_estaticos():
         line_to_bounds = loaded["line_to_bounds"]
         line_to_fares = loaded.get("line_to_fares", {}) or {}
 
-    n_shapes = sum(
-        len(v) for v in loaded["line_to_shape_coords"].values()
-    )
+    n_shapes = sum(len(v) for v in loaded["line_to_shape_coords"].values())
     print(
         f"GTFS background: {len(loaded['line_to_shape_coords'])} "
         f"linhas com shapes ({n_shapes} segmentos)"
@@ -522,37 +504,28 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
     with _gtfs_data_lock:
         # Expira entradas antigas de _linhas_sem_shapes
         expired = [
-            ln for ln, ts in _linhas_sem_shapes.items()
+            ln
+            for ln, ts in _linhas_sem_shapes.items()
             if (now - ts) > _LINHAS_SEM_SHAPES_TTL
         ]
         for ln in expired:
             _linhas_sem_shapes.pop(ln, None)
 
         missing = [
-            ln for ln in linhas_sel
-            if (
-                ln not in line_to_shape_coords
-                and ln not in _linhas_sem_shapes
-            )
+            ln
+            for ln in linhas_sel
+            if (ln not in line_to_shape_coords and ln not in _linhas_sem_shapes)
         ]
     if not missing:
         return
 
     t0 = time.perf_counter()
-    print(
-        f"GTFS on-demand: tentando carregar "
-        f"{len(missing)} linhas: {missing[:5]}"
-    )
+    print(f"GTFS on-demand: tentando carregar {len(missing)} linhas: {missing[:5]}")
     try:
-        loaded = recarregar_gtfs_estatico_sob_demanda_service(
-            linhas_sel
-        )
+        loaded = recarregar_gtfs_estatico_sob_demanda_service(linhas_sel)
     except Exception as exc:
         ms = (time.perf_counter() - t0) * 1000
-        print(
-            f"ERRO gtfs_reload ({type(exc).__name__}): "
-            f"{exc} ms={ms:.1f}"
-        )
+        print(f"ERRO gtfs_reload ({type(exc).__name__}): {exc} ms={ms:.1f}")
         perf_log(
             f"OBS gtfs_on_demand status=erro "
             f"lines_req={len(linhas_sel)} lines_missing={len(missing)} "
@@ -561,10 +534,7 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
         return
     if not loaded:
         ms = (time.perf_counter() - t0) * 1000
-        print(
-            f"GTFS on-demand: retorno vazio "
-            f"ms={ms:.1f} lines={linhas_sel[:5]}"
-        )
+        print(f"GTFS on-demand: retorno vazio ms={ms:.1f} lines={linhas_sel[:5]}")
         perf_log(
             f"OBS gtfs_on_demand status=vazio "
             f"lines_req={len(linhas_sel)} lines_missing={len(missing)} "
@@ -600,7 +570,8 @@ def _recarregar_gtfs_estatico_sob_demanda(linhas_sel):
 
         missing_with_shape = [ln for ln in missing if ln in line_to_shape_coords]
         missing_with_stops_only = [
-            ln for ln in missing
+            ln
+            for ln in missing
             if ln in line_to_stops_points and ln not in line_to_shape_coords
         ]
         still_missing_shape = [ln for ln in missing if ln not in line_to_shape_coords]
@@ -632,6 +603,7 @@ threading.Thread(target=_carregar_dados_estaticos, daemon=True).start()
 # ==============================================================================
 # Funções auxiliares
 # ==============================================================================
+
 
 def get_linha_cores(linhas_sel):
     """Mapeia cada linha selecionada para uma cor distinta.
@@ -695,10 +667,7 @@ def _build_geojson_cluster_layer(df, layer_id):
                 "type": "Feature",
                 "geometry": {
                     "type": "Point",
-                    "coordinates": [
-                        float(row_dict["lng"]),
-                        float(row_dict["lat"])
-                    ],
+                    "coordinates": [float(row_dict["lng"]), float(row_dict["lat"])],
                 },
                 "properties": {"tooltip": tooltip},
             }
@@ -709,7 +678,7 @@ def _build_geojson_cluster_layer(df, layer_id):
             id=layer_id,
             data={"type": "FeatureCollection", "features": features},
             cluster=True,
-            zoomToBounds=False
+            zoomToBounds=False,
         )
     ]
 
@@ -772,9 +741,7 @@ def fetch_gps_data(linhas_sel=None, veiculos_sel=None, modo="linhas"):
 # Layout do App
 # ==============================================================================
 
-_PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
-)
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _ASSETS_DIR = os.path.join(_PROJECT_ROOT, "assets")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://riob.us").rstrip("/")
 
@@ -783,10 +750,7 @@ app = dash.Dash(
     title="🚍 RioB.us 🚍",
     assets_folder=_ASSETS_DIR,
     assets_url_path="/assets",
-    meta_tags=[{
-        "name": "viewport",
-        "content": "width=device-width, initial-scale=1"
-    }],
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server  # expõe o servidor Flask para deploy (gunicorn)
 
@@ -890,6 +854,8 @@ def _canonicalize_single_line_query():
     locale_query = locale_from_search(request.query_string.decode("utf-8"))
     if locale_query in {"en", "es"}:
         return redirect(f"/{locale_query}/linhas/{token}", code=301)
+    if locale_query == "pt-BR":
+        return redirect(f"/linhas/{token}", code=301)
     return redirect(f"/linhas/{token}", code=301)
 
 
@@ -897,7 +863,13 @@ def _canonicalize_single_line_query():
 def _set_localized_index_string():
     """Aplica index_string localizado para a requisição atual."""
     path = request.path or ""
-    if path.startswith("/_dash") or path in ("/assets", "/robots.txt", "/sitemap.xml", "/health", "/status"):
+    if path.startswith("/_dash") or path in (
+        "/assets",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/health",
+        "/status",
+    ):
         return None
     app.index_string = get_localized_index_string(_resolve_request_locale())
     return None
@@ -997,6 +969,7 @@ def _build_health_status():
 
     try:
         import psutil
+
         proc = psutil.Process()
         status["memory_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
     except Exception:
@@ -1011,9 +984,17 @@ def _status_page():
     status = _build_health_status()
     locale = _resolve_request_locale()
 
-    gtfs_badge = "OK" if status.get("gtfs_loaded") else t(locale, "status.value.pending")
-    fetch_badge = "OK" if status.get("last_fetch_had_data") else t(locale, "status.value.no_data")
-    mem_text = f"{status.get('memory_mb')} MB" if "memory_mb" in status else t(locale, "status.value.na")
+    gtfs_badge = (
+        "OK" if status.get("gtfs_loaded") else t(locale, "status.value.pending")
+    )
+    fetch_badge = (
+        "OK" if status.get("last_fetch_had_data") else t(locale, "status.value.no_data")
+    )
+    mem_text = (
+        f"{status.get('memory_mb')} MB"
+        if "memory_mb" in status
+        else t(locale, "status.value.na")
+    )
     cache = status.get("cache", {})
 
     html_body = f"""
@@ -1074,20 +1055,20 @@ def _status_page():
         <div class="card">
             <div class="head">
                 <h1 style="margin:0; font-size: 20px;">{t(locale, "status.header")}</h1>
-                <span class="badge">{status.get('status', 'unknown').upper()}</span>
+                <span class="badge">{status.get("status", "unknown").upper()}</span>
             </div>
             <div class="grid">
                 <div class="item"><div class="k">{t(locale, "status.gtfs_loaded")}</div><div class="v">{gtfs_badge}</div></div>
-                <div class="item"><div class="k">{t(locale, "status.last_gps_update")}</div><div class="v">{status.get('last_gps_update') or t(locale, "status.value.na")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.last_gps_update")}</div><div class="v">{status.get("last_gps_update") or t(locale, "status.value.na")}</div></div>
                 <div class="item"><div class="k">{t(locale, "status.last_fetch")}</div><div class="v">{fetch_badge}</div></div>
                 <div class="item"><div class="k">{t(locale, "status.process_memory")}</div><div class="v">{mem_text}</div></div>
-                <div class="item"><div class="k">{t(locale, "status.cache_static")}</div><div class="v">{cache.get('static_layers_items', 0)} {t(locale, "status.value.items")}</div></div>
-                <div class="item"><div class="k">{t(locale, "status.cache_vehicles")}</div><div class="v">{cache.get('vehicle_layers_items', 0)} {t(locale, "status.value.items")}</div></div>
-                <div class="item"><div class="k">{t(locale, "status.cache_svg")}</div><div class="v">{cache.get('svg_items', 0)} {t(locale, "status.value.items")}</div></div>
-                <div class="item"><div class="k">{t(locale, "status.cache_hit_rate")}</div><div class="v">{cache.get('vehicle_layers_hit_rate', 0)}%</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_static")}</div><div class="v">{cache.get("static_layers_items", 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_vehicles")}</div><div class="v">{cache.get("vehicle_layers_items", 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_svg")}</div><div class="v">{cache.get("svg_items", 0)} {t(locale, "status.value.items")}</div></div>
+                <div class="item"><div class="k">{t(locale, "status.cache_hit_rate")}</div><div class="v">{cache.get("vehicle_layers_hit_rate", 0)}%</div></div>
             </div>
             <div class="foot">
-                Build: {status.get('build_id') or t(locale, "status.value.na")} | {t(locale, "status.foot_json")}: <a href="/health">/health</a>
+                Build: {status.get("build_id") or t(locale, "status.value.na")} | {t(locale, "status.foot_json")}: <a href="/health">/health</a>
             </div>
         </div>
     </div>
@@ -1101,6 +1082,7 @@ def _status_page():
 def _deep_link_vehicle(vehicle_token):
     """Deep link de veículos desativado: redireciona para home."""
     return redirect("/", code=302)
+
 
 @server.route("/linhas/<line_token>")
 def _deep_link_line(line_token):
@@ -1353,7 +1335,11 @@ def sincronizar_lang_na_url(locale, pathname, current_search):
     token = None
     if len(raw_parts) >= 2 and raw_parts[0] == "linhas":
         token = raw_parts[1]
-    elif len(raw_parts) >= 3 and raw_parts[1] == "linhas" and is_locale_token(raw_parts[0]):
+    elif (
+        len(raw_parts) >= 3
+        and raw_parts[1] == "linhas"
+        and is_locale_token(raw_parts[0])
+    ):
         token = raw_parts[2]
 
     next_path = path_text
@@ -1375,7 +1361,9 @@ def sincronizar_lang_na_url(locale, pathname, current_search):
     next_search = f"?{encoded}" if encoded else ""
 
     out_path = dash.no_update if next_path == path_text else next_path
-    out_search = dash.no_update if next_search == (current_search or "") else next_search
+    out_search = (
+        dash.no_update if next_search == (current_search or "") else next_search
+    )
     return out_path, out_search
 
 
@@ -1866,7 +1854,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
 
     if len(dados) == 0:
         # Sem linhas em modo linhas -> vazio esperado, não é erro de API
-        no_filter = (modo == "linhas" and not linhas_sel)
+        no_filter = modo == "linhas" and not linhas_sel
         if not no_filter:
             with _status_lock:
                 _last_fetch_had_data = False
@@ -1876,10 +1864,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         total_ms = (time.perf_counter() - t0) * 1000
         fetch_ms = (t_fetch - t0) * 1000
         _perf_record("atualizar_gps_total_ms", total_ms)
-        perf_log(
-            f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} "
-            "n=0"
-        )
+        perf_log(f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} n=0")
         error_msg = (
             None if no_filter else "⚠️ Sem dados para alguma das linhas selecionadas"
         )
@@ -1956,9 +1941,8 @@ def _filtrar_df_por_viewport(df, bounds):
         return df
     lat = pd.to_numeric(df["lat"], errors="coerce")
     lng = pd.to_numeric(df["lng"], errors="coerce")
-    mask = (
-        lat.between(box["min_lat"], box["max_lat"])
-        & lng.between(box["min_lon"], box["max_lon"])
+    mask = lat.between(box["min_lat"], box["max_lat"]) & lng.between(
+        box["min_lon"], box["max_lon"]
     )
     return df[mask]
 
@@ -1988,9 +1972,7 @@ def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, d
         dados_filtrados = filtrar_por_veiculos(dados, veiculos_sel).copy()
         if dados_filtrados.empty:
             return modo, [], {}
-        linhas_render = linhas_ativas_por_veiculos(
-            dados_filtrados, linhas_short
-        )
+        linhas_render = linhas_ativas_por_veiculos(dados_filtrados, linhas_short)
     else:
         if not linhas_sel:
             return modo, [], {}
@@ -2031,9 +2013,7 @@ def atualizar_camadas_estaticas(
         modo=modo,
         linhas_render=linhas_render,
         cores=cores,
-        recarregar_gtfs_estatico_sob_demanda=(
-            _recarregar_gtfs_estatico_sob_demanda
-        ),
+        recarregar_gtfs_estatico_sob_demanda=(_recarregar_gtfs_estatico_sob_demanda),
         gtfs_data_lock=_gtfs_data_lock,
         line_to_shape_coords=line_to_shape_coords,
         line_to_stops_points=line_to_stops_points,
@@ -2130,9 +2110,7 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, local
             )
             return [], [], legenda
 
-        linhas_render = linhas_ativas_por_veiculos(
-            dados_filtrados, linhas_short
-        )
+        linhas_render = linhas_ativas_por_veiculos(dados_filtrados, linhas_short)
         cores = get_linha_cores(linhas_render)
         legenda = construir_legenda_veiculos(
             dados_filtrados=dados_filtrados,
@@ -2157,19 +2135,14 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, local
 
         linhas_render = [str(ln) for ln in linhas_sel]
         cores = get_linha_cores(linhas_render)
-        dados_filtrados = dados[
-            dados["linha"].astype(str).isin(selected_lines)
-        ].copy()
+        dados_filtrados = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
         contagem_por_linha = {}
         if "linha" in dados.columns and "ordem" in dados.columns:
-            dados_linhas = dados[
-                dados["linha"].astype(str).isin(selected_lines)
-            ].copy()
+            dados_linhas = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
             if not dados_linhas.empty:
-                contagem_series = (
-                    dados_linhas.groupby(dados_linhas["linha"].astype(str))["ordem"]
-                    .nunique(dropna=True)
-                )
+                contagem_series = dados_linhas.groupby(
+                    dados_linhas["linha"].astype(str)
+                )["ordem"].nunique(dropna=True)
                 contagem_por_linha = {
                     str(k): int(v) for k, v in contagem_series.items()
                 }
@@ -2250,9 +2223,7 @@ def _get_gps_snapshot_for_viewport():
 def _calcular_viewport_linhas(linhas_ativas):
     return viewport_logic_calcular_viewport_linhas(
         linhas_sel=linhas_ativas,
-        recarregar_gtfs_estatico_sob_demanda=(
-            _recarregar_gtfs_estatico_sob_demanda
-        ),
+        recarregar_gtfs_estatico_sob_demanda=(_recarregar_gtfs_estatico_sob_demanda),
         gtfs_load_event=_gtfs_load_event,
         gtfs_data_lock=_gtfs_data_lock,
         line_to_bounds=line_to_bounds,
@@ -2273,9 +2244,14 @@ def _calcular_viewport_veiculos(veiculos_ativos):
 
 
 def _resolver_comando_viewport(
-    data_localizacao, gps_ts, tab_filtro, linhas_sel,
-    linhas_sel_debounce, linhas_recenter_token,
-    veiculos_sel, veiculos_recenter_token
+    data_localizacao,
+    gps_ts,
+    tab_filtro,
+    linhas_sel,
+    linhas_sel_debounce,
+    linhas_recenter_token,
+    veiculos_sel,
+    veiculos_recenter_token,
 ):
     return viewport_logic_resolver_comando_viewport(
         data_localizacao=data_localizacao,
@@ -2309,6 +2285,7 @@ register_viewport_callbacks(
 # ==============================================================================
 # Ponto de entrada
 # ==============================================================================
+
 
 def main():
     if os.getenv("IN_DOCKER") != "1":
