@@ -5,9 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "riob-us"
 version = "1.0.0"
-description = "Dash app for Rio de Janeiro bus operations"
+description = "Real-time buses"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "GPL-3.0-only" }
+authors = [
+    { name = "Erick", email = "araujo.erick1@gmail.com" }
+]
 
 [project.optional-dependencies]
 test = [

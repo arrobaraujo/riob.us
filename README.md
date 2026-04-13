@@ -339,6 +339,24 @@ Para publicar commits locais ja criados:
 git push origin main
 ```
 
-## Licenca e uso
+## Licenca
 
-Se o projeto for publicado externamente, incluir nesta secao a licenca de distribuicao e as restricoes de uso das fontes de dados utilizadas.
+Este projeto e licenciado sob os termos da **GNU General Public License v3 (GPL v3)**.
+
+Veja o arquivo [LICENSE](LICENSE) para detalhes completos.
+
+### Termos importantes
+
+- Este software e fornecido "como esta", sem garantias de qualquer tipo.
+- Você pode copiar, distribuir e modificar este software livremente.
+- Works derivados devem ser licenciados sob GPL v3.
+- O codigo fonte esta disponivel neste repositorio.
+
+## Restricoes de uso dos dados
+
+Este projeto utiliza dados publicos do sistema de transporte do Rio de Janeiro:
+
+- Dados GPS: Fornecidos pela API publica da RIOTRANSRIO (SPPO) e BRT.
+- Dados estaticos: Formato GTFS.
+
+Os dados de transporte sao de propriedade da RiotransRio/Detro e sao usados apenas para fins de visualizacao operacional. Este projeto nao afilia-se, endossa ou e controlado pela RiotransRio ou qualquer orgao gubernamental.
