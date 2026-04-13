@@ -882,7 +882,11 @@ def _canonicalize_single_line_query():
     if len(line_values) != 1:
         return None
 
-    token = quote(line_values[0], safe="")
+    raw_line = line_values[0]
+    if not re.fullmatch(r"[A-Za-z0-9_.\- ]{1,64}", raw_line):
+        return None
+
+    token = quote(raw_line, safe="")
     locale_query = locale_from_search(request.query_string.decode("utf-8"))
     if locale_query in {"en", "es"}:
         return redirect(f"/{locale_query}/linhas/{token}", code=301)
