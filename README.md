@@ -382,13 +382,6 @@ Veja o arquivo [LICENSE](LICENSE) para detalhes completos.
 - Works derivados devem ser licenciados sob GPL v3.
 - O codigo fonte esta disponivel neste repositorio.
 
-## Restricoes de uso dos dados
-
-Este projeto utiliza dados publicos do sistema de transporte do Rio de Janeiro:
-
-- Dados GPS: Fornecidos pela API publica do Data.Rio.
-- Dados estaticos: Formato GTFS, fornecido pelo Data.Rio.
-
 ## Creditos e dependencias externas
 
 | Servico / Projeto | Uso | Licenca / Tipo |

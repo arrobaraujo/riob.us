@@ -85,6 +85,7 @@ class ViewportLogicTests(unittest.TestCase):
                 linhas_recenter_token=None,
                 veiculos_sel=[],
                 veiculos_recenter_token=None,
+                trajeto_bounds=None,
                 gerar_svg_usuario=lambda: "data:image/svg+xml;base64,abc",
                 calcular_viewport_linhas_fn=lambda _linhas: (None, None, None),
                 calcular_viewport_veiculos_fn=(
@@ -120,6 +121,7 @@ class ViewportLogicTests(unittest.TestCase):
                 linhas_recenter_token=None,
                 veiculos_sel=["A1"],
                 veiculos_recenter_token=123,
+                trajeto_bounds=None,
                 gerar_svg_usuario=lambda: "svg",
                 calcular_viewport_linhas_fn=lambda _linhas: (None, None, None),
                 calcular_viewport_veiculos_fn=(
