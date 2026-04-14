@@ -3,8 +3,12 @@ from datetime import datetime
 from urllib.parse import unquote, parse_qs
 
 import dash
-from dash import Input, Output, State
+import json
+import pytz
+import uuid
+from dash import Input, Output, State, html as d_html, ALL
 from src.i18n import normalize_locale, t
+from src.logic.transitous_logic import fetch_routing, parse_transitous_response, itineraries_to_geojson, fetch_geocoding, RIO_TZ
 
 
 def _normalize_multi_values(values):
@@ -199,7 +203,7 @@ def _resolve_tab_filter_state(
     return "linhas", dash.no_update, [], None
 
 
-def register_ui_callbacks(app, get_last_update_ts):
+def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
     @app.callback(
         Output("tabs-filtro", "value"),
         Input("url-router", "pathname"),
@@ -450,3 +454,308 @@ def register_ui_callbacks(app, get_last_update_ts):
     )
 
 
+    @app.callback(
+        Output("store-trajeto-itinerary", "data"),
+        Output("store-trajeto-geojson", "data"),
+        Output("store-trajeto-bounds", "data"),
+        Output("routing-results", "children"),
+        Output("store-trajeto-selected-index", "data"),
+        Input("btn-buscar-trajeto", "n_clicks"),
+        Input({"type": "itinerary-card", "index": ALL}, "n_clicks"),
+        State("input-origem", "value"),
+        State("input-destino", "value"),
+        State("store-locale", "data"),
+        State("store-trajeto-itinerary", "data"),
+        State("store-trajeto-selected-index", "data"),
+        prevent_initial_call=True,
+    )
+    def gerenciar_trajeto(n_search, n_clicks_list, origem, destino, locale, itineraries_cached, selected_idx):
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+        trigger_id = ctx.triggered[0]["prop_id"]
+        new_selected_idx = selected_idx
+        itineraries = itineraries_cached
+
+        # CASO 1: Clique em um Card de Itinerário
+        if "itinerary-card" in trigger_id:
+            try:
+                new_selected_idx = json.loads(trigger_id.split(".")[0])["index"]
+            except:
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        # CASO 2: Clique no botão de Busca
+        elif "btn-buscar-trajeto" in trigger_id:
+            if not origem or not destino:
+                return None, None, None, [], -1
+
+            def get_best_coords(val):
+                try:
+                    parts = str(val).split(",")
+                    if len(parts) == 2:
+                        return {"lat": float(parts[0]), "lng": float(parts[1])}
+                except:
+                    pass
+                return fetch_geocoding(val)
+
+            start_coords = get_best_coords(origem)
+            end_coords = get_best_coords(destino)
+
+            if not start_coords or not end_coords:
+                msg = t(locale, "routing.error")
+                return None, None, None, [d_html.P(msg, className="p-3 text-error")], -1
+
+            raw_data = fetch_routing(start_coords, end_coords)
+            if not raw_data:
+                return None, None, None, [d_html.P(t(locale, "routing.error"), className="p-3 text-warning")], -1
+
+            itineraries = parse_transitous_response(raw_data)
+            if not itineraries:
+                return None, None, None, [d_html.P(t(locale, "routing.no_results"), className="p-3 text-info")], -1
+            
+            new_selected_idx = 0
+
+        # Se não temos itinerários, não fazemos nada
+        if not itineraries:
+             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+        # Geração da lista com as classes corretas baseadas no novo índice
+        results_list = []
+        for i, it in enumerate(itineraries):
+            try:
+                def format_time(ts):
+                    dt = datetime.fromtimestamp(ts, pytz.UTC).astimezone(RIO_TZ)
+                    return dt.strftime("%H:%M")
+
+                dep_time = format_time(it["departure"])
+                arr_time = format_time(it["arrival"])
+                duration = it["duration"] // 60
+                
+                is_active = (i == new_selected_idx)
+                card_class = f"itinerary-card {'itinerary-card--active' if is_active else ''}"
+
+                compact_steps = []
+                detailed_timeline = []
+                
+                line_to_color = get_line_to_color() if get_line_to_color else {}
+                
+                for idx_leg, leg in enumerate(it.get("legs", [])):
+                    leg_type = leg["type"].upper()
+                    is_walk = leg_type == "WALK"
+                    icon = "🚶" if is_walk else "🚌"
+                    line_label = leg.get('line') or ""
+                    
+                    if is_walk:
+                        leg_color = "#3b82f6"
+                    else:
+                        leg_color = line_to_color.get(line_label, "#ef4444")
+                        
+                    badge_style = {
+                        "backgroundColor": leg_color,
+                        "color": "white",
+                        "borderColor": leg_color
+                    }
+                    
+                    def translate_place(name):
+                        if name == "__ORIGIN__": return t(locale, "routing.from")
+                        if name == "__DESTINATION__": return t(locale, "routing.to")
+                        return name
+
+                    # Passo compacto para o resumo
+                    compact_steps.append(d_html.Div([
+                        d_html.Span(icon, className="mr-1"),
+                        d_html.Span(line_label, className="font-black text-[10px]") if line_label else None
+                    ], className=f"badge badge-sm badge-outline flex items-center mr-1 mb-1 p-1", style=badge_style))
+
+                    # Item da Timeline detalhada
+                    leg_title = t(locale, "routing.walk") if is_walk else f"{t(locale, 'routing.line')} {leg.get('line')}"
+                    stop_prefix = t(locale, "routing.stop_prefix") if not is_walk else "" # Apenas prefixo para paradas, não caminhada simples
+                    
+                    detailed_timeline.append(d_html.Div([
+                        d_html.Div([
+                            d_html.Div(className="timeline-line"),
+                            d_html.Div(icon, className=f"timeline-icon-circle text-white", style=badge_style)
+                        ], className="timeline-icon-col"),
+                        d_html.Div([
+                            d_html.Div(leg_title, className="timeline-title"),
+                            d_html.Div([
+                                d_html.Span(stop_prefix, className="font-bold mr-1"),
+                                d_html.Span(translate_place(leg['from']))
+                            ], className="timeline-stop"),
+                            # Paradas intermediárias
+                            *(
+                                [
+                                    d_html.Ul([
+                                        d_html.Li(
+                                            stop["name"],
+                                            className="timeline-intermediate-stop"
+                                        )
+                                        for stop in leg.get("stops", []) if stop.get("name")
+                                    ], className="timeline-stops-list")
+                                ] if not is_walk and leg.get("stops") else []
+                            ),
+                            d_html.Div(f"{leg.get('duration', 0)//60} min", className="timeline-duration"),
+                            d_html.Div([
+                                d_html.Span(stop_prefix, className="font-bold mr-1"),
+                                d_html.Span(translate_place(leg['to']))
+                            ], className="timeline-stop"),
+                        ], className="timeline-content")
+                    ], className="timeline-step"))
+
+                results_list.append(d_html.Div(
+                    [
+                        d_html.Div([
+                            d_html.Div([
+                                d_html.Span(f"{dep_time}", className="text-xl font-black"),
+                                d_html.Span("→", className="mx-2 opacity-20"),
+                                d_html.Span(f"{arr_time}", className="text-xl font-black"),
+                            ], className="flex items-center"),
+                            d_html.Div([
+                                d_html.Span(f"{duration} min", className="badge badge-neutral font-bold"),
+                            ]),
+                        ], className="flex justify-between items-start mb-4"),
+                        
+                        d_html.Div(compact_steps, className="flex flex-wrap mb-2"),
+                        
+                        d_html.Div(
+                            detailed_timeline, 
+                            className="routing-timeline",
+                            style={"display": "flex" if is_active else "none"}
+                        ),
+                        
+                        d_html.Div([
+                            d_html.Span(f"{it['transfers']} " + t(locale, "routing.transfers"), className="text-[10px] font-bold opacity-30 uppercase tracking-widest")
+                        ], className="mt-3 text-right")
+                    ],
+                    id={"type": "itinerary-card", "index": i},
+                    n_clicks=0,
+                    className=card_class,
+                ))
+            except Exception as e:
+                print(f"Erro ao parsear itinerário {i}: {e}")
+
+        # Quando seleciona o itinerário
+        selected_itinerary = itineraries[new_selected_idx]
+        line_to_color = get_line_to_color() if get_line_to_color else {}
+        res = itineraries_to_geojson(selected_itinerary, line_to_color)
+        
+        return itineraries, res["geojson"], res["bounds"], results_list, new_selected_idx
+
+
+    @app.callback(
+        Output("layer-trajeto", "children"),
+        Input("store-trajeto-geojson", "data"),
+        State("store-locale", "data"),
+    )
+    def atualizar_mapa_trajeto(geojson_data, locale):
+        import dash_leaflet as dl
+        if not geojson_data or not geojson_data.get("features"):
+            return []
+        
+        children = []
+        features = geojson_data["features"]
+        
+        for feature in features:
+            props = feature["properties"]
+            geom_type = feature["geometry"]["type"]
+            coords = feature["geometry"]["coordinates"]
+            
+            if geom_type == "Point":
+                # Render stop
+                leaflet_coords = [coords[1], coords[0]]
+                children.append(dl.CircleMarker(
+                    id=f"stop-{uuid.uuid4().hex}",
+                    center=leaflet_coords,
+                    radius=5,
+                    color="white",
+                    fillColor=props["color"],
+                    fillOpacity=1,
+                    weight=1,
+                    children=[dl.Tooltip(props.get("name", ""))]
+                ))
+            else:
+                # GeoJSON é [lon, lat], Leaflet quer [lat, lon]
+                leaflet_coords = [[c[1], c[0]] for c in coords]
+                    
+                # 1. Linha do Trajeto (Trecho)
+                children.append(dl.Polyline(
+                    id=f"poly-{uuid.uuid4().hex}",
+                    positions=leaflet_coords,
+                    color=props["color"],
+                    dashArray=props["dashArray"],
+                    weight=props["weight"],
+                    opacity=props["opacity"]
+                ))
+                
+                # 2. Marcador de conexão
+                children.append(dl.CircleMarker(
+                    id=f"conn-{uuid.uuid4().hex}",
+                    center=leaflet_coords[0],
+                    radius=4,
+                    color="white",
+                    fillColor=props["color"],
+                    fillOpacity=1,
+                    weight=2
+                ))
+            
+        # 3. Marcadores de Pontual (Origem e Destino final)
+        if features:
+            start_pt = features[0]["geometry"]["coordinates"][0]
+            end_pt = features[-1]["geometry"]["coordinates"][-1]
+            
+            # Marcador de Origem
+            children.append(dl.CircleMarker(
+                id=f"origin-{uuid.uuid4().hex}",
+                center=[start_pt[1], start_pt[0]],
+                radius=6,
+                color="#22c55e",
+                fillColor="white",
+                fillOpacity=1,
+                weight=3,
+                children=dl.Tooltip(t(locale, "routing.from"))
+            ))
+            
+            # Marcador de Destino (Ícone de Final)
+            children.append(dl.Marker(
+                id=f"dest-{uuid.uuid4().hex}",
+                position=[end_pt[1], end_pt[0]],
+                children=dl.Tooltip(t(locale, "routing.to"))
+            ))
+            
+        return children
+
+    @app.callback(
+        Output("input-origem", "value"),
+        Output("input-destino", "value"),
+        Input("mapa", "click_lat_lng"),
+        State("tabs-filtro", "value"),
+        State("input-origem", "value"),
+        State("input-destino", "value"),
+        prevent_initial_call=True
+    )
+    def capturar_clique_mapa(click_data, tab_ativa, origem, destino):
+        if tab_ativa != "trajeto" or not click_data:
+            return dash.no_update, dash.no_update
+        
+        coord_str = f"{click_data[0]:.6f},{click_data[1]:.6f}"
+        
+        if not origem:
+            return coord_str, dash.no_update
+        if not destino:
+            return dash.no_update, coord_str
+        
+        return coord_str, None
+
+    @app.callback(
+        Output("legenda", "style"),
+        Output("btn-localizar", "style"),
+        Output("toolbar-card", "style"),
+        Input("tabs-filtro", "value"),
+        prevent_initial_call=False
+    )
+    def ocultar_elementos_mapa_na_aba_trajeto(aba_ativa):
+        """Esconde legenda e toolbar quando na aba Trajeto."""
+        if aba_ativa == "trajeto":
+            return {"display": "none"}, {}, {"display": "none"}
+        return {}, {}, {}

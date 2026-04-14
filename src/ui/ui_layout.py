@@ -209,11 +209,6 @@ APP_INDEX_STRING = """
                 }
             }
 
-            ._dash-loading,
-            ._dash-loading-callback {
-                display: none !important;
-            }
-
             .error-banner {
                 border: none;
                 border-bottom: 1px solid color-mix(in oklab, oklch(79% 0.16 78) 35%, white);
@@ -673,6 +668,10 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR")
             dcc.Store(id="store-fetch-error", data=None),
             dcc.Store(id="store-session-warning", data=None),
             dcc.Store(id="store-zoom-atual", data=11),
+            dcc.Store(id="store-trajeto-itinerary", data=None),
+            dcc.Store(id="store-trajeto-geojson", data=None),
+            dcc.Store(id="store-trajeto-bounds", data=None),
+            dcc.Store(id="store-trajeto-selected-index", data=-1),
             html.Div(id="error-banner-container", className="shell-banner"),
             html.Div(
                 [
@@ -742,201 +741,268 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR")
                 [
                     html.Div(
                         [
-                            dcc.Tabs(
-                                id="tabs-filtro",
-                                value="linhas",
-                                mobile_breakpoint=0,
-                                parent_className="tabs-filtro-parent",
-                                className="tabs-filtro-container",
-                                children=[
-                                    _build_filter_tab(
-                                        label=t(locale, "tab.lines"),
-                                        value="linhas",
-                                        tab_id="tab-linhas",
-                                        dropdown_id="dropdown-linhas",
-                                        options=dropdown_opts,
-                                        placeholder=line_placeholder,
-                                        persistence_key=(
-                                            f"linhas::{app_build_id}"
-                                        ),
-                                    ),
-                                    _build_filter_tab(
-                                        label=t(locale, "tab.vehicles"),
-                                        value="veiculos",
-                                        tab_id="tab-veiculos",
-                                        dropdown_id="dropdown-veiculos",
-                                        options=[],
-                                        placeholder=vehicle_placeholder,
-                                    ),
-                                ],
-                            ),
-                        ],
-                        className="card card-border card-compact controls-card"
-                    ),
-                    html.Div(
-                        [
-                            html.Button(
+                            html.Div(
                                 [
-                                    html.Span(
-                                        t(locale, "toolbar.refresh"),
-                                        id="span-refresh-label",
+                                    html.Div(
+                                        [
+                                            dcc.Tabs(
+                                                id="tabs-filtro",
+                                                value="linhas",
+                                                mobile_breakpoint=0,
+                                                parent_className="tabs-filtro-parent",
+                                                className="tabs-filtro-container",
+                                                children=[
+                                                    _build_filter_tab(
+                                                        label=t(locale, "tab.lines"),
+                                                        value="linhas",
+                                                        tab_id="tab-linhas",
+                                                        dropdown_id="dropdown-linhas",
+                                                        options=dropdown_opts,
+                                                        placeholder=line_placeholder,
+                                                        persistence_key=(
+                                                            f"linhas::{app_build_id}"
+                                                        ),
+                                                    ),
+                                                    _build_filter_tab(
+                                                        label=t(locale, "tab.vehicles"),
+                                                        value="veiculos",
+                                                        tab_id="tab-veiculos",
+                                                        dropdown_id="dropdown-veiculos",
+                                                        options=[],
+                                                        placeholder=vehicle_placeholder,
+                                                    ),
+                                                    dcc.Tab(
+                                                        label=t(locale, "tab.routing"),
+                                                        value="trajeto",
+                                                        id="tab-trajeto",
+                                                        className="tabs-filtro-item",
+                                                        selected_className="tabs-filtro-item tabs-filtro-item--selected",
+                                                        children=html.Div([
+                                                            html.Div([
+                                                                html.Div([
+                                                                    html.Div([
+                                                                        html.Div(className="routing-dot routing-dot--origin"),
+                                                                        dcc.Input(
+                                                                            id="input-origem",
+                                                                            placeholder=t(locale, "routing.from"),
+                                                                            className="routing-input",
+                                                                            autoComplete="off"
+                                                                        ),
+                                                                    ], className="routing-input-row"),
+                                                                    html.Div([
+                                                                        html.Div(className="routing-dot routing-dot--dest"),
+                                                                        dcc.Input(
+                                                                            id="input-destino",
+                                                                            placeholder=t(locale, "routing.to"),
+                                                                            className="routing-input",
+                                                                            autoComplete="off"
+                                                                        ),
+                                                                    ], className="routing-input-row"),
+                                                                ], className="routing-input-wrapper"),
+                                                                html.Button(
+                                                                    t(locale, "routing.btn"),
+                                                                    id="btn-buscar-trajeto",
+                                                                    className="btn-routing-search"
+                                                                ),
+                                                            ], className="routing-input-container"),
+                                                            html.Div(
+                                                                id="routing-results",
+                                                                className="routing-results-list",
+                                                                style={"overflowY": "auto", "maxHeight": "calc(100vh - 380px)"}
+                                                            ),
+                                                            html.Div([
+                                                                html.Span("⚡ ", className="routing-credit-icon"),
+                                                                html.Span("Rotas calculadas por ", className="routing-credit-text"),
+                                                                html.A(
+                                                                    "Transitous",
+                                                                    href="https://transitous.org/",
+                                                                    target="_blank",
+                                                                    className="routing-credit-link"
+                                                                ),
+                                                                html.Span(" — Recurso experimental", className="routing-credit-text"),
+                                                            ], className="routing-credit"),
+                                                        ], className="routing-panel")
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                        className="card card-border card-compact controls-card"
                                     ),
-                                    html.Span(
-                                        "⟳",
-                                        className="refresh-button-icon"
+                                    html.Div(
+                                        [
+                                            html.Button(
+                                                [
+                                                    html.Span(
+                                                        t(locale, "toolbar.refresh"),
+                                                        id="span-refresh-label",
+                                                    ),
+                                                    html.Span(
+                                                        "⟳",
+                                                        className="refresh-button-icon"
+                                                    ),
+                                                ],
+                                                id="btn-atualizar",
+                                                n_clicks=0, className="botao-atualizar"
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Span(
+                                                        [
+                                                            html.Span(
+                                                                t(locale, "toolbar.last_update"),
+                                                                id="update-label-full",
+                                                                className="update-label-full"
+                                                            ),
+                                                            html.Span(
+                                                                t(locale, "toolbar.updated"),
+                                                                id="update-label-short",
+                                                                className="update-label-short"
+                                                            ),
+                                                        ],
+                                                        className="texto-atualizacao"
+                                                    ),
+                                                    html.Span(
+                                                        id="span-update-time",
+                                                        className="update-time-value",
+                                                        children="--"
+                                                    ),
+                                                    html.Span(
+                                                        id="span-update-icon",
+                                                        className="update-time-icon",
+                                                        children=""
+                                                    ),
+                                                ],
+                                                className="update-status-chip"
+                                            ),
+                                        ],
+                                        id="toolbar-card",
+                                        className="card card-border card-compact toolbar-card"
                                     ),
                                 ],
-                                id="btn-atualizar",
-                                n_clicks=0, className="botao-atualizar"
+                                className="controles",
                             ),
                             html.Div(
                                 [
-                                    html.Span(
+                                    html.Div(
                                         [
-                                            html.Span(
-                                                t(locale, "toolbar.last_update"),
-                                                id="update-label-full",
-                                                className="update-label-full"
-                                            ),
-                                            html.Span(
-                                                t(locale, "toolbar.updated"),
-                                                id="update-label-short",
-                                                className="update-label-short"
+                                            dl.Map(
+                                                id="mapa",
+                                                center=[-22.9, -43.2],
+                                                zoom=11,
+                                                style={"height": "100%", "width": "100%"},
+                                                children=[
+                                                    dl.LayersControl(
+                                                        [
+                                                            dl.BaseLayer(
+                                                                dl.TileLayer(
+                                                                    url=(
+                                                                        "https://{s}.tile"
+                                                                        ".openstreetmap.org"
+                                                                        "/{z}/{x}/{y}.png"
+                                                                    ),
+                                                                    attribution=(
+                                                                        "© OpenStreetMap contributors"
+                                                                    )
+                                                                ),
+                                                                name="OSM",
+                                                                checked=False,
+                                                            ),
+                                                            dl.BaseLayer(
+                                                                dl.TileLayer(
+                                                                    url=(
+                                                                        "https://cartodb-basemaps-{s}"
+                                                                        ".global.ssl.fastly.net"
+                                                                        "/light_all/{z}/{x}/{y}.png"
+                                                                    ),
+                                                                    attribution="© CartoDB contributors"
+                                                                ),
+                                                                name=t(locale, "map.basemap.light"),
+                                                                checked=True,
+                                                            ),
+                                                            dl.BaseLayer(
+                                                                dl.TileLayer(
+                                                                    url=(
+                                                                        "https://cartodb-basemaps-{s}"
+                                                                        ".global.ssl.fastly.net"
+                                                                        "/dark_all/{z}/{x}/{y}.png"
+                                                                    ),
+                                                                    attribution="© CartoDB contributors"
+                                                                ),
+                                                                name=t(locale, "map.basemap.dark"),
+                                                                checked=False,
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-itinerarios"),
+                                                                name=t(locale, "map.overlay.itineraries"), checked=True
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-paradas"),
+                                                                name=t(locale, "map.overlay.stops"), checked=False
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-onibus"),
+                                                                name=t(locale, "map.overlay.buses"), checked=True
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-brt"),
+                                                                name="BRT", checked=True
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-localizacao"),
+                                                                name=t(locale, "map.overlay.my_position"), checked=True
+                                                            ),
+                                                            dl.Overlay(
+                                                                dl.LayerGroup(id="layer-trajeto"),
+                                                                name=t(locale, "routing.title"), checked=True
+                                                            ),
+                                                        ],
+                                                        position="topright",
+                                                    ),
+                                                ],
                                             ),
                                         ],
-                                        className="texto-atualizacao"
+                                        className="card card-border map-frame",
+                                        style={"flex": "1 1 auto", "minHeight": 0},
                                     ),
-                                    html.Span(
-                                        id="span-update-time",
-                                        className="update-time-value",
-                                        children="--"
+                                    html.Div(
+                                        html.Button(
+                                            "📍", id="btn-localizar", n_clicks=0,
+                                            title=t(locale, "map.locate"),
+                                            className="botao-localizacao",
+                                            **{"aria-label": t(locale, "map.locate")}
+                                        ),
+                                        className="botao-localizacao-container",
                                     ),
-                                    html.Span(
-                                        id="span-update-icon",
-                                        className="update-time-icon",
-                                        children=""
+                                    html.Div(
+                                        html.Button(
+                                            t(locale, "pwa.install"),
+                                            id="btn-instalar-pwa",
+                                            n_clicks=0,
+                                            title=t(locale, "pwa.install_title"),
+                                            className="botao-instalar",
+                                            style={"display": "none"},
+                                            **{"aria-label": t(locale, "pwa.install_title")}
+                                        ),
+                                        className="botao-instalar-container",
                                     ),
-                                ],
-                                className="update-status-chip"
-                            ),
-                        ],
-                        className="card card-border card-compact toolbar-card"
-                    ),
-                ],
-                className="controles",
-            ),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            dl.Map(
-                                id="mapa",
-                                center=[-22.9, -43.2],
-                                zoom=11,
-                                style={"height": "100%", "width": "100%"},
-                                children=[
-                                    dl.LayersControl(
-                                        [
-                                            dl.BaseLayer(
-                                                dl.TileLayer(
-                                                    url=(
-                                                        "https://{s}.tile"
-                                                        ".openstreetmap.org"
-                                                        "/{z}/{x}/{y}.png"
-                                                    ),
-                                                    attribution=(
-                                                        "© OpenStreetMap contributors"
-                                                    )
-                                                ),
-                                                name="OSM",
-                                                checked=False,
-                                            ),
-                                            dl.BaseLayer(
-                                                dl.TileLayer(
-                                                    url=(
-                                                        "https://cartodb-basemaps-{s}"
-                                                        ".global.ssl.fastly.net"
-                                                        "/light_all/{z}/{x}/{y}.png"
-                                                    ),
-                                                    attribution="© CartoDB contributors"
-                                                ),
-                                                name=t(locale, "map.basemap.light"),
-                                                checked=True,
-                                            ),
-                                            dl.BaseLayer(
-                                                dl.TileLayer(
-                                                    url=(
-                                                        "https://cartodb-basemaps-{s}"
-                                                        ".global.ssl.fastly.net"
-                                                        "/dark_all/{z}/{x}/{y}.png"
-                                                    ),
-                                                    attribution="© CartoDB contributors"
-                                                ),
-                                                name=t(locale, "map.basemap.dark"),
-                                                checked=False,
-                                            ),
-                                            dl.Overlay(
-                                                dl.LayerGroup(id="layer-itinerarios"),
-                                                name=t(locale, "map.overlay.itineraries"), checked=True
-                                            ),
-                                            dl.Overlay(
-                                                dl.LayerGroup(id="layer-paradas"),
-                                                name=t(locale, "map.overlay.stops"), checked=False
-                                            ),
-                                            dl.Overlay(
-                                                dl.LayerGroup(id="layer-onibus"),
-                                                name=t(locale, "map.overlay.buses"), checked=True
-                                            ),
-                                            dl.Overlay(
-                                                dl.LayerGroup(id="layer-brt"),
-                                                name="BRT", checked=True
-                                            ),
-                                            dl.Overlay(
-                                                dl.LayerGroup(id="layer-localizacao"),
-                                                name=t(locale, "map.overlay.my_position"), checked=True
-                                            ),
-                                        ],
-                                        position="topright",
+                                    html.Div(
+                                        id="legenda", className="legenda-container",
+                                        role="complementary",
+                                        **{"aria-label": t(locale, "legend.aria")}
                                     ),
                                 ],
+                                className="shell-map-container",
+                                style={
+                                    "position": "relative", "flex": "1 1 auto",
+                                    "minHeight": 0, "display": "flex",
+                                    "flexDirection": "column"
+                                },
                             ),
                         ],
-                        className="card card-border map-frame",
-                        style={"flex": "1 1 auto", "minHeight": 0},
-                    ),
-                    html.Div(
-                        html.Button(
-                            "📍", id="btn-localizar", n_clicks=0,
-                            title=t(locale, "map.locate"),
-                            className="botao-localizacao",
-                            **{"aria-label": t(locale, "map.locate")}
-                        ),
-                        className="botao-localizacao-container",
-                    ),
-                    html.Div(
-                        html.Button(
-                            t(locale, "pwa.install"),
-                            id="btn-instalar-pwa",
-                            n_clicks=0,
-                            title=t(locale, "pwa.install_title"),
-                            className="botao-instalar",
-                            style={"display": "none"},
-                            **{"aria-label": t(locale, "pwa.install_title")}
-                        ),
-                        className="botao-instalar-container",
-                    ),
-                    html.Div(
-                        id="legenda", className="legenda-container",
-                        role="complementary",
-                        **{"aria-label": t(locale, "legend.aria")}
+                        className="shell-main",
                     ),
                 ],
-
-                style={
-                    "position": "relative", "flex": "1 1 auto",
-                    "minHeight": 0, "display": "flex",
-                    "flexDirection": "column"
-                },
+                className="app-shell",
             ),
         ],
         className="app-shell",

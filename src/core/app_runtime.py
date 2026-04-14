@@ -252,6 +252,7 @@ line_to_shape_coords = {}  # {linha: [coords_list]}
 line_to_stops_points = {}
 line_to_bounds = {}  # {linha: [[min_lat, min_lon], [max_lat, max_lon]]}
 line_to_fares = {}  # {route_short_name: fare_price}
+line_to_color = {}  # {route_short_name: route_color}
 linhas_dict = {}
 linhas_short = []
 lecd_public_map = {}  # {LECDxxx: numero_publico}
@@ -443,7 +444,7 @@ def _carregar_dados_estaticos():
     global rio_polygon, garagens_polygon, gtfs
     global line_to_shape_ids, line_to_stop_ids
     global line_to_shape_coords, line_to_stops_points, line_to_bounds
-    global line_to_fares
+    global line_to_fares, line_to_color
     global _rio_polygon_prepared, _garagens_polygon_prepared
 
     t0 = time.perf_counter()
@@ -473,6 +474,7 @@ def _carregar_dados_estaticos():
         line_to_stops_points = loaded["line_to_stops_points"]
         line_to_bounds = loaded["line_to_bounds"]
         line_to_fares = loaded.get("line_to_fares", {}) or {}
+        line_to_color = loaded.get("line_to_color", {}) or {}
 
     n_shapes = sum(len(v) for v in loaded["line_to_shape_coords"].values())
     print(
@@ -1788,8 +1790,11 @@ def _get_last_update_ts():
     with _status_lock:
         return _last_update_ts
 
+def _get_line_to_color():
+    with _gtfs_data_lock:
+        return line_to_color.copy()
 
-register_ui_callbacks(app, _get_last_update_ts)
+register_ui_callbacks(app, _get_last_update_ts, _get_line_to_color)
 
 
 @app.callback(
@@ -2259,6 +2264,7 @@ def _resolver_comando_viewport(
     linhas_recenter_token,
     veiculos_sel,
     veiculos_recenter_token,
+    trajeto_bounds,
 ):
     return viewport_logic_resolver_comando_viewport(
         data_localizacao=data_localizacao,
@@ -2269,6 +2275,7 @@ def _resolver_comando_viewport(
         linhas_recenter_token=linhas_recenter_token,
         veiculos_sel=veiculos_sel,
         veiculos_recenter_token=veiculos_recenter_token,
+        trajeto_bounds=trajeto_bounds,
         gerar_svg_usuario=_gerar_svg_usuario,
         calcular_viewport_linhas_fn=_calcular_viewport_linhas,
         calcular_viewport_veiculos_fn=_calcular_viewport_veiculos,

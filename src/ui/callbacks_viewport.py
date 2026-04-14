@@ -23,7 +23,12 @@ def register_viewport_callbacks(
                     };
                 }
 
-                if (Array.isArray(cmd.center) && cmd.center.length >= 2) {
+                if (cmd.bounds) {
+                    map.fitBounds(cmd.bounds, {
+                        animate: true,
+                        padding: [30, 30]
+                    });
+                } else if (Array.isArray(cmd.center) && cmd.center.length >= 2) {
                     var curZ = map.getZoom();
                     var z = (typeof cmd.zoom === 'number') ? cmd.zoom : curZ;
                     map.setView([cmd.center[0], cmd.center[1]], z, {
@@ -186,12 +191,13 @@ def register_viewport_callbacks(
             Input("store-linhas-recenter-token", "data"),
             Input("store-veiculos-debounce", "data"),
             Input("store-veiculos-recenter-token", "data"),
+            Input("store-trajeto-bounds", "data"),
             prevent_initial_call=True,
         )
         def controlar_viewport_mapa(
             data_loc, gps_ts, tab_filtro,
             linhas_sel, linhas_sel_debounce, linhas_recenter_token,
-            veiculos_sel, veiculos_recenter_token
+            veiculos_sel, veiculos_recenter_token, trajeto_bounds
         ):
             command, marker_layer = resolver_comando_viewport(
                 data_loc,
@@ -202,6 +208,7 @@ def register_viewport_callbacks(
                 linhas_recenter_token,
                 veiculos_sel,
                 veiculos_recenter_token,
+                trajeto_bounds,
             )
             if command is dash.no_update:
                 return dash.no_update, marker_layer, dash.no_update
@@ -227,12 +234,13 @@ def register_viewport_callbacks(
             Input("store-linhas-recenter-token", "data"),
             Input("store-veiculos-debounce", "data"),
             Input("store-veiculos-recenter-token", "data"),
+            Input("store-trajeto-bounds", "data"),
             prevent_initial_call=True,
         )
         def controlar_viewport_mapa(
             data_loc, gps_ts, tab_filtro,
             linhas_sel, linhas_sel_debounce, linhas_recenter_token,
-            veiculos_sel, veiculos_recenter_token
+            veiculos_sel, veiculos_recenter_token, trajeto_bounds
         ):
             command, marker_layer = resolver_comando_viewport(
                 data_loc,
@@ -243,6 +251,7 @@ def register_viewport_callbacks(
                 linhas_recenter_token,
                 veiculos_sel,
                 veiculos_recenter_token,
+                trajeto_bounds,
             )
 
             if command is dash.no_update:

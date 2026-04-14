@@ -10,7 +10,7 @@ from shapely.prepared import prep
 
 
 GTFS_STATIC_CACHE_PATH = "gtfs/gtfs_static_cache.pkl"
-GTFS_STATIC_CACHE_VERSION = 3
+GTFS_STATIC_CACHE_VERSION = 4
 
 
 def _to_float_price(value):
@@ -118,6 +118,27 @@ def _build_line_to_fares(gtfs):
                 line_to_fares[route_short_name] = price
 
     return line_to_fares
+
+
+def _build_line_to_color(gtfs):
+    line_to_color = {}
+    routes_df = gtfs.get("routes")
+    if routes_df is None or routes_df.empty:
+        return line_to_color
+    if not {"route_short_name", "route_color"}.issubset(routes_df.columns):
+        return line_to_color
+        
+    for _, row in routes_df.iterrows():
+        route_short_name = str(row.get("route_short_name", "")).strip()
+        route_color = str(row.get("route_color", "")).strip()
+        if route_color.lower() == "nan":
+            route_color = ""
+        if route_short_name and route_color:
+            if not route_color.startswith("#"):
+                route_color = f"#{route_color}"
+            line_to_color[_normalize_line_key(route_short_name)] = route_color
+            
+    return line_to_color
 
 
 def _normalize_line_key(value):
@@ -254,6 +275,7 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         "line_to_stops_points": {},
         "line_to_bounds": {},
         "line_to_fares": {},
+        "line_to_color": {},
     }
 
     try:
@@ -318,7 +340,7 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
             target_files = {
                 "routes": {
                     "usecols": lambda c: c in {
-                        "route_id", "route_short_name", "tarifas"
+                        "route_id", "route_short_name", "tarifas", "route_color"
                     }
                 },
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},
@@ -604,6 +626,7 @@ def carregar_dados_estaticos_service(empty_shapes_gdf_fn, empty_stops_gdf_fn):
         result["line_to_stops_points"] = line_to_stops_points
         result["line_to_bounds"] = line_to_bounds
         result["line_to_fares"] = _build_line_to_fares(gtfs)
+        result["line_to_color"] = _build_line_to_color(gtfs)
 
     except FileNotFoundError:
         print("ERRO: Arquivo gtfs/gtfs.zip não encontrado")
@@ -627,7 +650,7 @@ def recarregar_gtfs_estatico_sob_demanda_service(linhas_sel):
             target_files = {
                 "routes": {
                     "usecols": lambda c: c in {
-                        "route_id", "route_short_name", "tarifas"
+                        "route_id", "route_short_name", "tarifas", "route_color"
                     }
                 },
                 "trips": {"usecols": ["trip_id", "route_id", "shape_id"]},

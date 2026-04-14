@@ -254,6 +254,7 @@ def resolver_comando_viewport(
     linhas_recenter_token,
     veiculos_sel,
     veiculos_recenter_token,
+    trajeto_bounds,
     gerar_svg_usuario,
     calcular_viewport_linhas_fn,
     calcular_viewport_veiculos_fn,
@@ -298,13 +299,22 @@ def resolver_comando_viewport(
         prop.startswith("store-tab-filtro.")
         for prop in triggered_props
     )
+    has_trajeto_trigger = any(
+        prop.startswith("store-trajeto-bounds.")
+        for prop in triggered_props
+    )
     has_lines_trigger = (
         has_dropdown_trigger
         or has_debounce_trigger
         or has_linhas_recenter_trigger
     )
     has_vehicles_selection_trigger = has_veiculos_store_trigger
-    modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
+    if tab_filtro == "veiculos":
+        modo = "veiculos"
+    elif tab_filtro == "trajeto":
+        modo = "trajeto"
+    else:
+        modo = "linhas"
 
     if has_debounce_trigger:
         linhas_ativas = linhas_sel_debounce or []
@@ -455,6 +465,17 @@ def resolver_comando_viewport(
             },
         }
         return command, dash.no_update
+
+    if modo == "trajeto" and (has_trajeto_trigger or has_tab_trigger):
+        if trajeto_bounds:
+            # Para trajetos, usamos os bounds diretamente para centralizar
+            command = {"bounds": trajeto_bounds, "transition": "flyTo"}
+            command["force_view"] = {
+                "bounds": trajeto_bounds,
+                "token": int(time.time() * 1000)
+            }
+            return command, dash.no_update
+        return dash.no_update, dash.no_update
 
     return dash.no_update, dash.no_update
 

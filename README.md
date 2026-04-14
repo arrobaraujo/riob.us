@@ -1,6 +1,6 @@
 # RioB.us
 
-Aplicacao web em Dash para visualizacao operacional de onibus, com atualizacao em tempo real de posicoes GPS e sobreposicao de dados estaticos GTFS.
+Aplicacao web em Dash para visualizacao operacional de onibus, com atualizacao em tempo real de posicoes GPS, sobreposicao de dados estaticos GTFS e planejamento de rotas intermodais.
 
 ## Estado atual da entrega
 
@@ -16,6 +16,8 @@ Aplicacao web em Dash para visualizacao operacional de onibus, com atualizacao e
 - Versionamento unificado por build: runtime, cache PWA e chaves de sessao.
 - Build atual exibido no topo da interface, ao lado do titulo.
 - Reorganizacao estrutural consolidada em `src/`, sem camada legada na raiz.
+- **Interface lateral (sidebar)**: painel de controle fixo ao lado esquerdo do mapa.
+- **Aba Trajetos**: planejamento de rotas intermodais com visualizacao no mapa.
 
 ## Visao geral
 
@@ -29,6 +31,36 @@ Principais capacidades:
 - Cache de camadas estaticas e dinamicas para reduzir custo de processamento.
 - Health check tecnico e status amigavel para operacao.
 - Suporte opcional a Redis e Sentry.
+- **Planejamento de rotas intermodais** com zoom automatico e visualizacao no mapa.
+- **Cores GTFS**: linhas de onibus exibidas com as cores oficiais do GTFS (`route_color`).
+- **Paradas intermediarias**: marcadores e lista das paradas percorridas por cada trecho.
+
+## Aba Trajetos (Roteamento)
+
+A aba **Trajetos** permite planejar rotas de transporte publico entre dois enderecos do Rio de Janeiro.
+
+### Como usar
+
+1. Acesse a aba **Trajetos** no painel lateral.
+2. Informe o endereco de **Origem** e **Destino**.
+3. Clique em **Buscar**.
+4. Selecione uma das opcoes de itinerario exibidas.
+5. O mapa exibe automaticamente o percurso com zoom ajustado.
+
+### Recursos visuais
+
+- **Cores oficiais**: cada trecho de onibus exibe a cor real da linha conforme o GTFS.
+- **Paradas no mapa**: circulos marcam cada parada intermediaria do percurso.
+- **Paradas no card**: a timeline detalhada lista todas as paradas do trecho ao expandir o card.
+- **Marcadores de origem/destino**: ícones verdes (origem) e roxos (destino) no mapa.
+- **Botao de localizacao**: disponivel na aba Trajetos para usar a posicao atual como origem.
+- **Trechos a pe**: exibidos com linha tracejada azul.
+
+### Motor de roteamento
+
+As rotas sao calculadas pela API do **[Transitous](https://transitous.org/)** — projeto de codigo aberto que agrega dados de transporte publico de diversas cidades e oferece planejamento de rotas via MOTIS 2.
+
+> **Recurso experimental**: o roteamento depende de servico externo e pode apresentar variacao de disponibilidade.
 
 ## Stack
 
@@ -46,6 +78,8 @@ Estrutura atual do projeto:
 
 - `src/core/app_runtime.py`: entrypoint oficial Flask/Dash usado por Gunicorn.
 - `src/`: pacote Python oficial (`config`, `core`, `logic`, `state`, `ui`, `utils`).
+- `src/logic/transitous_logic.py`: integracao com a API Transitous (geocoding e roteamento).
+- `src/logic/gtfs_static_logic.py`: carregamento e cache do GTFS estatico, incluindo cores das linhas.
 - `tests/`: suite de testes automatizados.
 - `assets/`: CSS e arquivos estaticos web.
 
@@ -354,3 +388,15 @@ Este projeto utiliza dados publicos do sistema de transporte do Rio de Janeiro:
 
 - Dados GPS: Fornecidos pela API publica do Data.Rio.
 - Dados estaticos: Formato GTFS, fornecido pelo Data.Rio.
+
+## Creditos e dependencias externas
+
+| Servico / Projeto | Uso | Licenca / Tipo |
+| --- | --- | --- |
+| [Transitous](https://transitous.org/) | Motor de roteamento intermodal (MOTIS 2) | Codigo aberto, dados abertos |
+| [Data.Rio](https://data.rio/) | Dados GPS e GTFS do sistema de onibus do Rio | API publica |
+| [IBGE](https://servicodados.ibge.gov.br/) | Geometria do municipio do Rio de Janeiro | API publica |
+| [Dash Leaflet](https://www.dash-leaflet.com/) | Renderizacao do mapa interativo | MIT |
+| [OpenStreetMap](https://www.openstreetmap.org/) | Camada base de mapa | ODbL |
+| [Carto](https://carto.com/basemaps/) | Camadas base Carto Claro e Carto Escuro | Gratuito para uso publico |
+
