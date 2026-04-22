@@ -426,6 +426,9 @@ body[data-theme="dark-riob"] .map-frame {
 .dropdown-wrapper {
     position: relative;
     z-index: 9999;
+    width: 100%;
+    display: flex;
+    justify-content: center;
 }
 
 .controles,
@@ -749,6 +752,7 @@ body[data-theme="dark-riob"] .botao-instalar {
 .tabs-filtro-parent .tab-content {
     display: block !important;
     visibility: visible !important;
+    width: 100%;
 }
 
 .tabs-filtro-container {
