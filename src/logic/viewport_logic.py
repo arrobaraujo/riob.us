@@ -474,7 +474,8 @@ def resolver_comando_viewport(
                 "bounds": trajeto_bounds,
                 "token": int(time.time() * 1000)
             }
-            return command, dash.no_update
+            # Limpamos a camada de localização ao exibir o trajeto para evitar confusão
+            return command, []
         return dash.no_update, dash.no_update
 
     return dash.no_update, dash.no_update

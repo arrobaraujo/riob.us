@@ -591,7 +591,7 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
                                             stop["name"],
                                             className="timeline-intermediate-stop"
                                         )
-                                        for stop in leg.get("stops", []) if stop.get("name")
+                                        for stop in leg.get("stops", []) if str(stop.get("name") or "").strip()
                                     ], className="timeline-stops-list")
                                 ] if not is_walk and leg.get("stops") else []
                             ),

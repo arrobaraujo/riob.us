@@ -1227,23 +1227,39 @@ body[data-theme="dark-riob"] .dropdown .Select-option.is-focused {
 /* Paradas intermediárias no card */
 .timeline-stops-list {
     list-style: none;
-    padding: 4px 0 4px 8px;
-    margin: 2px 0;
-    border-left: 2px solid var(--color-base-300);
+    padding: 6px 0 6px 12px;
+    margin: 4px 0;
+    border-left: 2px dashed var(--color-base-300);
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    max-height: 120px;
+    gap: 4px;
+    max-height: 200px;
     overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-base-300) transparent;
+}
+
+.timeline-stops-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.timeline-stops-list::-webkit-scrollbar-thumb {
+    background: var(--color-base-300);
+    border-radius: 4px;
 }
 
 .timeline-intermediate-stop {
-    font-size: 0.7rem;
-    opacity: 0.6;
-    padding: 1px 0;
+    font-size: 0.72rem;
+    opacity: 0.65;
+    padding: 2px 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: opacity 0.2s;
+}
+
+.timeline-intermediate-stop:hover {
+    opacity: 1;
 }
 
 .timeline-intermediate-stop::before {
