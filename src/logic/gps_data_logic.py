@@ -7,6 +7,7 @@ import requests
 
 BRT_TZ = ZoneInfo("America/Sao_Paulo")
 
+_gps_executor = ThreadPoolExecutor(max_workers=2)
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -104,16 +105,15 @@ def fetch_gps_data_service(
     selected_lines = set(linhas_sel)
     selected_vehicles = set(veiculos_sel)
 
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        fut_sppo = ex.submit(
-            _fetch_sppo, http_session_sppo, inicio, agora,
-            fmt, DEFAULT_HEADERS, selected_lines
-        )
-        fut_brt = ex.submit(
-            _fetch_brt, http_session_brt, DEFAULT_HEADERS, selected_lines
-        )
-        sppo_df = fut_sppo.result()
-        brt_df = fut_brt.result()
+    fut_sppo = _gps_executor.submit(
+        _fetch_sppo, http_session_sppo, inicio, agora,
+        fmt, DEFAULT_HEADERS, selected_lines
+    )
+    fut_brt = _gps_executor.submit(
+        _fetch_brt, http_session_brt, DEFAULT_HEADERS, selected_lines
+    )
+    sppo_df = fut_sppo.result()
+    brt_df = fut_brt.result()
 
     if len(sppo_df) > 0:
         sppo_df = processar_dados_gps_fn(sppo_df, gps_config["sppo"])

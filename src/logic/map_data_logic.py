@@ -22,12 +22,12 @@ def montar_opcoes_veiculos(dados, veiculo_exibicao_fn):
     return [
         {
             "label": veiculo_exibicao_fn(
-                row["ordem"], row.get("linha", ""), row.get("tipo", "")
+                getattr(row, "ordem", ""), getattr(row, "linha", ""), getattr(row, "tipo", "")
             ),
-            "value": str(row["ordem"]),
+            "value": str(getattr(row, "ordem", "")),
         }
-        for _, row in base_opcoes.iterrows()
-        if str(row.get("ordem", "")).strip()
+        for row in base_opcoes.itertuples(index=False)
+        if str(getattr(row, "ordem", "")).strip()
     ]
 
 

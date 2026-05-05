@@ -8,6 +8,7 @@ import zipfile
 import warnings
 import threading
 import pickle
+import json
 from collections import deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -96,8 +97,9 @@ from src.logic.viewport_logic import (
 )
 
 BRT_TZ = ZoneInfo("America/Sao_Paulo")
-warnings.filterwarnings("ignore")
-
+# Restricted warnings filter instead of global
+warnings.filterwarnings("ignore", category=FutureWarning, module="geopandas")
+warnings.filterwarnings("ignore", category=UserWarning, module="geopandas")
 # ==============================================================================
 # Dados estáticos — inicializados vazios, carregados em thread paralela
 # ==============================================================================
@@ -150,7 +152,7 @@ class RedisDict:
         try:
             v = self.client.get(self._key(k))
             if v:
-                return pickle.loads(v)
+                return json.loads(v)
         except Exception:
             pass
         return default
@@ -159,7 +161,7 @@ class RedisDict:
         if not self.client:
             return
         try:
-            self.client.set(self._key(k), pickle.dumps(v))
+            self.client.set(self._key(k), json.dumps(v))
         except Exception:
             pass
 
@@ -298,8 +300,11 @@ def _perf_p95(metric_name):
         bucket = _perf_metrics.get(metric_name)
         if not bucket:
             return 0.0
-        series = pd.Series(list(bucket), dtype="float64")
-    return float(series.quantile(0.95)) if len(series) > 0 else 0.0
+        lst = sorted(list(bucket))
+    if not lst:
+        return 0.0
+    idx = int(math.ceil(0.95 * len(lst))) - 1
+    return float(lst[max(0, idx)])
 
 
 def _empty_shapes_gdf():
@@ -2001,12 +2006,11 @@ def _resolver_contexto_camadas_estaticas(tab_filtro, linhas_sel, veiculos_sel, d
     Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
-    Input("mapa", "bounds"),
     Input("store-locale", "data"),
     prevent_initial_call=False,
 )
 def atualizar_camadas_estaticas(
-    _ts, tab_filtro, linhas_sel, veiculos_sel, map_bounds, locale
+    _ts, tab_filtro, linhas_sel, veiculos_sel, locale
 ):
     """Reconstrói apenas camadas estáticas, reagindo ao viewport atual."""
     t0 = time.perf_counter()
@@ -2037,14 +2041,14 @@ def atualizar_camadas_estaticas(
         stop_sign_icon=STOP_SIGN_ICON,
         limit_list_for_render_fn=_limit_list_for_render,
         max_stops_per_render=MAX_STOPS_PER_RENDER,
-        viewport_bounds=map_bounds,
+        viewport_bounds=None,
         locale=locale,
     )
     total_ms = (time.perf_counter() - t0) * 1000
     _perf_record("atualizar_mapa_static_ms", total_ms)
     perf_log(
         f"PERF atualizar_camadas_estaticas modo={modo} total_ms={total_ms:.1f} "
-        f"bounds={'on' if map_bounds else 'off'} lines={len(linhas_render)}"
+        f"lines={len(linhas_render)}"
     )
     return (
         _build_layer_group_children("layer-itinerarios", shapes_layers),
@@ -2061,9 +2065,10 @@ def atualizar_camadas_estaticas(
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
     Input("store-locale", "data"),
+    State("store-zoom-atual", "data"),
     prevent_initial_call=False,
 )
-def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, locale):
+def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, locale, zoom_atual):
     """Reconstrói camadas dinâmicas e legenda sem depender do viewport."""
     t0 = time.perf_counter()
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
@@ -2150,10 +2155,9 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, local
         dados_filtrados = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
         contagem_por_linha = {}
         if "linha" in dados.columns and "ordem" in dados.columns:
-            dados_linhas = dados[dados["linha"].astype(str).isin(selected_lines)].copy()
-            if not dados_linhas.empty:
-                contagem_series = dados_linhas.groupby(
-                    dados_linhas["linha"].astype(str)
+            if not dados_filtrados.empty:
+                contagem_series = dados_filtrados.groupby(
+                    dados_filtrados["linha"].astype(str)
                 )["ordem"].nunique(dropna=True)
                 contagem_por_linha = {
                     str(k): int(v) for k, v in contagem_series.items()
@@ -2171,8 +2175,9 @@ def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, local
     sppo_df, brt_df = split_gps_por_tipo(dados_filtrados)
     t_split = time.perf_counter()
 
-    sppo_df = _limit_df_for_render(sppo_df, 11)
-    brt_df = _limit_df_for_render(brt_df, 11)
+    zoom = int(zoom_atual) if zoom_atual is not None else 11
+    sppo_df = _limit_df_for_render(sppo_df, zoom)
+    brt_df = _limit_df_for_render(brt_df, zoom)
 
     camadas_dinamicas = construir_camadas_veiculos(
         sppo_df=sppo_df,

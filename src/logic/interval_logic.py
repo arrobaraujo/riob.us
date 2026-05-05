@@ -12,7 +12,9 @@ def compute_poll_interval_ms(
     linhas_count = len(linhas_sel or [])
     veiculos_count = len(veiculos_sel or [])
 
-    if tab == "veiculos" and veiculos_count > 0:
+    if tab == "trajeto":
+        interval = 300000
+    elif tab == "veiculos" and veiculos_count > 0:
         interval = int(vehicles_active_ms)
     elif tab == "linhas" and linhas_count > 0:
         interval = int(lines_active_ms)

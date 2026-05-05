@@ -951,13 +951,10 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR")
                                                                 dl.LayerGroup(id="layer-localizacao"),
                                                                 name=t(locale, "map.overlay.my_position"), checked=True
                                                             ),
-                                                            dl.Overlay(
-                                                                dl.LayerGroup(id="layer-trajeto"),
-                                                                name=t(locale, "routing.title"), checked=True
-                                                            ),
                                                         ],
                                                         position="topright",
                                                     ),
+                                                    dl.LayerGroup(id="layer-trajeto"),
                                                 ],
                                             ),
                                         ],
@@ -1005,7 +1002,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR")
                 className="app-shell",
             ),
         ],
-        className="app-shell",
+        className="app-root",
     )
 
     # Injetamos o script do service worker diretamente no final do componente

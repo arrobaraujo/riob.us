@@ -128,9 +128,9 @@ def _build_line_to_color(gtfs):
     if not {"route_short_name", "route_color"}.issubset(routes_df.columns):
         return line_to_color
         
-    for _, row in routes_df.iterrows():
-        route_short_name = str(row.get("route_short_name", "")).strip()
-        route_color = str(row.get("route_color", "")).strip()
+    for row in routes_df.itertuples(index=False):
+        route_short_name = str(getattr(row, "route_short_name", "") or "").strip()
+        route_color = str(getattr(row, "route_color", "") or "").strip()
         if route_color.lower() == "nan":
             route_color = ""
         if route_short_name and route_color:
