@@ -419,6 +419,11 @@ def _carregar_dicionario_lecd():
         lecd_public_map = {}
 
 
+from src.logic.gtfs_downloader import download_gtfs
+
+# --- Baixa o GTFS antes de qualquer uso ---
+download_gtfs()
+
 # --- routes.txt carregado de forma SÍNCRONA (rápido, só strings) ---
 # Isso garante que o dropdown já tem opções quando o app abre.
 _carregar_dicionario_lecd()

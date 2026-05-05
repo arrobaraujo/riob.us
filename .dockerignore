@@ -15,3 +15,6 @@ scripts/debug/
 *.log
 gunicorn.ctl
 gunicorn.pid
+gtfs/gtfs.zip
+gtfs/gtfs_static_cache.pkl
+gtfs/.gtfs_etag

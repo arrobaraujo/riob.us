@@ -26,6 +26,8 @@ htmlcov/
 
 # Project specific
 gtfs/gtfs_static_cache.pkl
+gtfs/gtfs.zip
+gtfs/.gtfs_etag
 *.log
 gunicorn.ctl
 gunicorn.pid
