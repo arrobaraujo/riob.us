@@ -137,19 +137,24 @@ def _parse_deep_link(pathname, search=None):
         return None
 
     chunks = [unquote(chunk).strip() for chunk in text.split("/") if chunk]
-    if len(chunks) < 2:
+    if not chunks:
         return None
 
     section = chunks[0].lower()
-    token = chunks[1]
-    if not token:
-        return None
 
-    if section == "linhas":
-        tokens = [part.strip() for part in token.split(",") if part.strip()]
-        if not tokens:
-            return None
-        return "linhas", tokens
+    if section == "veiculos":
+        return "veiculos", []
+
+    if section == "trajetos":
+        return "trajeto", []
+
+    if section == "linhas" and len(chunks) >= 2:
+        token = chunks[1]
+        if token:
+            tokens = [part.strip() for part in token.split(",") if part.strip()]
+            if tokens:
+                return "linhas", tokens
+
     return None
 
 
@@ -171,14 +176,16 @@ def _resolve_tab_filter_state(
     if url_triggered:
         parsed = _parse_deep_link(pathname, search)
         if parsed:
-            _tab, tokens = parsed
-            return "linhas", tokens, [], None
+            tab, tokens = parsed
+            if tab == "linhas" and tokens:
+                return "linhas", tokens, [], None
+            return tab, dash.no_update, dash.no_update, None
 
     current_tab = tab_value or "linhas"
 
     # Troca de aba pelo usuário: preserva linhas ao ir para veículos
-    # para manter o contexto ao retornar para a aba Linhas.
-    if current_tab == "veiculos":
+    # ou trajeto, para manter o contexto ao retornar para a aba Linhas.
+    if current_tab in ("veiculos", "trajeto"):
         return current_tab, dash.no_update, dash.no_update, None
 
     selected, valid, allowed = _filter_values_in_options(
@@ -211,7 +218,7 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
         prevent_initial_call=False,
     )
     def sincronizar_tab_com_url(pathname, search):
-        """Permite deep link apenas para /linhas/<id>."""
+        """Sincroniza a aba ativa com deep links: /linhas, /veiculos, /trajetos."""
         parsed = _parse_deep_link(pathname, search)
         if not parsed:
             return dash.no_update
@@ -451,6 +458,21 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
         Output("store-zoom-atual", "data"),
         Input("mapa", "bounds"),
         prevent_initial_call=True,
+    )
+
+    app.clientside_callback(
+        """
+        function(tab) {
+            var container = document.querySelector('.shell-map-container');
+            if (container) {
+                container.setAttribute('data-tab', tab || '');
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("store-tab-map-sync", "data"),
+        Input("tabs-filtro", "value"),
+        prevent_initial_call=False,
     )
 
 
@@ -757,5 +779,5 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
     def ocultar_elementos_mapa_na_aba_trajeto(aba_ativa):
         """Esconde legenda e toolbar quando na aba Trajeto."""
         if aba_ativa == "trajeto":
-            return {"display": "none"}, {}, {"display": "none"}
+            return {"display": "none"}, {"display": "none"}, {"display": "none"}
         return {}, {}, {}

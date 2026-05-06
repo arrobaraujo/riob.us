@@ -34,11 +34,18 @@ Assert-Contains -Haystack $sitemap -Needle "<urlset" -Message "sitemap xml root"
 Assert-Contains -Haystack $sitemap -Needle "<loc>" -Message "sitemap loc"
 Write-Host "OK sitemap"
 
-Write-Host "[3/4] Checking canonical redirect for single-line query..."
-$headers = curl.exe -sSI "$base/?linha=$LineToken"
-Assert-Contains -Haystack $headers -Needle "301" -Message "query to line redirect status"
-Assert-Contains -Haystack $headers -Needle "Location: $linePath" -Message "query to line redirect location"
-Write-Host "OK redirect"
+Write-Host "[3/4] Checking canonical redirects..."
+$h1 = curl.exe -sSI "$base/?linha=$LineToken"
+Assert-Contains -Haystack $h1 -Needle "301" -Message "query to line redirect status"
+Assert-Contains -Haystack $h1 -Needle "Location: $linePath" -Message "query to line redirect location"
+
+# Verify new routes return 200
+$h2 = curl.exe -sSI "$base/veiculos"
+Assert-Contains -Haystack $h2 -Needle "200" -Message "veiculos route status"
+$h3 = curl.exe -sSI "$base/trajetos"
+Assert-Contains -Haystack $h3 -Needle "200" -Message "trajetos route status"
+
+Write-Host "OK routes and redirects"
 
 Write-Host "[4/4] Checking line page metadata..."
 $lineHtml = curl.exe -sS "$base$linePath"

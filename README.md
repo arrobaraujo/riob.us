@@ -53,7 +53,6 @@ A aba **Trajetos** permite planejar rotas de transporte publico entre dois ender
 - **Paradas no mapa**: circulos marcam cada parada intermediaria do percurso.
 - **Paradas no card**: a timeline detalhada lista todas as paradas do trecho ao expandir o card.
 - **Marcadores de origem/destino**: ícones verdes (origem) e roxos (destino) no mapa.
-- **Botao de localizacao**: disponivel na aba Trajetos para usar a posicao atual como origem.
 - **Trechos a pe**: exibidos com linha tracejada azul.
 
 ### Motor de roteamento
@@ -131,10 +130,10 @@ Melhorias aplicadas para aumentar indexacao e CTR em buscadores:
 - JSON-LD (`WebApplication`) para dados estruturados.
 - Canonicalizacao de URL de linha:
   - `/?linha=LECD137` -> redireciona para `/linhas/LECD137` (301).
-  - `/?linha=LECD137&lang=en` -> redireciona para `/en/linhas/LECD137` (301).
-  - `/linhas/<token>` e a URL canonica de compatibilidade.
-  - Rotas com prefixo de idioma (`/en/linhas/<token>`, `/es/linhas/<token>`) sao suportadas, mas o canonical continua em `/linhas/<token>`.
-  - Quando `lang` nao e informado, o idioma e resolvido por `Accept-Language` do navegador com fallback para `pt-BR`.
+  - `/linhas/<token>` e a URL canonica.
+  - `/veiculos` e `/trajetos` abrem as abas correspondentes.
+  - Prefixos de idioma na URL (`/en/`, `/es/`) foram removidos para simplificacao.
+  - O idioma e resolvido automaticamente por `Accept-Language` do navegador com fallback para `pt-BR`.
 - Endpoints dedicados para crawler:
   - `/robots.txt`
   - `/sitemap.xml`
@@ -270,28 +269,26 @@ Regras de busca manual:
 - Busca por valor completo: `A50001`.
 - Busca por sufixo numerico: `50001` tambem encontra `A50001`.
 
-## Deep links (filtros via URL)
+## Deep links (navegação e filtros via URL)
 
-Voce pode abrir filtros diretamente pela URL:
+Você pode abrir abas ou aplicar filtros diretamente pela URL:
 
-- Linha: `https://riob.us/linhas/LECD137`
-- Linha com idioma explicito (ingles): `https://riob.us/en/linhas/LECD137`
-- Linha com idioma explicito (espanhol): `https://riob.us/es/linhas/LECD137`
-- Multiplas linhas (query CSV): `https://riob.us/?linhas=LECD137,LECD138`
-- Multiplas linhas (query repetida): `https://riob.us/?linha=LECD137&linha=LECD138`
+- Aba Linhas com filtro único: `https://riob.us/linhas/LECD137`
+- Aba Linhas com filtro múltiplo (CSV): `https://riob.us/linhas/LECD137,LECD138`
+- Aba Linhas com filtro via query: `https://riob.us/?linhas=LECD137,LECD138` ou `https://riob.us/?linha=LECD137&linha=LECD138`
+- Aba Veículos: `https://riob.us/veiculos`
+- Aba Trajeto: `https://riob.us/trajetos`
 
 Comportamento:
 
-- A aba `Linhas` e ativada automaticamente.
-- O filtro correspondente e aplicado no carregamento da pagina.
-- Quando houver mais de uma linha no deep link, todas sao aplicadas no filtro de `Linhas`.
+- O componente correspondente (Linhas, Veículos ou Trajeto) é ativado automaticamente.
+- Para linhas, o filtro correspondente é aplicado no carregamento da página.
+- Não há deep link para veículos específicos; `/veiculos` abre a aba genérica.
 
 Idioma nos deep links:
 
-- Politica recomendada de compartilhamento: manter `/linhas/<token>` como base de compatibilidade.
-- Para idioma explicito, usar `/en/linhas/<token>` ou `/es/linhas/<token>`.
-- Sem `lang`, o app tenta resolver idioma pelo header `Accept-Language` e, se necessario, usa fallback `pt-BR`.
-- Rotas com prefixo (`/en/linhas/<token>`, `/es/linhas/<token>`) continuam funcionando por compatibilidade, com canonical apontando para `/linhas/<token>`.
+- **Não utilize** prefixos de idioma na URL (`/en/`, `/es/`).
+- O app resolve o idioma automaticamente pelo header `Accept-Language`, preferência do navegador ou fallback `pt-BR`.
 
 ## Testes
 

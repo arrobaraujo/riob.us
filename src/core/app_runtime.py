@@ -793,13 +793,6 @@ def _resolve_request_locale():
         if locale_query:
             return normalize_locale(locale_query)
 
-        path = request.path or ""
-        segments = [segment for segment in path.split("/") if segment]
-        if len(segments) >= 2 and segments[1].lower() == "linhas":
-            first = segments[0]
-            if is_locale_token(first):
-                return normalize_locale(first)
-
         locale_header = locale_from_accept_language(
             request.headers.get("Accept-Language", "")
         )
@@ -867,11 +860,6 @@ def _canonicalize_single_line_query():
     if urlparse(token).netloc or urlparse(token).scheme:
         return None
 
-    locale_query = locale_from_search(request.query_string.decode("utf-8"))
-    if locale_query in {"en", "es"}:
-        return redirect(f"/{locale_query}/linhas/{token}", code=301)
-    if locale_query == "pt-BR":
-        return redirect(f"/linhas/{token}", code=301)
     return redirect(f"/linhas/{token}", code=301)
 
 
@@ -1094,37 +1082,29 @@ def _status_page():
     return Response(html_body, status=200, mimetype="text/html")
 
 
-@server.route("/veiculos/<vehicle_token>")
-def _deep_link_vehicle(vehicle_token):
-    """Deep link de veículos desativado: redireciona para home."""
-    return redirect("/", code=302)
+@server.route("/veiculos")
+def _deep_link_vehicles_tab():
+    """Deep link para aba Veículos."""
+    return Response(app.index(), status=200, mimetype="text/html")
+
+
+@server.route("/trajetos")
+def _deep_link_routing_tab():
+    """Deep link para aba Trajeto."""
+    return Response(app.index(), status=200, mimetype="text/html")
 
 
 @server.route("/linhas/<line_token>")
 def _deep_link_line(line_token):
-    return _render_deep_link_line(line_token, forced_locale=None)
+    return _render_deep_link_line(line_token)
 
 
-@server.route("/<locale_token>/linhas/<line_token>")
-def _deep_link_line_with_locale(locale_token, line_token):
-    if not is_locale_token(locale_token):
-        token = quote(str(line_token or "").strip(), safe="")
-        token = token.replace("\\", "")
-        if urlparse(token).netloc or urlparse(token).scheme:
-            token = ""
-        return redirect(f"/linhas/{token}" if token else "/", code=302)
-    return _render_deep_link_line(
-        line_token,
-        forced_locale=normalize_locale(locale_token),
-    )
-
-
-def _render_deep_link_line(line_token, forced_locale=None):
+def _render_deep_link_line(line_token):
     """Renderiza shell do Dash mantendo URL canônica por caminho."""
     token = quote(str(line_token or "").strip(), safe="")
     token_text = py_html.escape(unquote(str(line_token or "").strip()))
     canonical_url = f"{PUBLIC_BASE_URL}/linhas/{token}"
-    locale = normalize_locale(forced_locale or _resolve_request_locale())
+    locale = normalize_locale(_resolve_request_locale())
     page_title = t(locale, "seo.line.title", token=token_text)
     page_description = t(locale, "seo.line.description", token=token_text)
     html_index = app.index()
@@ -1244,11 +1224,6 @@ app.clientside_callback(
         }
 
         function localeFromPath(path) {
-            var text = String(path || '');
-            var parts = text.split('/').filter(Boolean);
-            if (parts.length >= 2 && parts[1] === 'linhas') {
-                return normalize(parts[0]);
-            }
             return null;
         }
 
@@ -1351,23 +1326,15 @@ def sincronizar_lang_na_url(locale, pathname, current_search):
         path_text = f"/{path_text}"
 
     raw_parts = [p for p in path_text.split("/") if p]
-    token = None
-    if len(raw_parts) >= 2 and raw_parts[0] == "linhas":
-        token = raw_parts[1]
-    elif (
+    # Se URL legada com prefixo de locale, strip para path canônico.
+    next_path = path_text
+    if (
         len(raw_parts) >= 3
         and raw_parts[1] == "linhas"
         and is_locale_token(raw_parts[0])
     ):
-        token = raw_parts[2]
-
-    next_path = path_text
-    if token is not None:
-        token_norm = quote(unquote(token), safe="")
-        if locale in {"en", "es"}:
-            next_path = f"/{locale}/linhas/{token_norm}"
-        else:
-            next_path = f"/linhas/{token_norm}"
+        token_norm = quote(unquote(raw_parts[2]), safe="")
+        next_path = f"/linhas/{token_norm}"
 
     text = str(current_search or "").strip()
     if text.startswith("?"):
@@ -2018,6 +1985,9 @@ def atualizar_camadas_estaticas(
     _ts, tab_filtro, linhas_sel, veiculos_sel, locale
 ):
     """Reconstrói apenas camadas estáticas, reagindo ao viewport atual."""
+    if tab_filtro == "trajeto":
+        return [], []
+
     t0 = time.perf_counter()
     with _gps_lock:
         dados = _gps_cache
@@ -2075,6 +2045,9 @@ def atualizar_camadas_estaticas(
 )
 def atualizar_camadas_dinamicas(_ts, tab_filtro, linhas_sel, veiculos_sel, locale, zoom_atual):
     """Reconstrói camadas dinâmicas e legenda sem depender do viewport."""
+    if tab_filtro == "trajeto":
+        return [], [], []
+
     t0 = time.perf_counter()
     modo = "veiculos" if tab_filtro == "veiculos" else "linhas"
     linhas_sel = linhas_sel or []

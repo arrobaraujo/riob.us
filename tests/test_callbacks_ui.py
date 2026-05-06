@@ -30,8 +30,14 @@ class CallbacksUiHelpersTests(unittest.TestCase):
             ("linhas", ["LECD137", "LECD138"]),
         )
 
-    def test_parse_deep_link_veiculos_desabilitado(self):
-        self.assertIsNone(_parse_deep_link("/veiculos/A50001", None))
+    def test_parse_deep_link_veiculos_tab(self):
+        self.assertEqual(_parse_deep_link("/veiculos", None), ("veiculos", []))
+
+    def test_parse_deep_link_veiculos_com_token(self):
+        self.assertEqual(_parse_deep_link("/veiculos/A50001", None), ("veiculos", []))
+
+    def test_parse_deep_link_trajetos(self):
+        self.assertEqual(_parse_deep_link("/trajetos", None), ("trajeto", []))
 
     def test_parse_deep_link_invalido(self):
         self.assertIsNone(_parse_deep_link("/status", None))
@@ -176,6 +182,31 @@ class CallbacksUiHelpersTests(unittest.TestCase):
         self.assertIs(back_to_lines[1], dash.no_update)
         self.assertEqual(back_to_lines[2], [])
         self.assertIsNone(back_to_lines[3])
+
+
+    def test_resolve_tab_veiculos_deep_link(self):
+        result = _resolve_tab_filter_state(
+            tab_value="linhas",
+            pathname="/veiculos",
+            search="",
+            linhas_sel=[],
+            linhas_opts=[],
+            triggers={"url-router"},
+        )
+        self.assertEqual(result[0], "veiculos")
+        self.assertIs(result[1], dash.no_update)
+
+    def test_resolve_tab_trajeto_deep_link(self):
+        result = _resolve_tab_filter_state(
+            tab_value="linhas",
+            pathname="/trajetos",
+            search="",
+            linhas_sel=[],
+            linhas_opts=[],
+            triggers={"url-router"},
+        )
+        self.assertEqual(result[0], "trajeto")
+        self.assertIs(result[1], dash.no_update)
 
 
 if __name__ == "__main__":

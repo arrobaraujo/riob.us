@@ -1326,3 +1326,8 @@ body[data-theme="dark-riob"] .dropdown .Select-option.is-focused {
     opacity: 1;
     text-decoration: underline;
 }
+
+/* Oculta controle de camadas do Leaflet na aba Trajeto */
+.shell-map-container[data-tab="trajeto"] .leaflet-control-layers {
+    display: none !important;
+}

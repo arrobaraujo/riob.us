@@ -16,8 +16,8 @@ A interface e organizada em **sidebar + mapa**:
 
 - Sidebar esquerda fixa: abas de filtro (Linhas, Veiculos, Trajetos) e resultados.
 - Mapa ocupa o restante da tela e responde aos filtros e selecoes.
-- O botao de localizacao (`📍`) e acessivel em todas as abas.
-- A toolbar de atualizacao e a legenda sao ocultadas na aba Trajetos.
+- O botao de localizacao (`📍`) e acessivel nas abas Linhas e Veiculos (ocultado na aba Trajetos).
+- A toolbar de atualizacao, a legenda e os controles de camadas do mapa sao ocultados na aba Trajetos.
 
 ## Fluxo de dados — modo realtime (Linhas / Veiculos)
 
@@ -69,7 +69,8 @@ A interface e organizada em **sidebar + mapa**:
 ## Deep links
 
 - Suportado: filtro por linha via URL (`/linhas/<token>` e `/?linha=<token>`).
-- Desativado temporariamente: deeplink de veiculos, para manter estabilidade do fluxo de inicializacao do frontend.
+- Suportado: abertura de abas nominais via `/veiculos` e `/trajetos`.
+- Removido: suporte a prefixos de locale na URL (ex.: `/en/linhas/...`). O idioma é resolvido via headers ou preferência do navegador.
 
 ## Organizacao de codigo
 

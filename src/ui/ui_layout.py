@@ -672,6 +672,7 @@ def build_app_layout(linhas_short, linha_exibicao, app_build_id, locale="pt-BR")
             dcc.Store(id="store-trajeto-geojson", data=None),
             dcc.Store(id="store-trajeto-bounds", data=None),
             dcc.Store(id="store-trajeto-selected-index", data=-1),
+            dcc.Store(id="store-tab-map-sync", data=None),
             html.Div(id="error-banner-container", className="shell-banner"),
             html.Div(
                 [
