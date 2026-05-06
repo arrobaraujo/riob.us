@@ -12,6 +12,9 @@ license = { text = "GPL-3.0-only" }
 authors = [
     { name = "Erick", email = "araujo.erick1@gmail.com" }
 ]
+dependencies = [
+    "polyline>=2.0.4",
+]
 
 [project.optional-dependencies]
 test = [

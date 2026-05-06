@@ -183,7 +183,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
             "fetch_gps_data",
             return_value=pd.DataFrame(),
         ):
-            self.app.atualizar_gps(0, 0, "linhas", ["100"], [])
+            self.app.atualizar_gps(0, 0, "linhas", ["100"], [], "pt-BR")
 
         self.assertEqual(len(self.app._gps_cache), 1)
         self.assertEqual(self.app._gps_cache.iloc[0]["ordem"], "A1")
@@ -222,7 +222,7 @@ class AppGtfsWrappersTests(unittest.TestCase):
                 "montar_opcoes_veiculos",
                 return_value=[{"label": "X1", "value": "X1"}],
             ):
-                self.app.atualizar_gps(0, 0, "veiculos", [], ["NAO_EXISTE"])
+                self.app.atualizar_gps(0, 0, "veiculos", [], ["NAO_EXISTE"], "pt-BR")
 
         self.assertEqual(len(self.app._gps_cache), 1)
         self.assertEqual(self.app._gps_cache.iloc[0]["ordem"], "B1")

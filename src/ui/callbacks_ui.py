@@ -722,10 +722,10 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
                 ))
             
         # 3. Marcadores de Pontual (Origem e Destino final)
-        if features:
-            start_pt = features[0]["geometry"]["coordinates"][0]
-            end_pt = features[-1]["geometry"]["coordinates"][-1]
-            
+        start_pt = geojson_data.get("start_pt")
+        end_pt = geojson_data.get("end_pt")
+        
+        if start_pt and end_pt:
             # Marcador de Origem
             children.append(dl.CircleMarker(
                 id=f"origin-{uuid.uuid4().hex}",

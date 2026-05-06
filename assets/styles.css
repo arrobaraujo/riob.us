@@ -1280,6 +1280,7 @@ body[data-theme="dark-riob"] .dropdown .Select-option.is-focused {
     overflow: hidden;
     text-overflow: ellipsis;
     transition: opacity 0.2s;
+    flex-shrink: 0;
 }
 
 .timeline-intermediate-stop:hover {

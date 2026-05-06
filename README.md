@@ -18,6 +18,7 @@ Aplicacao web em Dash para visualizacao operacional de onibus, com atualizacao e
 - Reorganizacao estrutural consolidada em `src/`, sem camada legada na raiz.
 - **Interface lateral (sidebar)**: painel de controle fixo ao lado esquerdo do mapa.
 - **Aba Trajetos**: planejamento de rotas intermodais com visualizacao no mapa.
+- **Aviso de GTFS**: banner de alerta automático se os dados estáticos (itinerários/cores) falharem no carregamento.
 
 ## Visao geral
 
@@ -49,11 +50,12 @@ A aba **Trajetos** permite planejar rotas de transporte publico entre dois ender
 
 ### Recursos visuais
 
-- **Cores oficiais**: cada trecho de onibus exibe a cor real da linha conforme o GTFS.
-- **Paradas no mapa**: circulos marcam cada parada intermediaria do percurso.
-- **Paradas no card**: a timeline detalhada lista todas as paradas do trecho ao expandir o card.
-- **Marcadores de origem/destino**: ícones verdes (origem) e roxos (destino) no mapa.
-- **Trechos a pe**: exibidos com linha tracejada azul.
+- **Clipping geométrico**: as polylines de roteamento são cortadas exatamente nos pontos de embarque e desembarque. O algoritmo utiliza uma varredura sequencial com penalidade de comprimento para evitar loops e artefatos de "cauda" comuns em trajetos circulares do GTFS.
+- **Paradas no mapa**: círculos coloridos marcam cada parada intermediária, renderizados acima das linhas para melhor visibilidade.
+- **Paradas no card**: a timeline detalhada lista todas as paradas do trecho; o layout foi otimizado para evitar sobreposição de texto em trajetos longos.
+- **Marcadores de origem/destino**: ícones de destaque no mapa para facilitar a orientação.
+- **Trechos a pé**: exibidos com linha pontilhada escura de alto contraste.
+- **Hierarquia de camadas (Z-Index)**: o mapa prioriza a visualização exibindo paradas no topo, seguidas por trechos a pé e, por fim, as linhas de ônibus.
 
 ### Motor de roteamento
 
@@ -159,7 +161,6 @@ Resultado esperado:
 - `/robots.txt` retorna regras de crawler e `Sitemap:`.
 - `/sitemap.xml` retorna XML valido com `<urlset>`.
 - `/?linha=LECD137` responde `301` para `/linhas/LECD137`.
-- `/?linha=LECD137&lang=en` responde `301` para `/en/linhas/LECD137`.
 - HTML de `/linhas/LECD137` contem canonical e `og:url` da propria linha.
 
 Atalho: script de smoke test SEO
@@ -184,8 +185,8 @@ URLs recomendadas para inspecao:
 
 - `https://riob.us/`
 - `https://riob.us/linhas/LECD137`
-- `https://riob.us/en/linhas/LECD137`
-- `https://riob.us/es/linhas/LECD137`
+- `https://riob.us/veiculos`
+- `https://riob.us/trajetos`
 
 Checklist:
 
@@ -343,9 +344,15 @@ curl http://localhost:8080/status
 
 Quando as APIs publicas de GPS estiverem fora do ar (timeouts/503):
 
-- O app continua respondendo normalmente.
-- No modo `Linhas`, o shape/itinerario e a legenda da linha selecionada continuam sendo renderizados a partir do GTFS estatico.
 - No modo `Veiculos`, a camada dinamica depende de snapshot recente e pode ficar sem pontos durante a indisponibilidade.
+
+## Comportamento com GTFS indisponivel
+
+Caso o app nao consiga baixar ou processar o GTFS oficial na inicializacao:
+
+- Um aviso persistente e exibido no topo da interface.
+- O roteamento (Aba Trajetos) continua funcional, mas os trechos de onibus usarao a cor padrao vermelha.
+- As camadas de shape/itinerario no modo `Linhas` nao serao renderizadas.
 
 ## Proximos passos de organizacao
 

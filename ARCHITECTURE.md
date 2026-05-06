@@ -37,9 +37,17 @@ A interface e organizada em **sidebar + mapa**:
 6. `itineraries_to_geojson` converte o itinerario selecionado em GeoJSON com:
    - cores oficiais das linhas a partir do `line_to_color` (GTFS `route_color`)
    - pontos de parada intermediaria como features `Point`
+   - **Ordenação de Camadas**: as features são classificadas para garantir que paradas fiquem no topo, seguidas por caminhada e depois ônibus.
+   - **Injeção de Metadados**: `start_pt` e `end_pt` são injetados no objeto GeoJSON para garantir a integridade dos marcadores independentemente da ordem das features.
 7. O GeoJSON e armazenado em `store-trajeto-geojson`.
 8. `atualizar_mapa_trajeto` renderiza as polylines e marcadores no `layer-trajeto`.
 9. O viewport e ajustado via `force_view` com `fitBounds` animado.
+
+### Clipping Geométrico
+
+O arquivo `src/logic/transitous_logic.py` implementa o `_clip_polyline` para resolver o problema de shapes de GTFS que são maiores que o trecho percorrido.
+- **Algoritmo**: Varredura sequencial (`O(N)`) em duas passagens (ida e volta) para encontrar o melhor par de índices de corte.
+- **Penalidade de Caminho**: Inclui uma penalidade proporcional ao comprimento do segmento (`penalty_factor`) para evitar que o algoritmo selecione loops ou "caudas" que sejam microscopicamente mais próximos dos pontos de parada mas geometricamente redundantes.
 
 ## Integracao com Transitous
 
@@ -57,7 +65,7 @@ A interface e organizada em **sidebar + mapa**:
 - Mapeamento: `route_short_name` -> `#RRGGBB` (normalizado de hex sem `#`).
 - Disponibilizado via `_get_line_to_color()` (thread-safe com `_gtfs_data_lock`).
 - Usado em `itineraries_to_geojson` e na renderizacao dos cards da aba Trajetos.
-- Fallback: azul (`#3b82f6`) para trechos a pe, vermelho (`#ef4444`) para onibus sem cor GTFS.
+- Fallback: cinza escuro (`#334155`) para trechos a pe, vermelho (`#ef4444`) para onibus sem cor GTFS.
 
 ## Runtime
 
@@ -128,5 +136,4 @@ Pacotes em `src/`:
 - Em indisponibilidade da API GPS, o modo Linhas segue renderizando shape e legenda via GTFS estatico.
 - IDs unicos (`uuid4`) sao atribuidos a cada componente Leaflet de roteamento para evitar reutilizacao incorreta pelo React (bug de cores misturadas ao trocar itinerarios).
 - Commits devem ser pequenos, tematicos e validaveis com testes focados.
-
-
+- Falhas no carregamento de dados estáticos são detectadas no `app_runtime.py` e sinalizadas via `store-gtfs-status` para exibição de alertas globais na interface.

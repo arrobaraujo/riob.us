@@ -26,7 +26,7 @@ class StatusRouteI18nTests(unittest.TestCase):
 
     def test_status_route_in_english(self):
         with patch("src.core.app_runtime._build_health_status", return_value=self._fake_status()):
-            response = self.client.get("/status?lang=en")
+            response = self.client.get("/status", headers={"Accept-Language": "en"})
 
         self.assertEqual(response.status_code, 200)
         text = response.get_data(as_text=True)
@@ -37,7 +37,7 @@ class StatusRouteI18nTests(unittest.TestCase):
 
     def test_status_route_in_spanish(self):
         with patch("src.core.app_runtime._build_health_status", return_value=self._fake_status()):
-            response = self.client.get("/status?lang=es")
+            response = self.client.get("/status", headers={"Accept-Language": "es"})
 
         self.assertEqual(response.status_code, 200)
         text = response.get_data(as_text=True)
@@ -46,8 +46,11 @@ class StatusRouteI18nTests(unittest.TestCase):
         self.assertIn("GTFS cargado", text)
         self.assertIn("JSON técnico", text)
 
-    def test_deeplink_line_query_lang_english(self):
-        response = self.client.get("/linhas/LECD137?lang=en")
+    def test_deeplink_line_accept_language_english(self):
+        response = self.client.get(
+            "/linhas/LECD137",
+            headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
         self.assertEqual(response.status_code, 200)
         text = response.get_data(as_text=True)
         self.assertIn("Line LECD137 in real time", text)
@@ -63,17 +66,17 @@ class StatusRouteI18nTests(unittest.TestCase):
         self.assertIn("Línea LECD137 en tiempo real", text)
         self.assertIn('property="og:locale" content="es_ES"', text)
 
-    def test_deeplink_line_path_prefix_locale(self):
-        response = self.client.get("/en/linhas/LECD137")
+    def test_deeplink_line_canonical_url(self):
+        # Test that the canonical URL works without any query parameters
+        response = self.client.get("/linhas/LECD137")
         self.assertEqual(response.status_code, 200)
         text = response.get_data(as_text=True)
-        self.assertIn("Line LECD137 in real time", text)
         self.assertIn('id="canonical-link" rel="canonical" href="https://riob.us/linhas/LECD137"', text)
 
-    def test_root_query_redirects_to_localized_path(self):
+    def test_root_query_redirects_to_canonical_path(self):
         response = self.client.get("/?linha=LECD137&lang=es", follow_redirects=False)
         self.assertEqual(response.status_code, 301)
-        self.assertIn("/es/linhas/LECD137", response.headers.get("Location", ""))
+        self.assertIn("/linhas/LECD137", response.headers.get("Location", ""))
 
 
 if __name__ == "__main__":

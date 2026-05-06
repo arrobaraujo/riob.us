@@ -1806,13 +1806,14 @@ def ajustar_intervalo_polling(tab_filtro, linhas_sel, veiculos_sel):
     Input("store-tab-filtro", "data"),
     Input("store-linhas-debounce", "data"),
     Input("store-veiculos-debounce", "data"),
+    State("store-locale", "data"),
     running=[
         (Output("btn-atualizar", "disabled"), True, False),
         (Output("span-update-icon", "children"), "🔄", ""),
     ],
     prevent_initial_call=False,
 )
-def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
+def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel, locale):
     """Busca GPS, armazena no cache server-side e retorna só timestamp."""
     global _gps_cache, _last_update_ts, _last_fetch_had_data
     global _hist_sppo_bygps, _hist_brt_bygps
@@ -1841,6 +1842,8 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         if len(dados) > 0:
             _last_fetch_had_data = True
 
+    gtfs_error = t(locale, "warning.gtfs_missing") if (_gtfs_load_event.is_set() and not line_to_shape_coords) else None
+
     if len(dados) == 0:
         # Sem linhas em modo linhas -> vazio esperado, não é erro de API
         no_filter = modo == "linhas" and not linhas_sel
@@ -1854,9 +1857,10 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         fetch_ms = (t_fetch - t0) * 1000
         _perf_record("atualizar_gps_total_ms", total_ms)
         perf_log(f"PERF atualizar_gps modo={modo} total_ms={total_ms:.1f} n=0")
-        error_msg = (
-            None if no_filter else "⚠️ Sem dados para alguma das linhas selecionadas"
-        )
+        
+        gps_error = None if no_filter else "⚠️ Sem dados para alguma das linhas selecionadas"
+        error_msg = " | ".join(filter(None, [gps_error, gtfs_error])) or None
+        
         return int(time.time() * 1000), {}, {}, [], error_msg
 
     # Em modo veículos, aplica filtro por seleção após montar opções.
@@ -1903,7 +1907,7 @@ def atualizar_gps(_n_int, _n_btn, tab_filtro, linhas_sel, veiculos_sel):
         f"n={len(dados_final)}"
     )
     # Mantemos stores legados vazios para compatibilidade com clientes.
-    return int(time.time() * 1000), {}, {}, opcoes_veiculos, None
+    return int(time.time() * 1000), {}, {}, opcoes_veiculos, gtfs_error
 
 
 def _bounds_to_box(bounds):

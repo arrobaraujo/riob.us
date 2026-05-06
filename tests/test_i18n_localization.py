@@ -45,9 +45,10 @@ class LocalizationTests(unittest.TestCase):
         self.assertIn("Carto Oscuro", as_text_es)
         self.assertIn("Mi posición", as_text_es)
 
-    def test_sync_lang_url_removes_lang_query_and_keeps_base_path_for_pt(self):
+    def test_sync_lang_url_cleans_legacy_url_and_removes_lang_param(self):
+        # Should strip /en/ prefix and remove ?lang=en from query
         out_path, out_search = sincronizar_lang_na_url(
-            "pt-BR",
+            "en",
             "/en/linhas/LECD137",
             "?lang=en&foo=1",
         )
@@ -56,13 +57,24 @@ class LocalizationTests(unittest.TestCase):
         self.assertEqual(parsed.get("foo"), ["1"])
         self.assertIsNone(parsed.get("lang"))
 
-    def test_sync_lang_url_uses_path_prefix_for_non_default_locale(self):
+    def test_sync_lang_url_removes_locale_prefix_from_path(self):
+        # Even for non-default locales (like 'en'), we want to strip the legacy /en/ prefix
+        out_path, out_search = sincronizar_lang_na_url(
+            "en",
+            "/en/linhas/LECD137",
+            "",
+        )
+        self.assertEqual(out_path, "/linhas/LECD137")
+        self.assertIs(out_search, dash.no_update)
+
+    def test_sync_lang_url_returns_no_update_for_clean_path(self):
+        # If the path is already clean, it should return dash.no_update
         out_path, out_search = sincronizar_lang_na_url(
             "en",
             "/linhas/LECD137",
             "",
         )
-        self.assertEqual(out_path, "/en/linhas/LECD137")
+        self.assertIs(out_path, dash.no_update)
         self.assertIs(out_search, dash.no_update)
 
 

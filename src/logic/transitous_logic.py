@@ -83,6 +83,10 @@ def parse_transitous_response(data):
                 "line": leg.get("routeShortName", ""),
                 "from": leg_from,
                 "to": leg_to,
+                "from_lat": leg.get("from", {}).get("lat"),
+                "from_lon": leg.get("from", {}).get("lon"),
+                "to_lat": leg.get("to", {}).get("lat"),
+                "to_lon": leg.get("to", {}).get("lon"),
                 "departure": iso_to_ts(leg.get("startTime")),
                 "arrival": iso_to_ts(leg.get("endTime")),
                 "duration": leg.get("duration", 0),
@@ -102,6 +106,84 @@ def parse_transitous_response(data):
         })
     return itineraries
 
+def _clip_polyline(coords, start_pt, end_pt):
+    """
+    Corta uma lista de coordenadas [(lat, lon), ...] para iniciar e terminar
+    nos pontos mais próximos de start_pt e end_pt, mantendo a direção da rota
+    e evitando problemas com trajetos circulares (loops).
+    """
+    if not coords or not start_pt or not end_pt:
+        return coords
+
+    def dist_sq(p1, p2):
+        return (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
+
+    # Varredura 1: Assume que start_pt vem ANTES de end_pt na polyline
+    best_pair_1 = (0, 0)
+    min_score_1 = float('inf')
+    min_dist_start = float('inf')
+    best_start_idx = 0
+    
+    # Varredura 2: Assume que end_pt vem ANTES de start_pt na polyline
+    best_pair_2 = (0, 0)
+    min_score_2 = float('inf')
+    min_dist_end = float('inf')
+    best_end_idx = 0
+    # Penalty to prefer shorter paths and prevent microscopic overshoots from winning
+    penalty_factor = 1e-10
+    n = len(coords)
+
+    # Varredura 1: start_pt antes do end_pt
+    for j in range(n):
+        d_start = dist_sq(coords[j], start_pt)
+        d_end = dist_sq(coords[j], end_pt)
+        
+        if d_start < min_dist_start:
+            min_dist_start = d_start
+            best_start_idx = j
+            
+        # Penalty penalizes segment length to avoid giant loops
+        score_1 = min_dist_start + d_end + ((j - best_start_idx) * penalty_factor)
+        if score_1 < min_score_1:
+            min_score_1 = score_1
+            best_pair_1 = (best_start_idx, j)
+            
+    # Varredura 2: end_pt antes do start_pt
+    for j in range(n):
+        d_start = dist_sq(coords[j], start_pt)
+        d_end = dist_sq(coords[j], end_pt)
+        
+        if d_end < min_dist_end:
+            min_dist_end = d_end
+            best_end_idx = j
+            
+        # Penalty penalizes segment length
+        score_2 = min_dist_end + d_start + ((j - best_end_idx) * penalty_factor)
+        if score_2 < min_score_2:
+            min_score_2 = score_2
+            best_pair_2 = (best_end_idx, j)
+
+    if min_score_1 <= min_score_2:
+        idx1, idx2 = best_pair_1
+        clipped = coords[idx1:idx2+1]
+        if not clipped:
+            return coords
+        if dist_sq(clipped[0], start_pt) > 0:
+            clipped.insert(0, start_pt)
+        if dist_sq(clipped[-1], end_pt) > 0:
+            clipped.append(end_pt)
+    else:
+        idx1, idx2 = best_pair_2
+        clipped = coords[idx1:idx2+1]
+        if not clipped:
+            return coords
+        if dist_sq(clipped[0], end_pt) > 0:
+            clipped.insert(0, end_pt)
+        if dist_sq(clipped[-1], start_pt) > 0:
+            clipped.append(start_pt)
+            
+    return clipped
+
 def itineraries_to_geojson(itinerary, line_to_color=None):
     """Converte um itinerário para FeatureCollection GeoJSON com estilos por segmento."""
     import polyline
@@ -116,6 +198,13 @@ def itineraries_to_geojson(itinerary, line_to_color=None):
             
         try:
             coords = polyline.decode(leg["polyline"], 7)
+            
+            # Faz o clipping da polyline se tivermos as coordenadas e não for trecho a pé (caminhada costuma ser reta)
+            if leg.get("from_lat") and leg.get("to_lat") and leg["type"] != "WALK":
+                start_pt = (leg["from_lat"], leg["from_lon"])
+                end_pt = (leg["to_lat"], leg["to_lon"])
+                coords = _clip_polyline(coords, start_pt, end_pt)
+                
             # Inverte para (lon, lat) para o padrão GeoJSON
             geojson_coords = [[c[1], c[0]] for c in coords]
             
@@ -123,7 +212,7 @@ def itineraries_to_geojson(itinerary, line_to_color=None):
             line_label = leg.get("line", "")
             
             if is_walk:
-                leg_color = "#3b82f6"
+                leg_color = "#334155" # Dark slate for high contrast
             else:
                 from src.logic.gtfs_static_logic import _normalize_line_key
                 norm_line = _normalize_line_key(line_label)
@@ -133,9 +222,9 @@ def itineraries_to_geojson(itinerary, line_to_color=None):
                 "type": leg["type"],
                 "line": line_label,
                 "color": leg_color,
-                "dashArray": "5, 10" if is_walk else None,
-                "weight": 4 if is_walk else 6,
-                "opacity": 0.6 if is_walk else 0.9,
+                "dashArray": "6, 8" if is_walk else None,
+                "weight": 5 if is_walk else 6,
+                "opacity": 0.9 if is_walk else 0.9,
                 "is_walk": is_walk
             }
             
@@ -185,7 +274,27 @@ def itineraries_to_geojson(itinerary, line_to_color=None):
             
     bounds = [[min_lat, min_lon], [max_lat, max_lon]] if has_coords else None
     
+    def sort_key(f):
+        geom_type = f["geometry"]["type"]
+        is_walk = f["properties"].get("is_walk", False)
+        if geom_type == "Point":
+            return 2
+        if is_walk:
+            return 1
+        return 0
+        
+    line_features = [f for f in features if f["geometry"]["type"] == "LineString"]
+    start_pt = line_features[0]["geometry"]["coordinates"][0] if line_features else None
+    end_pt = line_features[-1]["geometry"]["coordinates"][-1] if line_features else None
+
+    features.sort(key=sort_key)
+    
     return {
-        "geojson": {"type": "FeatureCollection", "features": features},
+        "geojson": {
+            "type": "FeatureCollection", 
+            "features": features,
+            "start_pt": start_pt,
+            "end_pt": end_pt
+        },
         "bounds": bounds
     }
