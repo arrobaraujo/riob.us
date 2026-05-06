@@ -48,6 +48,8 @@ A interface e organizada em **sidebar + mapa**:
 O arquivo `src/logic/transitous_logic.py` implementa o `_clip_polyline` para resolver o problema de shapes de GTFS que são maiores que o trecho percorrido.
 - **Algoritmo**: Varredura sequencial (`O(N)`) em duas passagens (ida e volta) para encontrar o melhor par de índices de corte.
 - **Penalidade de Caminho**: Inclui uma penalidade proporcional ao comprimento do segmento (`penalty_factor`) para evitar que o algoritmo selecione loops ou "caudas" que sejam microscopicamente mais próximos dos pontos de parada mas geometricamente redundantes.
+- **Conexão Sem Emendas (Seamless)**: Em itinerários intermodais, o recorte do trecho de transporte é forçado a alinhar suas extremidades com o início/fim exato do trecho de caminhada adjacente, evitando sobreposições visuais em cruzamentos.
+
 
 ## Integracao com Transitous
 
@@ -136,4 +138,5 @@ Pacotes em `src/`:
 - Em indisponibilidade da API GPS, o modo Linhas segue renderizando shape e legenda via GTFS estatico.
 - IDs unicos (`uuid4`) sao atribuidos a cada componente Leaflet de roteamento para evitar reutilizacao incorreta pelo React (bug de cores misturadas ao trocar itinerarios).
 - Commits devem ser pequenos, tematicos e validaveis com testes focados.
+- A camada de roteamento (`layer-trajeto`) é limpa automaticamente via callback sempre que o usuário altera a aba de filtro, garantindo que o mapa permaneça limpo nos modos Linhas e Veículos.
 - Falhas no carregamento de dados estáticos são detectadas no `app_runtime.py` e sinalizadas via `store-gtfs-status` para exibição de alertas globais na interface.

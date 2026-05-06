@@ -50,7 +50,7 @@ A aba **Trajetos** permite planejar rotas de transporte publico entre dois ender
 
 ### Recursos visuais
 
-- **Clipping geométrico**: as polylines de roteamento são cortadas exatamente nos pontos de embarque e desembarque. O algoritmo utiliza uma varredura sequencial com penalidade de comprimento para evitar loops e artefatos de "cauda" comuns em trajetos circulares do GTFS.
+- **Clipping geométrico**: as polylines de roteamento são cortadas exatamente nos pontos de embarque e desembarque. O sistema utiliza uma varredura sequencial com penalidade de comprimento e alinhamento automático com trechos de caminhada adjacentes para garantir conexões sem emendas (seamless) e sem loops.
 - **Paradas no mapa**: círculos coloridos marcam cada parada intermediária, renderizados acima das linhas para melhor visibilidade.
 - **Paradas no card**: a timeline detalhada lista todas as paradas do trecho; o layout foi otimizado para evitar sobreposição de texto em trajetos longos.
 - **Marcadores de origem/destino**: ícones de destaque no mapa para facilitar a orientação.

@@ -118,70 +118,101 @@ def _clip_polyline(coords, start_pt, end_pt):
     def dist_sq(p1, p2):
         return (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
 
-    # Varredura 1: Assume que start_pt vem ANTES de end_pt na polyline
+    def project_on_segment(p, a, b):
+        ax, ay, bx, by, px, py = a[0], a[1], b[0], b[1], p[0], p[1]
+        dx, dy = bx - ax, by - ay
+        if dx == 0 and dy == 0: return a
+        t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+        t = max(0, min(1, t))
+        return [ax + t * dx, ay + t * dy]
+
+    n = len(coords)
+    # Penalty to prefer shorter paths (approx 1 meter per point in degrees squared)
+    penalty_factor = 1e-10
+
+    # We want to find (i, j) that minimizes dist(coords[i], start_pt) + dist(coords[j], end_pt) + penalty * |i - j|
+    
+    # Sweep 1: i <= j
     best_pair_1 = (0, 0)
     min_score_1 = float('inf')
-    min_dist_start = float('inf')
-    best_start_idx = 0
+    best_i = 0
+    min_d_start = float('inf')
     
-    # Varredura 2: Assume que end_pt vem ANTES de start_pt na polyline
+    for j in range(n):
+        d_start = dist_sq(coords[j], start_pt)
+        if d_start <= min_d_start: # Use <= to pick the latest occurrence
+            min_d_start = d_start
+            best_i = j
+        
+        d_end = dist_sq(coords[j], end_pt)
+        score = min_d_start + d_end + (j - best_i) * penalty_factor
+        if score < min_score_1:
+            min_score_1 = score
+            best_pair_1 = (best_i, j)
+
+    # Sweep 2: i > j
     best_pair_2 = (0, 0)
     min_score_2 = float('inf')
-    min_dist_end = float('inf')
-    best_end_idx = 0
-    # Penalty to prefer shorter paths and prevent microscopic overshoots from winning
-    penalty_factor = 1e-10
-    n = len(coords)
-
-    # Varredura 1: start_pt antes do end_pt
+    best_i = 0
+    min_d_end = float('inf')
+    
     for j in range(n):
-        d_start = dist_sq(coords[j], start_pt)
         d_end = dist_sq(coords[j], end_pt)
-        
-        if d_start < min_dist_start:
-            min_dist_start = d_start
-            best_start_idx = j
+        if d_end <= min_d_end: # Use <= to pick the latest occurrence of end_pt in this sweep
+            min_d_end = d_end
+            best_i = j
             
-        # Penalty penalizes segment length to avoid giant loops
-        score_1 = min_dist_start + d_end + ((j - best_start_idx) * penalty_factor)
-        if score_1 < min_score_1:
-            min_score_1 = score_1
-            best_pair_1 = (best_start_idx, j)
-            
-    # Varredura 2: end_pt antes do start_pt
-    for j in range(n):
         d_start = dist_sq(coords[j], start_pt)
-        d_end = dist_sq(coords[j], end_pt)
-        
-        if d_end < min_dist_end:
-            min_dist_end = d_end
-            best_end_idx = j
-            
-        # Penalty penalizes segment length
-        score_2 = min_dist_end + d_start + ((j - best_end_idx) * penalty_factor)
-        if score_2 < min_score_2:
-            min_score_2 = score_2
-            best_pair_2 = (best_end_idx, j)
+        score = min_d_end + d_start + (j - best_i) * penalty_factor
+        if score < min_score_2:
+            min_score_2 = score
+            best_pair_2 = (j, best_i) # Order is (start_idx, end_idx)
 
+    # Choose best sweep
     if min_score_1 <= min_score_2:
         idx1, idx2 = best_pair_1
-        clipped = coords[idx1:idx2+1]
-        if not clipped:
-            return coords
-        if dist_sq(clipped[0], start_pt) > 0:
-            clipped.insert(0, start_pt)
-        if dist_sq(clipped[-1], end_pt) > 0:
-            clipped.append(end_pt)
+        reverse = False
     else:
         idx1, idx2 = best_pair_2
-        clipped = coords[idx1:idx2+1]
-        if not clipped:
-            return coords
-        if dist_sq(clipped[0], end_pt) > 0:
-            clipped.insert(0, end_pt)
-        if dist_sq(clipped[-1], start_pt) > 0:
-            clipped.append(start_pt)
-            
+        reverse = True
+
+    # Extract raw segment
+    if not reverse:
+        clipped = coords[idx1 : idx2 + 1]
+    else:
+        # If reversed, we still extract the segment but it's logically backwards
+        clipped = coords[min(idx1, idx2) : max(idx1, idx2) + 1]
+        clipped = clipped[::-1]
+
+    if len(clipped) < 2:
+        return [start_pt, end_pt]
+
+    # Surgical adjustment: project start/end onto adjacent segments to avoid "hooks"
+    def get_surgical_point(pt, center_idx, full_coords):
+        best_p = full_coords[center_idx]
+        best_d = dist_sq(pt, best_p)
+        
+        # Check segment before
+        if center_idx > 0:
+            p_prev = project_on_segment(pt, full_coords[center_idx-1], full_coords[center_idx])
+            d_prev = dist_sq(pt, p_prev)
+            if d_prev < best_d:
+                best_p, best_d = p_prev, d_prev
+        
+        # Check segment after
+        if center_idx < len(full_coords) - 1:
+            p_next = project_on_segment(pt, full_coords[center_idx], full_coords[center_idx+1])
+            d_next = dist_sq(pt, p_next)
+            if d_next < best_d:
+                best_p, best_d = p_next, d_next
+        return best_p
+
+    start_surgical = get_surgical_point(start_pt, idx1, coords)
+    end_surgical = get_surgical_point(end_pt, idx2, coords)
+
+    clipped[0] = start_surgical
+    clipped[-1] = end_surgical
+    
     return clipped
 
 def itineraries_to_geojson(itinerary, line_to_color=None):
@@ -192,17 +223,36 @@ def itineraries_to_geojson(itinerary, line_to_color=None):
     if line_to_color is None:
         line_to_color = {}
     
-    for leg in itinerary.get("legs", []):
-        if not leg.get("polyline"):
+    legs = itinerary.get("legs", [])
+    
+    # Pre-decode polylines so we can use their exact endpoints for seamless connections
+    leg_coords = []
+    for leg in legs:
+        if leg.get("polyline"):
+            try:
+                leg_coords.append(polyline.decode(leg["polyline"], 7))
+            except:
+                leg_coords.append(None)
+        else:
+            leg_coords.append(None)
+
+    for idx, leg in enumerate(legs):
+        coords = leg_coords[idx]
+        if not coords:
             continue
             
         try:
-            coords = polyline.decode(leg["polyline"], 7)
-            
-            # Faz o clipping da polyline se tivermos as coordenadas e não for trecho a pé (caminhada costuma ser reta)
+            # Faz o clipping da polyline se tivermos as coordenadas e não for trecho a pé
             if leg.get("from_lat") and leg.get("to_lat") and leg["type"] != "WALK":
                 start_pt = (leg["from_lat"], leg["from_lon"])
                 end_pt = (leg["to_lat"], leg["to_lon"])
+                
+                # Seamless connection: snap exactly to the adjacent walk leg's coordinates
+                if idx > 0 and legs[idx-1]["type"] == "WALK" and leg_coords[idx-1]:
+                    start_pt = leg_coords[idx-1][-1]
+                if idx < len(legs) - 1 and legs[idx+1]["type"] == "WALK" and leg_coords[idx+1]:
+                    end_pt = leg_coords[idx+1][0]
+                    
                 coords = _clip_polyline(coords, start_pt, end_pt)
                 
             # Inverte para (lon, lat) para o padrão GeoJSON

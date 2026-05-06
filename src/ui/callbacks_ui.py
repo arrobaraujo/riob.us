@@ -668,15 +668,19 @@ def register_ui_callbacks(app, get_last_update_ts, get_line_to_color=None):
     @app.callback(
         Output("layer-trajeto", "children"),
         Input("store-trajeto-geojson", "data"),
+        Input("store-tab-filtro", "data"),
         State("store-locale", "data"),
     )
-    def atualizar_mapa_trajeto(geojson_data, locale):
+    def atualizar_mapa_trajeto(geojson_data, tab_filtro, locale):
         import dash_leaflet as dl
+        if tab_filtro != "trajeto":
+            return []
         if not geojson_data or not geojson_data.get("features"):
             return []
         
         children = []
         features = geojson_data["features"]
+
         
         for feature in features:
             props = feature["properties"]

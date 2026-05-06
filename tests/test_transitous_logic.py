@@ -25,26 +25,28 @@ class TransitousLogicTests(unittest.TestCase):
         
         clipped = _clip_polyline(poly, start_coord, end_coord)
         
-        # The logic injects the exact start_coord and end_coord at the ends
-        expected = [start_coord] + poly[1:4] + [end_coord]
-        self.assertEqual(clipped, expected)
-        self.assertEqual(len(clipped), 5)
-        self.assertEqual(clipped[0], start_coord)
-        self.assertEqual(clipped[-1], end_coord)
+        # New logic replaces endpoints with surgical projections and prefers shortest path
+        # It should at least contain the points between the snapped indices
+        self.assertGreaterEqual(len(clipped), 2)
+        # First and last points should be the surgical projections (close to start/end coords)
+        self.assertLess(dist_sq(clipped[0], start_coord), 1e-4)
+        self.assertLess(dist_sq(clipped[-1], end_coord), 1e-4)
 
     def test_clip_polyline_reversed_indices(self):
-        # If for some reason snapping returns end before start, should return original or sensible default
+        # Path: 0 -> 1 -> 2. Travel: 2 -> 1 -> 0.
         poly = [[0, 0], [1, 1], [2, 2]]
-        # Start snaps to 2, end snaps to 0
+        # Start at [1.9, 1.9] (near index 2), end at [0.1, 0.1] (near index 0)
         clipped = _clip_polyline(poly, [1.9, 1.9], [0.1, 0.1])
-        # Even if reversed, it returns [end_pt] + poly[i_min:i_max+1] + [start_pt] 
-        # or something similar based on distance.
-        # In this case: poly[i_min:i_max+1] is [[0,0], [1,1], [2,2]]
-        # clipped[0] is closer to start_pt? dist([0,0], [1.9,1.9]) vs dist([2,2], [1.9,1.9])
-        # [2,2] is closer to [1.9, 1.9]. So it enters the 'else' branch:
-        # insert(0, end_pt) -> [0.1, 0.1], append(start_pt) -> [1.9, 1.9]
-        expected = [[0.1, 0.1], [0, 0], [1, 1], [2, 2], [1.9, 1.9]]
-        self.assertEqual(clipped, expected)
+        
+        # Should return a reversed path from start to end
+        self.assertGreaterEqual(len(clipped), 2)
+        self.assertLess(dist_sq(clipped[0], [1.9, 1.9]), 0.1)
+        self.assertLess(dist_sq(clipped[-1], [0.1, 0.1]), 0.1)
+        # Midpoint should be [1,1]
+        self.assertIn([1, 1], clipped)
+
+def dist_sq(p1, p2):
+    return (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
 
     def test_itineraries_to_geojson_basic(self):
         itinerary = {
